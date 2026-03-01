@@ -1,4 +1,15 @@
-// src/Context/Authorisation/AuthContext.js — Improved
+// src/Context/Authorisation/AuthContext.js
+//
+// Owns: isAuthenticated, user, token, login(), logout()
+//
+// NOT owned here (delegated to dedicated contexts):
+//   • Socket lifecycle       → SocketContext
+//   • Notification state     → NotificationContext
+//   • Online users list      → OnlineUsersContext
+//
+// This separation means AuthContext no longer registers a "notification"
+// socket listener — NotificationContext does that. No more double-toasting.
+
 import {
   createContext,
   useContext,
@@ -13,6 +24,7 @@ import {
   disconnectSocket,
   initializeSocket,
   getSocket,
+  onSocketEvent,
 } from '../../WebSocket/WebSocketClient';
 import AuthService from '../../Services/AuthService';
 
@@ -22,21 +34,10 @@ const API_URL =
   process.env.REACT_APP_BACKEND_URL || process.env.REACT_APP_SERVER_URL || '';
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
-/** Safely parse JSON from localStorage, returns fallback on error */
-const safeParse = (key, fallback) => {
-  try {
-    const raw = localStorage.getItem(key);
-    return raw ? JSON.parse(raw) : fallback;
-  } catch {
-    return fallback;
-  }
-};
-
-/** Check if a JWT token is expired (with 30 s buffer) */
 const isTokenExpired = (token) => {
   try {
     const { exp } = jwtDecode(token);
-    return Date.now() >= (exp - 30) * 1000;
+    return Date.now() >= (exp - 30) * 1_000; // 30 s buffer
   } catch {
     return true;
   }
@@ -44,51 +45,55 @@ const isTokenExpired = (token) => {
 
 // ── Provider ───────────────────────────────────────────────────────────────────
 export const AuthProvider = ({ children }) => {
-  const [isAuthenticated,    setIsAuthenticated]    = useState(false);
-  const [user,               setUser]               = useState(null);
-  const [token,              setToken]              = useState(() => localStorage.getItem('token'));
-  const [notificationCount,  setNotificationCount]  = useState(0);
-  const [notifications,      setNotifications]      = useState(() => safeParse('notifications', []));
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [user,            setUser]            = useState(null);
+  const [token,           setToken]           = useState(
+    () => localStorage.getItem('token')
+  );
 
-  const socketRef      = useRef(null);
-  const refreshTimerRef = useRef(null);
+  const socketRef = useRef(null);
 
-  // ── Sync notifications → localStorage + badge ───────────────────────────────
-  useEffect(() => {
-    localStorage.setItem('notifications', JSON.stringify(notifications));
-    setNotificationCount(notifications.filter((n) => !n.isRead).length);
-  }, [notifications]);
+  // ── Socket setup — connects and emits user-online only ───────────────────
+  //   Notification listener is NOT registered here; NotificationContext owns it.
+  const setupSocket = useCallback(async (userInfo) => {
+    try {
+      const sock = await initializeSocket();
+      if (!sock) return;
+      socketRef.current = sock;
 
-  // ── Mark notification as read ───────────────────────────────────────────────
-  const markNotificationRead = useCallback((notifId) => {
-    setNotifications((prev) =>
-      prev.map((n) => (n._id === notifId ? { ...n, isRead: true } : n))
-    );
-  }, []);
+      const onConnect = () => {
+        if (!userInfo?._id) return;
+        sock.emit('user-online', {
+          userId:      userInfo._id,
+          name:        userInfo.name,
+          hometown:    userInfo.hometown    ?? '',
+          currentcity: userInfo.currentcity ?? '',
+        });
+        sock.emit('join-room', String(userInfo._id));
+      };
 
-  const clearNotifications = useCallback(() => {
-    setNotifications([]);
-  }, []);
+      // Register connect handler without clobbering other listeners
+      const offConnect = onSocketEvent('connect', onConnect);
+      if (sock.connected) onConnect();
 
-  // ── Cleanup socket ──────────────────────────────────────────────────────────
-  const cleanupSocket = useCallback(() => {
-    const sock = socketRef.current || getSocket();
-    if (sock) {
-      sock.removeAllListeners();
-      sock.disconnect();
+      // Store cleanup so logout can remove it
+      socketRef._offConnect = offConnect;
+    } catch (err) {
+      console.error('[AuthContext] setupSocket failed:', err);
     }
-    disconnectSocket();
-    socketRef.current = null;
   }, []);
 
-  // ── Logout ──────────────────────────────────────────────────────────────────
+  // ── Logout ────────────────────────────────────────────────────────────────
   const logout = useCallback(() => {
     const sock = socketRef.current || getSocket();
     if (sock?.connected && user?._id) {
       sock.emit('user-offline', user._id);
     }
-    cleanupSocket();
-    clearInterval(refreshTimerRef.current);
+    // Remove only our connect listener before full teardown
+    socketRef._offConnect?.();
+    disconnectSocket();
+    socketRef.current     = null;
+    socketRef._offConnect = null;
 
     ['token', 'User', 'refreshToken', 'notifications'].forEach((k) =>
       localStorage.removeItem(k)
@@ -97,79 +102,34 @@ export const AuthProvider = ({ children }) => {
     setToken(null);
     setIsAuthenticated(false);
     setUser(null);
-    setNotificationCount(0);
-    setNotifications([]);
-  }, [user, cleanupSocket]);
+  }, [user]);
 
-  // ── Setup socket (called after login or session restore) ────────────────────
-  const setupSocket = useCallback(async (userInfo, cleanToken) => {
-    try {
-      const sock = await initializeSocket();
-      if (!sock) return;
-      socketRef.current = sock;
-
-      const onConnect = () => {
-        sock.off('notification');
-        sock.on('notification', (payload) => {
-          // Prevent toasting the same notification twice (by _id)
-          setNotifications((prev) => {
-            if (payload._id && prev.some((n) => n._id === payload._id)) return prev;
-            toast.info(payload.message || 'New notification', { autoClose: 4000 });
-            return [payload, ...prev];
-          });
-          setNotificationCount((c) => c + 1);
-        });
-
-        if (userInfo?._id) {
-          const presence = {
-            userId:      userInfo._id,
-            name:        userInfo.name,
-            hometown:    userInfo.hometown,
-            currentcity: userInfo.currentcity,
-            timestamp:   new Date().toISOString(),
-          };
-          sock.emit('user-online', presence);
-          sock.emit('join-room', String(userInfo._id));
-        }
-      };
-
-      if (sock.connected) onConnect();
-      else sock.once('connect', onConnect);
-
-      sock.on('connect_error', (err) =>
-        console.error('[AuthContext] Socket error:', err.message)
-      );
-    } catch (err) {
-      console.error('[AuthContext] setupSocket failed:', err);
-    }
-  }, []);
-
-  // ── Auto-restore session on mount ───────────────────────────────────────────
+  // ── Auto-restore session on mount ─────────────────────────────────────────
   useEffect(() => {
     if (!token) return;
 
-    // Guard: expired token → clear immediately
     if (isTokenExpired(token)) {
-      console.warn('[AuthContext] Stored token is expired — clearing.');
+      console.warn('[AuthContext] Stored token expired — clearing.');
       logout();
       return;
     }
 
     setIsAuthenticated(true);
+
     AuthService.getUser()
       .then((userInfo) => {
         if (!userInfo) { logout(); return; }
         setUser(userInfo);
-        setupSocket(userInfo, token);
+        setupSocket(userInfo);
       })
       .catch((err) => {
         console.error('[AuthContext] Auto-restore failed:', err);
         logout();
       });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, []); // intentionally runs once on mount
 
-  // ── Login ───────────────────────────────────────────────────────────────────
+  // ── Login ─────────────────────────────────────────────────────────────────
   const login = useCallback(async (rawToken) => {
     if (!rawToken || rawToken === 'null' || rawToken === 'undefined') {
       toast.error('Invalid login token');
@@ -177,9 +137,8 @@ export const AuthProvider = ({ children }) => {
     }
 
     const cleanToken = rawToken.trim();
-
     if (isTokenExpired(cleanToken)) {
-      toast.error('Session token has expired. Please log in again.');
+      toast.error('Session expired. Please log in again.');
       return;
     }
 
@@ -194,34 +153,27 @@ export const AuthProvider = ({ children }) => {
         localStorage.setItem('User', JSON.stringify(userInfo));
       }
 
-      // Log daily streak (fire-and-forget — failure is non-critical)
+      // Log daily streak — fire and forget
       fetch(`${API_URL}/api/activity/log-daily-streak`, {
-        method: 'POST',
+        method:  'POST',
         headers: { Authorization: `Bearer ${cleanToken}` },
       }).catch(() => {});
 
-      await setupSocket(userInfo, cleanToken);
+      await setupSocket(userInfo);
     } catch (err) {
       console.error('[AuthContext] login setup failed:', err);
     }
   }, [setupSocket]);
 
-  // ── Context value ───────────────────────────────────────────────────────────
   return (
     <AuthContext.Provider
       value={{
         isAuthenticated,
-        authtoken: token,   // legacy alias
+        authtoken: token, // legacy alias
         token,
         user,
         login,
         logout,
-        notificationCount,
-        setNotificationCount,
-        notifications,
-        setNotifications,
-        markNotificationRead,
-        clearNotifications,
       }}
     >
       {children}

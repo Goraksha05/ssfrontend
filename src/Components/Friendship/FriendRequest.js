@@ -10,9 +10,9 @@ dayjs.extend(relativeTime);
 // ── Inline styles ─────────────────────────────────────────────────────────────
 const styles = {
   page: {
-    minHeight: '100vh',
+    minHeight: '50vh',
     background: 'linear-gradient(135deg, #f0f4ff 0%, #fafaff 100%)',
-    padding: '60px 12px 32px',
+    padding: '12px 12px 32px',
     boxSizing: 'border-box',
   },
   card: {

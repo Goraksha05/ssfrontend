@@ -1,35 +1,46 @@
 // src/Context/Subscription/SubscriptionContext.js
-import React, { createContext, useContext, useState } from 'react';
-import apiRequest from '../../utils/apiRequest';  // Adjust path if needed
+import React, { createContext, useContext, useState, useCallback } from 'react';
+import apiRequest from '../../utils/apiRequest';
 
-const SubscriptionContext = createContext();
+const SubscriptionContext = createContext(null);
 
 export const SubscriptionProvider = ({ children }) => {
   const [showSubscription, setShowSubscription] = useState(false);
+  const [subscriptionPlan, setSubscriptionPlan] = useState(null); // 'annual' | null
 
-  const openSubscription = () => setShowSubscription(true);
-  const closeSubscription = () => setShowSubscription(false);
+  const openSubscription = useCallback(() => setShowSubscription(true), []);
+  const closeSubscription = useCallback(() => setShowSubscription(false), []);
 
-  const fetchSubscriptionDetails = async () => {
+  const fetchSubscriptionDetails = useCallback(async () => {
     try {
       const res = await apiRequest.get('/api/subscription/details');
-      console.log("✅ Subscription details:", res.data);
-      // You can set subscription state here if needed
-    } catch (err) {
-      // Errors already handled by interceptor
+      const plan = res.data?.plan ?? null;
+      setSubscriptionPlan(plan);
+      return res.data;
+    } catch {
+      // Errors handled by interceptor
+      return null;
     }
-  };
+  }, []);
 
   return (
-    <SubscriptionContext.Provider value={{
-      showSubscription,
-      openSubscription,
-      closeSubscription,
-      fetchSubscriptionDetails,
-    }}>
+    <SubscriptionContext.Provider
+      value={{
+        showSubscription,
+        openSubscription,
+        closeSubscription,
+        fetchSubscriptionDetails,
+        subscriptionPlan,
+        setSubscriptionPlan,
+      }}
+    >
       {children}
     </SubscriptionContext.Provider>
   );
 };
 
-export const useSubscription = () => useContext(SubscriptionContext);
+export const useSubscription = () => {
+  const ctx = useContext(SubscriptionContext);
+  if (!ctx) throw new Error('useSubscription must be used within a SubscriptionProvider');
+  return ctx;
+};

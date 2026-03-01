@@ -1,109 +1,124 @@
-// context/SocketContext.js
+// src/Context/SocketContext.js
+//
+// Single source of truth for the Socket.IO singleton.
+// Responsibilities:
+//   • Initialize / reconnect the socket when the auth token is present
+//   • Provide { socket, connected, reconnect } to the tree
+//   • Emit user-online once per connect (not on every render)
+//
+// NOT responsible for:
+//   • Notification state  → NotificationContext
+//   • Online-users list   → OnlineUsersContext
+//   • Auth state          → AuthContext
+
 import React, {
   createContext,
   useContext,
   useEffect,
   useState,
   useCallback,
+  useRef,
 } from 'react';
-import { jwtDecode } from 'jwt-decode'; // FIX: use named import
+import { jwtDecode } from 'jwt-decode';
 import {
   initializeSocket,
   reconnectSocket,
   getSocket,
+  onSocketEvent,
 } from '../WebSocket/WebSocketClient';
-import { useRef } from 'react';
 
 const SocketContext = createContext(null);
 
 export const SocketProvider = ({ children }) => {
-  const [socket, setSocket] = useState(null);
+  const [socket,    setSocket]    = useState(null);
   const [connected, setConnected] = useState(false);
-  const [userInfo, setUserInfo] = useState(null);
-  const socketRef = useRef(null);
 
-  const emitPresence = useCallback((sock, user) => {
-    if (!sock || !sock.connected || !user) return;
-    sock.emit('user-online', {
-      userId: user.id,
-      name: user.name,
-      email: user.email,
-    });
-    console.log('📡 user-online emitted:', user.name);
+  // Cache decoded user so presence can be re-emitted on reconnect
+  const userRef = useRef(null);
+
+  // ── Decode the user from the stored token ────────────────────────────────
+  const decodeUser = useCallback(() => {
+    try {
+      const token = localStorage.getItem('token');
+      if (!token) return null;
+      const decoded = jwtDecode(token);
+      return {
+        id:          decoded.user?.id,
+        name:        decoded.user?.name,
+        hometown:    decoded.user?.hometown,
+        currentcity: decoded.user?.currentcity,
+      };
+    } catch {
+      return null;
+    }
   }, []);
 
+  // ── Emit presence once the socket is connected ───────────────────────────
+  const emitPresence = useCallback((sock) => {
+    const user = userRef.current;
+    if (!sock?.connected || !user?.id) return;
+    sock.emit('user-online', {
+      userId:      user.id,
+      name:        user.name,
+      hometown:    user.hometown    ?? '',
+      currentcity: user.currentcity ?? '',
+    });
+  }, []);
+
+  // ── Bootstrap (runs once on mount, and whenever the token changes) ───────
   useEffect(() => {
-    const setupSocket = async () => {
-      // Decode user info from token
-      const token = localStorage.getItem('token');
-      if (!token) {
-        return;
-      }
+    const token = localStorage.getItem('token');
+    if (!token) return;
 
-      let decodedUser = null;
+    userRef.current = decodeUser();
 
-      if (token) {
-        try {
-          const decoded = jwtDecode(token);
-          decodedUser = {
-            id: decoded.user.id,
-            name: decoded.user.name,
-            email: decoded.user.email,
-          };
-          setUserInfo(decodedUser);
-        } catch (err) {
-          console.warn('⚠️ Failed to decode user from token');
-        }
-      }
+    let cleanup = () => {};
 
+    (async () => {
       const sock = await initializeSocket();
       if (!sock) return;
 
       setSocket(sock);
-      socketRef.current = sock; // ✅ store in ref
       setConnected(sock.connected);
 
+      // Use named handlers so we can detach them precisely
+      const onConnect    = () => { setConnected(true);  emitPresence(sock); };
+      const onDisconnect = () => { setConnected(false); };
 
-      sock.on('connect', () => {
-        setConnected(true);
-        emitPresence(sock, decodedUser);
-      });
+      const offConnect    = onSocketEvent('connect',    onConnect);
+      const offDisconnect = onSocketEvent('disconnect', onDisconnect);
 
-      sock.on('disconnect', () => {
-        setConnected(false);
-      });
-    };
+      // If socket is already connected when we attach the listener
+      if (sock.connected) onConnect();
 
-    setupSocket();
+      cleanup = () => {
+        offConnect();
+        offDisconnect();
+      };
+    })();
 
-    return () => {
-      const activeSocket = socketRef.current;
-      if (activeSocket?.connected) {
-        activeSocket.disconnect();
-      }
-    };
+    return () => cleanup();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // intentionally empty — runs once on mount
+
+  // ── Manual reconnect (exposed for components that need it) ────────────────
+  const reconnect = useCallback(async () => {
+    await reconnectSocket();
+    const sock = getSocket();
+    setSocket(sock);
+    setConnected(!!sock?.connected);
+    if (sock?.connected) emitPresence(sock);
   }, [emitPresence]);
 
-  const reconnect = async () => {
-    await reconnectSocket();
-    const current = getSocket();
-    setSocket(current);
-    setConnected(current?.connected);
-    emitPresence(current, userInfo); // <-- now valid
-  };
-
   return (
-    <SocketContext.Provider
-      value={{
-        socket,
-        connected,
-        userInfo,
-        reconnect,
-      }}
-    >
+    <SocketContext.Provider value={{ socket, connected, reconnect }}>
       {children}
     </SocketContext.Provider>
   );
 };
 
-export const useSocket = () => useContext(SocketContext);
+export const useSocket = () => {
+  const ctx = useContext(SocketContext);
+  if (!ctx) throw new Error('useSocket must be used within a SocketProvider');
+  return ctx;
+};

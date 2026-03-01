@@ -1,54 +1,91 @@
-import { createContext, useContext, useState, useEffect } from "react";
-import getSocket from '../WebSocket/WebSocketClient';
+// src/Context/ChatContext.js
+//
+// Provides chat state and actions to the messaging UI.
+//
+// Changes from original:
+//   • Uses onSocketEvent() instead of socket.on/off to avoid clobbering
+//     other listeners on reconnect.
+//   • sendMessage validates socket readiness via isSocketReady().
+//   • Does not call getSocket() at render time (avoids stale null reference).
+
+import { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import { onSocketEvent, safeEmit, isSocketReady } from '../WebSocket/WebSocketClient';
 import apiRequest from '../utils/apiRequest';
 
 const ChatContext = createContext();
 
 export const ChatProvider = ({ children }) => {
-    const socket = getSocket();
-    const [selectedChat, setSelectedChat] = useState(null);
-    const [messages, setMessages] = useState([]);
-    const [isTyping, setIsTyping] = useState(false);
+  const [selectedChat, setSelectedChat] = useState(null);
+  const [messages,     setMessages]     = useState([]);
+  const [isTyping,     setIsTyping]     = useState(false);
 
-    const sendMessage = ({ toUserId, content, type = 'text' }) => {
-        if (!toUserId || !content) return;
-        socket.emit('send_message', { toUserId, message: { content, type, timestamp: new Date() } });
-    };
+  // ── Incoming messages ────────────────────────────────────────────────────
+  useEffect(() => {
+    const off = onSocketEvent('receive_message', ({ fromUserId, message }) => {
+      setMessages((prev) => [...prev, { ...message, from: fromUserId }]);
+    });
+    return off;
+  }, []); // single mount — onSocketEvent handles reconnect
 
-    useEffect(() => {
-        if (!socket) return;
+  // ── Typing events ────────────────────────────────────────────────────────
+  useEffect(() => {
+    const offStart = onSocketEvent('user-typing',      ({ fromUserId }) => {
+      // Only show typing for the currently selected chat partner
+      if (selectedChat && fromUserId !== selectedChat?.members?.find?.(m => m !== selectedChat?.myId)) return;
+      setIsTyping(true);
+    });
+    const offStop  = onSocketEvent('user-stop-typing', () => setIsTyping(false));
 
-        socket.on('receive_message', ({ fromUserId, message }) => {
-            setMessages(prev => [...prev, { ...message, from: fromUserId }]);
-        });
+    return () => { offStart(); offStop(); };
+  }, [selectedChat]);
 
-        return () => socket.off('receive_message');
-    }, [socket]);
+  // ── Send message ─────────────────────────────────────────────────────────
+  const sendMessage = useCallback(({ toUserId, content, chatId, type = 'text' }) => {
+    if (!toUserId || !content) return;
+    safeEmit('send_message', {
+      toUserId,
+      message: { content, type, chatId, timestamp: new Date() },
+    });
+  }, []);
 
-    const uploadFile = async (formData) => {
-        try {
-            const res = await apiRequest.post('/api/upload/chat', formData);
-            return res.data?.url;
-        } catch (err) {
-            console.error('Upload failed:', err);
-        }
-    };
-    return (
-        <ChatContext.Provider
-            value={{
-                selectedChat,
-                setSelectedChat,
-                messages,
-                setMessages,
-                isTyping,
-                setIsTyping,
-                sendMessage,
-                uploadFile
-            }}
-        >
-            {children}
-        </ChatContext.Provider>
-    );
+  // ── Emit typing indicator ─────────────────────────────────────────────────
+  const emitTyping = useCallback(({ toUserId, chatId, isTyping: typing }) => {
+    safeEmit(typing ? 'typing' : 'stop-typing', { toUserId, chatId });
+  }, []);
+
+  // ── File upload ───────────────────────────────────────────────────────────
+  const uploadFile = useCallback(async (formData) => {
+    try {
+      const res = await apiRequest.post('/api/upload/chat', formData);
+      return res.data?.url ?? null;
+    } catch (err) {
+      console.error('[ChatContext] Upload failed:', err);
+      return null;
+    }
+  }, []);
+
+  return (
+    <ChatContext.Provider
+      value={{
+        selectedChat,
+        setSelectedChat,
+        messages,
+        setMessages,
+        isTyping,
+        setIsTyping,
+        sendMessage,
+        emitTyping,
+        uploadFile,
+        isReady: isSocketReady, // let components check before sending
+      }}
+    >
+      {children}
+    </ChatContext.Provider>
+  );
 };
 
-export const useChat = () => useContext(ChatContext);
+export const useChat = () => {
+  const ctx = useContext(ChatContext);
+  if (!ctx) throw new Error('useChat must be used within a ChatProvider');
+  return ctx;
+};

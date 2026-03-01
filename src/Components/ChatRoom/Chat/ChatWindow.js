@@ -1,131 +1,290 @@
-import React, { useEffect, useRef } from "react";
-import { useAuth } from "../../../Context/Authorisation/AuthContext";
-import { useChat } from "../../../Context/ChatContext";
-import apiRequest from "../../../utils/apiRequest";
-// import MessageInput from "./MessageInput";
-import MessageBubble from "./MessageBubble";
+// src/Components/ChatRoom/Chat/ChatWindow.js
+//
+// Professional chat window with:
+//   • Date separators between messages ("Today", "Yesterday", "Mon 14 Jan")
+//   • Unread message divider
+//   • Scroll-to-bottom floating button with unread pip
+//   • Smart scroll — auto-scrolls only when already near bottom
+//   • Passes prevMsg/nextMsg to MessageBubble for grouping
+//   • ReplyContext provider so bubbles can set reply state
+//   • Typing indicator in header status line (not just in message area)
 
-// Optional helper
-const formatLastSeen = (timestamp) => {
-  const diffMs = Date.now() - new Date(timestamp).getTime();
-  const minutes = Math.floor(diffMs / (1000 * 60));
-  if (minutes < 1) return "just now";
-  if (minutes < 60) return `${minutes} min ago`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours} hr ago`;
-  const days = Math.floor(hours / 24);
-  return `${days} day${days > 1 ? "s" : ""} ago`;
+import React, {
+  useEffect, useRef, useMemo, useState, useCallback,
+} from 'react';
+import { ArrowLeft, Phone, Video, MoreVertical, ChevronDown } from 'lucide-react';
+import { useAuth }       from '../../../Context/Authorisation/AuthContext';
+import { useSocket }     from '../../../Context/SocketContext';
+import { useChat }       from '../../../Context/ChatContext';
+import { usePresence }   from '../../../hooks/usePresence';
+import { onSocketEvent } from '../../../WebSocket/WebSocketClient';
+import apiRequest        from '../../../utils/apiRequest';
+import MessageBubble, { ReplyContext } from './MessageBubble';
+import { getInitials }   from '../../../utils/getInitials';
+
+const COLORS = ['#0ea5e9','#8b5cf6','#ec4899','#f59e0b','#10b981','#ef4444'];
+const getColor = (name = '') => {
+  let h = 0;
+  for (let i = 0; i < name.length; i++) h = name.charCodeAt(i) + ((h << 5) - h);
+  return COLORS[Math.abs(h) % COLORS.length];
 };
 
-const ChatWindow = () => {
-  const { user, socket } = useAuth();
-  const {
-    selectedChat,
-    messages,
-    setMessages,
-    isTyping,
-    setIsTyping,
-  } = useChat();
-  const bottomRef = useRef();
+const formatLastSeen = (ts) => {
+  if (!ts) return 'last seen recently';
+  const diff = Date.now() - new Date(ts).getTime();
+  const m = Math.floor(diff / 60_000);
+  if (m < 1)  return 'last seen just now';
+  if (m < 60) return `last seen ${m}m ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `last seen ${h}h ago`;
+  return `last seen ${Math.floor(h / 24)}d ago`;
+};
 
-  const receiver =
-    selectedChat?.members?.find((m) => m._id !== user?._id) || null;
+const isSameDay = (a, b) =>
+  new Date(a).toDateString() === new Date(b).toDateString();
 
-  // Always call hooks
+const dayLabel = (dateStr) => {
+  const d    = new Date(dateStr);
+  const now  = new Date();
+  const diff = Math.floor((now - d) / 86_400_000);
+  if (diff === 0) return 'Today';
+  if (diff === 1) return 'Yesterday';
+  if (diff < 7)   return d.toLocaleDateString(undefined, { weekday: 'long' });
+  return d.toLocaleDateString(undefined, { day: 'numeric', month: 'long', year: 'numeric' });
+};
+
+const ChatWindow = ({ onBackToList, replyTo, setReplyTo }) => {
+  const { user }      = useAuth();
+  const { connected } = useSocket();
+  const { selectedChat, messages, setMessages, isTyping, setIsTyping } = useChat();
+  const { isOnline }  = usePresence();
+
+  const messagesEndRef   = useRef(null);
+  const messagesAreaRef  = useRef(null);
+  const [showScrollBtn,  setShowScrollBtn]  = useState(false);
+  const [newMsgCount,    setNewMsgCount]    = useState(0);
+  const firstUnreadRef   = useRef(null); // index of first unread msg
+
+  // ── Recipient ─────────────────────────────────────────────────────
+  const chatMembers = useMemo(
+    () => selectedChat?.members || selectedChat?.users || [],
+    [selectedChat?.members, selectedChat?.users]
+  );
+  const recipient = useMemo(
+    () => chatMembers.find((m) => m._id?.toString() !== user?._id?.toString()) ?? null,
+    [chatMembers, user?._id]
+  );
+
+  const [recipientProfile, setRecipientProfile] = useState(null);
   useEffect(() => {
-    const loadMessages = async () => {
-      if (!selectedChat?._id) return;
+    if (!recipient?._id) { setRecipientProfile(null); return; }
+    apiRequest.get(`/api/profile/${recipient._id}`)
+      .then((r) => r.data?.profile && setRecipientProfile(r.data.profile))
+      .catch(() => {});
+  }, [recipient?._id]);
 
-      try {
-        const res = await apiRequest.get(`/api/message/${selectedChat._id}`);
-        setMessages(res.data);
-      } catch (err) {
-        console.error("❌ Failed to load messages:", err.message);
-      }
-    };
+  const recipientInfo = useMemo(() => ({
+    ...recipient,
+    profileImage:
+      recipientProfile?.profileavatar?.URL ||
+      recipient?.profileImage || recipient?.avatar || null,
+    name:       recipient?.name       ?? 'Unknown',
+    lastActive: recipient?.lastActive ?? null,
+  }), [recipient, recipientProfile]);
 
-    loadMessages();
+  // ── Load messages ─────────────────────────────────────────────────
+  useEffect(() => {
+    if (!selectedChat?._id) return;
+    apiRequest.get(`/api/message/${selectedChat._id}`)
+      .then((r) => { setMessages(r.data); firstUnreadRef.current = null; })
+      .catch(() => {});
   }, [selectedChat?._id, setMessages]);
 
+  // Mark read
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages]);
+    if (!selectedChat?._id) return;
+    apiRequest.put(`/api/chat/mark-read/${selectedChat._id}`).catch(() => {});
+  }, [selectedChat?._id]);
+
+  // ── Smart scroll ──────────────────────────────────────────────────
+  const isNearBottom = useCallback(() => {
+    const el = messagesAreaRef.current;
+    if (!el) return true;
+    return el.scrollHeight - el.scrollTop - el.clientHeight < 120;
+  }, []);
 
   useEffect(() => {
-    if (!socket || !selectedChat?._id || !user?._id) return;
+    if (isNearBottom()) {
+      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+      setNewMsgCount(0);
+    } else {
+      setNewMsgCount((c) => c + 1);
+      setShowScrollBtn(true);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [messages.length]);
 
-    const handleReceive = ({ message }) => {
-      if (message.chatId === selectedChat._id) {
-        setMessages((prev) => [...prev, message]);
-      }
-    };
+  const handleScroll = useCallback(() => {
+    setShowScrollBtn(!isNearBottom());
+    if (isNearBottom()) setNewMsgCount(0);
+  }, [isNearBottom]);
 
-    const handleTyping = ({ fromUserId }) => {
-      const partner = selectedChat?.members?.find((m) => m._id !== user._id);
-      if (fromUserId === partner?._id) {
-        setIsTyping(true);
-        setTimeout(() => setIsTyping(false), 3000);
-      }
-    };
+  const scrollToBottom = () => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    setShowScrollBtn(false);
+    setNewMsgCount(0);
+  };
 
-    socket.on("receive_message", handleReceive);
-    socket.on("user-typing", handleTyping);
-    socket.on("user-stop-typing", () => setIsTyping(false));
+  // ── Socket listeners ──────────────────────────────────────────────
+  useEffect(() => {
+    if (!selectedChat?._id || !user?._id) return;
+    let typingTimer = null;
 
-    return () => {
-      socket.off("receive_message", handleReceive);
-      socket.off("user-typing", handleTyping);
-      socket.off("user-stop-typing");
-    };
-  }, [socket, selectedChat?._id, user?._id, selectedChat?.members, setMessages, setIsTyping]);
+    const offMsg = onSocketEvent('receive_message', ({ message }) => {
+      if (message?.chatId !== selectedChat._id) return;
+      setMessages((prev) => {
+        if (prev.some((m) => m._id === message._id)) return prev;
+        return [...prev, message];
+      });
+    });
 
-  if (!selectedChat || !user || !Array.isArray(selectedChat.members)) {
+    const offTyping = onSocketEvent('user-typing', ({ fromUserId, chatId }) => {
+      if (chatId !== selectedChat._id || fromUserId !== recipient?._id) return;
+      setIsTyping(true);
+      clearTimeout(typingTimer);
+      typingTimer = setTimeout(() => setIsTyping(false), 3_000);
+    });
+
+    const offStop = onSocketEvent('user-stop-typing', ({ fromUserId }) => {
+      if (fromUserId === recipient?._id) { clearTimeout(typingTimer); setIsTyping(false); }
+    });
+
+    return () => { offMsg(); offTyping(); offStop(); clearTimeout(typingTimer); };
+  }, [selectedChat?._id, recipient?._id, user?._id, setMessages, setIsTyping]);
+
+  // ── Deduped messages ──────────────────────────────────────────────
+  const dedupedMessages = useMemo(
+    () => Array.from(new Map(messages.map((m) => [m._id, m])).values()),
+    [messages]
+  );
+
+  // ── Empty state ───────────────────────────────────────────────────
+  if (!selectedChat || !user || chatMembers.length === 0) {
     return (
-      <div className="d-flex align-items-center justify-content-center h-100 text-muted bg-light">
-        <h6>Select a conversation to start chatting</h6>
+      <div className="empty-chat-state">
+        <div className="empty-chat-icon">💬</div>
+        <h6>Select a conversation</h6>
+        <p>Choose a friend from the list to start chatting</p>
       </div>
     );
   }
 
+  const recipientOnline = recipient?._id ? isOnline(recipient._id) : false;
+
+  // ── Header status text ─────────────────────────────────────────────
+  const statusText = !connected
+    ? 'connecting…'
+    : isTyping
+      ? 'typing…'
+      : recipientOnline
+        ? 'online'
+        : formatLastSeen(recipientInfo.lastActive);
+
+  const statusClass = isTyping ? 'typing' : recipientOnline ? 'online' : '';
+
   return (
-    <div className="d-flex flex-column h-100" style={{ maxHeight: 'calc(100% - 48px)' }}>
-      {/* 🔹 Chat Header */}
-      {receiver && (
-        <div className="d-flex align-items-center gap-2 px-3 py-2 border-bottom bg-white sticky-top">
-          <div
-            className="rounded-circle bg-success text-white d-flex align-items-center justify-content-center"
-            style={{ width: "40px", height: "40px", fontWeight: "bold" }}
-          >
-            {receiver.name?.charAt(0).toUpperCase() || "?"}
+    <ReplyContext.Provider value={setReplyTo}>
+      {/* Header */}
+      <div className="chat-header">
+        <div className="chat-header-left">
+          <button className="chat-header-btn chat-back-btn" onClick={onBackToList} aria-label="Back">
+            <ArrowLeft size={20} />
+          </button>
+
+          <div className="chat-header-avatar">
+            {recipientInfo.profileImage
+              ? <img src={recipientInfo.profileImage} alt={recipientInfo.name} />
+              : <div className="chat-header-avatar-placeholder"
+                     style={{ background: getColor(recipientInfo.name) }}>
+                  {getInitials(recipientInfo.name)}
+                </div>
+            }
+            {recipientOnline && <span className="header-online-dot" aria-label="Online" />}
           </div>
-          <div>
-            <h6 className="mb-0">{receiver.name || "Unknown User"}</h6>
-            <small className="text-muted">
-              Last seen:{" "}
-              {receiver.lastActive
-                ? formatLastSeen(receiver.lastActive)
-                : "recently"}
-            </small>
+
+          <div className="chat-header-info">
+            <h6 className="chat-header-name">{recipientInfo.name}</h6>
+            <p className={`chat-header-status ${statusClass}`}>{statusText}</p>
           </div>
         </div>
-      )}
 
-      {/* 🔹 Messages */}
-      <div className="overflow-auto bg-transparent"
-      style={{ maxHeight: '100%' }}>
-        {Array.from(new Map(messages.map((m) => [m._id, m])).values()).map(
-          (msg) => (
-            <MessageBubble key={msg._id} msg={msg} />
-          )
-        )}
-
-        {isTyping && (
-          <div className="text-muted fst-italic small mt-2">Typing...</div>
-        )}
-
-        <div ref={bottomRef} />
+        <div className="chat-header-actions">
+          <button className="chat-header-btn" title="Voice call" aria-label="Voice call">
+            <Phone size={19} />
+          </button>
+          <button className="chat-header-btn" title="Video call" aria-label="Video call">
+            <Video size={19} />
+          </button>
+          <button className="chat-header-btn" title="More options" aria-label="More options">
+            <MoreVertical size={19} />
+          </button>
+        </div>
       </div>
-    </div>
+
+      {/* Messages */}
+      <div
+        className="chat-messages"
+        ref={messagesAreaRef}
+        onScroll={handleScroll}
+      >
+        {dedupedMessages.map((msg, idx) => {
+          const prev = dedupedMessages[idx - 1] ?? null;
+          const next = dedupedMessages[idx + 1] ?? null;
+
+          // Date separator
+          const showDateSep = idx === 0 || !isSameDay(msg.createdAt, prev?.createdAt);
+
+          return (
+            <React.Fragment key={msg._id}>
+              {showDateSep && (
+                <div className="date-separator">
+                  <span className="date-separator-label">{dayLabel(msg.createdAt)}</span>
+                </div>
+              )}
+              <div id={`msg-${msg._id}`}>
+                <MessageBubble
+                  msg={msg}
+                  prevMsg={prev}
+                  nextMsg={next}
+                  recipientInfo={recipientInfo}
+                />
+              </div>
+            </React.Fragment>
+          );
+        })}
+
+        {/* Typing indicator */}
+        {isTyping && (
+          <div className="typing-bubble">
+            <div className="typing-dot" />
+            <div className="typing-dot" />
+            <div className="typing-dot" />
+          </div>
+        )}
+
+        <div ref={messagesEndRef} />
+      </div>
+
+      {/* Scroll-to-bottom button */}
+      {showScrollBtn && (
+        <button className="scroll-to-bottom" onClick={scrollToBottom} aria-label="Scroll to bottom">
+          <ChevronDown size={20} />
+          {newMsgCount > 0 && (
+            <span className="unread-pip">{newMsgCount > 99 ? '99+' : newMsgCount}</span>
+          )}
+        </button>
+      )}
+    </ReplyContext.Provider>
   );
 };
 

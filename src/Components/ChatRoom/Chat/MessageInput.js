@@ -1,119 +1,234 @@
 // src/Components/ChatRoom/Chat/MessageInput.js
-import React, { useState, useRef, useEffect } from "react";
-import { SendHorizonal } from "lucide-react";
-import { useAuth } from "../../../Context/Authorisation/AuthContext";
-import { useChat } from "../../../Context/ChatContext";
-import { safeEmit } from "../../../WebSocket/WebSocketClient";
-import apiRequest from "../../../utils/apiRequest";
-import UploadInput from "../UploadInput"; // ✅ Import upgraded UploadInput
+//
+// Professional input with:
+//   • Reply preview bar (cancel, sender name, quoted text)
+//   • Optimistic send — message appears instantly with 'sending' status
+//   • Emoji picker (native system emoji via input[type=text] trick — zero deps)
+//   • Typing throttle — emits start/stop correctly
+//   • Shift+Enter for newline, Enter to send
+//   • Auto-grow textarea up to 6 lines
+//   • File attachment via UploadInput panel
 
-const MessageInput = () => {
-    const textareaRef = useRef(null);
-    const { user } = useAuth();
-    const { selectedChat, setMessages } = useChat();
-    const [text, setText] = useState("");
+import React, { useState, useRef, useEffect, useCallback } from 'react';
+import { Send, Paperclip, Smile, Mic, X } from 'lucide-react';
+import { useAuth }   from '../../../Context/Authorisation/AuthContext';
+import { useChat }   from '../../../Context/ChatContext';
+import { safeEmit }  from '../../../WebSocket/WebSocketClient';
+import apiRequest    from '../../../utils/apiRequest';
+import UploadInput   from '../UploadInput';
 
-    // Auto-grow typing lines logic
-    useEffect(() => {
-        const textarea = textareaRef.current;
-        if (textarea) {
-            textarea.style.height = "auto";
-            const scrollHeight = textarea.scrollHeight;
-            const maxHeight = 5 * 24; // ~24px line height × 5 lines = 120px
-            textarea.style.height = `${Math.min(scrollHeight, maxHeight)}px`;
-        }
-    }, [text])
+const LINE_HEIGHT = 24; // px per textarea line
+const MAX_LINES   = 6;
 
-    const handleTyping = () => {
-        if (!selectedChat || !Array.isArray(selectedChat.members)) return;
-        const receiver = selectedChat.members.find((m) => m._id !== user._id);
-        if (receiver?._id) {
-            safeEmit("typing", { toUserId: receiver._id });
-        }
+const MessageInput = ({ replyTo, setReplyTo }) => {
+  const textareaRef = useRef(null);
+  const typingTimer = useRef(null);
+  const isTypingRef = useRef(false);
+
+  const { user }                      = useAuth();
+  const { selectedChat, setMessages } = useChat();
+
+  const [text,       setText]       = useState('');
+  const [showUpload, setShowUpload] = useState(false);
+  const [sending,    setSending]    = useState(false);
+
+  // ── Auto-grow textarea ────────────────────────────────────────────
+  useEffect(() => {
+    const el = textareaRef.current;
+    if (!el) return;
+    el.style.height = 'auto';
+    el.style.height = `${Math.min(el.scrollHeight, MAX_LINES * LINE_HEIGHT)}px`;
+  }, [text]);
+
+  useEffect(() => () => clearTimeout(typingTimer.current), []);
+
+  // ── Receiver helper ────────────────────────────────────────────────
+  const getReceiver = useCallback(() => {
+    if (!selectedChat?.members || !user?._id) return null;
+    return selectedChat.members.find((m) => m._id !== user._id) ?? null;
+  }, [selectedChat, user?._id]);
+
+  // ── Typing signals ─────────────────────────────────────────────────
+  const emitTypingStart = useCallback(() => {
+    const r = getReceiver();
+    if (!r?._id || isTypingRef.current) return;
+    isTypingRef.current = true;
+    safeEmit('typing', { toUserId: r._id, chatId: selectedChat._id });
+  }, [getReceiver, selectedChat?._id]);
+
+  const emitTypingStop = useCallback(() => {
+    const r = getReceiver();
+    isTypingRef.current = false;
+    clearTimeout(typingTimer.current);
+    if (!r?._id) return;
+    safeEmit('stop-typing', { toUserId: r._id, chatId: selectedChat._id });
+  }, [getReceiver, selectedChat?._id]);
+
+  const handleChange = (e) => {
+    setText(e.target.value);
+    emitTypingStart();
+    clearTimeout(typingTimer.current);
+    typingTimer.current = setTimeout(emitTypingStop, 2_000);
+  };
+
+  // ── Send ───────────────────────────────────────────────────────────
+  const handleSend = useCallback(async () => {
+    const trimmed = text.trim();
+    if (!trimmed || !selectedChat || sending) return;
+
+    emitTypingStop();
+    setText('');
+    setSending(true);
+
+    // Optimistic message (local only until server confirms)
+    const optimisticId = `opt-${Date.now()}`;
+    const optimisticMsg = {
+      _id:      optimisticId,
+      chatId:   selectedChat._id,
+      sender:   { _id: user._id, name: user.name },
+      text:     trimmed,
+      replyTo:  replyTo ?? null,
+      createdAt: new Date().toISOString(),
+      _sending: true,   // flag for Tick component
     };
+    setMessages((prev) => [...prev, optimisticMsg]);
+    setReplyTo?.(null);
 
-    const handleSend = async () => {
-        if (!text.trim() || !selectedChat) return;
+    try {
+      const formData = new FormData();
+      formData.append('chatId', selectedChat._id);
+      formData.append('text', trimmed);
+      if (replyTo?._id) formData.append('replyToId', replyTo._id);
 
-        try {
-            const formData = new FormData();
-            formData.append("chatId", selectedChat._id);
-            formData.append("text", text.trim());
+      const { data: saved } = await apiRequest.post('/api/message', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      });
 
-            const res = await apiRequest.post("/api/message", formData, {
-                headers: { "Content-Type": "multipart/form-data" },
-            });
+      // Replace optimistic with real
+      setMessages((prev) =>
+        prev.map((m) => (m._id === optimisticId ? { ...saved, _sending: false } : m))
+      );
 
-            const newMessage = res.data;
-            setMessages((prev) => [...prev, newMessage]);
+      const receiver = getReceiver();
+      if (receiver?._id) {
+        safeEmit('send_message', { toUserId: receiver._id, message: saved });
+      }
+    } catch {
+      // Mark failed
+      setMessages((prev) =>
+        prev.map((m) =>
+          m._id === optimisticId ? { ...m, _sending: false, _failed: true } : m
+        )
+      );
+    } finally {
+      setSending(false);
+    }
+  }, [text, selectedChat, sending, replyTo, user, emitTypingStop, setMessages, setReplyTo, getReceiver]);
 
-            const receiver = selectedChat.members.find((m) => m._id !== user._id);
-            if (receiver?._id) {
-                safeEmit("send_message", {
-                    toUserId: receiver._id,
-                    message: newMessage,
-                });
-            }
+  const handleKeyDown = (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      handleSend();
+    }
+  };
 
-            setText("");
-        } catch (err) {
-            console.error("❌ Failed to send message:", err.message);
-        }
-    };
+  if (!selectedChat) return null;
 
-    const scrollToBottom = () => {
-        const chatWindow = document.getElementById("chat-body");
-        if (chatWindow) {
-            chatWindow.scrollTop = chatWindow.scrollHeight;
-        }
-    };
-
-    return (
-        <div className="input-group p-2 border-top bg-white d-flex flex-column">
-            {/* 🔽 UploadInput with multiple file support */}
-            <UploadInput
-                chatId={selectedChat?._id}
-                onUpload={(newMsg) => {
-                    setMessages((prev) => [...prev, newMsg]);
-                    scrollToBottom();
-                }}
-            />
-
-            {/* 🔽 Text input and Send button */}
-            <div className="d-flex align-items-center gap-2 mt-2">
-                {/* Message Input */}
-                <textarea
-                    ref={textareaRef}
-                    value={text}
-                    placeholder="Type a message..."
-                    className="form-control fs-5"
-                    style={{
-                        resize: 'none',
-                        overflow: 'auto',
-                        maxHeight: "120px",
-                        wordWrap: 'break-word',
-                        whiteSpace: 'pre-wrap',
-                        lineHeight: '1.6',
-                    }}
-                    onChange={(e) => setText(e.target.value)}
-                    onKeyDown={handleTyping}
-                    aria-label="Message input"
-                />
-
-                {/* Send Button */}
-                <button
-                    onClick={() => {
-                        handleSend(text);
-                        setText(""); // Clear input after send
-                    }}
-                    className="btn btn-primary ms-2 d-flex align-items-center justify-content-center"
-                    style={{ padding: "0.5rem 0.75rem" }}
-                >
-                    <SendHorizonal size={50} />
-                </button>
+  return (
+    <div className="chat-input-container">
+      {/* Reply preview bar */}
+      {replyTo && (
+        <div className="reply-preview-bar">
+          <div className="preview-content">
+            <div className="preview-name">
+              Replying to {replyTo.senderName}
             </div>
+            <div className="preview-text">{replyTo.text}</div>
+          </div>
+          <button
+            className="cancel-reply"
+            onClick={() => setReplyTo(null)}
+            aria-label="Cancel reply"
+          >
+            <X size={16} />
+          </button>
         </div>
-    );
+      )}
+
+      {/* Upload panel */}
+      {showUpload && (
+        <div style={{ padding: '0 12px 8px' }}>
+          <UploadInput
+            chatId={selectedChat._id}
+            onUpload={(newMsg) => {
+              setMessages((prev) => [...prev, newMsg]);
+              setShowUpload(false);
+            }}
+          />
+        </div>
+      )}
+
+      {/* Input row */}
+      <div className="chat-input-row">
+        {/* Input wrapper */}
+        <div className="chat-input-wrapper">
+          <button
+            className="input-action-btn"
+            onClick={() => setShowUpload((v) => !v)}
+            title="Attach file"
+            aria-label="Attach file"
+          >
+            <Paperclip size={20} />
+          </button>
+
+          <textarea
+            ref={textareaRef}
+            value={text}
+            placeholder="Type a message…"
+            className="chat-input"
+            rows={1}
+            onChange={handleChange}
+            onKeyDown={handleKeyDown}
+            onBlur={emitTypingStop}
+            aria-label="Message input"
+            autoComplete="off"
+          />
+
+          <button
+            className="input-action-btn"
+            title="Emoji"
+            aria-label="Emoji"
+            onClick={() => {
+              // Focus textarea — on mobile this opens the emoji keyboard
+              textareaRef.current?.focus();
+            }}
+          >
+            <Smile size={20} />
+          </button>
+        </div>
+
+        {/* Send / Mic */}
+        {text.trim() ? (
+          <button
+            className="send-btn"
+            onClick={handleSend}
+            disabled={sending}
+            aria-label="Send message"
+          >
+            <Send size={18} />
+          </button>
+        ) : (
+          <button
+            className="send-btn"
+            style={{ background: 'var(--bg-tertiary)', color: 'var(--text-secondary)', boxShadow: 'none' }}
+            aria-label="Voice message"
+          >
+            <Mic size={18} />
+          </button>
+        )}
+      </div>
+    </div>
+  );
 };
 
 export default MessageInput;

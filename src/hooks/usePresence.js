@@ -1,51 +1,71 @@
-// hooks/usePresence.js
-import { useEffect, useState } from 'react';
-import { useSocket } from '../Context/SocketContext';
+// src/hooks/usePresence.js
+//
+// Combines online-users data (from OnlineUsersContext) with typing indicators
+// (from local socket events) into a single convenient hook.
+//
+// Typing is kept local to this hook because it is ephemeral and chat-scoped —
+// no need to hoist it to a global context.
 
-export const usePresence = () => {
-  const { socket, connected } = useSocket();
-  const [onlineUsers, setOnlineUsers] = useState(new Set());
+import { useEffect, useState, useCallback } from 'react';
+import { useSocket }       from '../Context/SocketContext';
+import { useOnlineUsers }  from '../Context/OnlineUsersContext';
+import { onSocketEvent }   from '../WebSocket/WebSocketClient';
+
+/**
+ * @param {string} [chatId]  Optional — if provided, typing state is scoped
+ *                           to this specific chat room.
+ */
+export const usePresence = (chatId) => {
+  const { connected }          = useSocket();
+  const { isOnline, onlineUserIds } = useOnlineUsers();
+
   const [typingUsers, setTypingUsers] = useState(new Set());
 
+  // ── Typing indicators ─────────────────────────────────────────────────────
   useEffect(() => {
-    if (!socket) return;
-
-    const handleOnline = ({ userId }) => {
-      setOnlineUsers(prev => new Set(prev).add(userId));
-    };
-
-    const handleOffline = ({ userId }) => {
-      setOnlineUsers(prev => {
-        const newSet = new Set(prev);
-        newSet.delete(userId);
-        return newSet;
+    const onTyping = ({ fromUserId, chatId: tChatId }) => {
+      if (chatId && tChatId && tChatId !== chatId) return; // scope to chat
+      setTypingUsers((prev) => {
+        const next = new Set(prev);
+        next.add(fromUserId);
+        return next;
       });
     };
 
-    const handleTyping = ({ fromUserId }) => {
-      setTypingUsers(prev => new Set(prev).add(fromUserId));
-    };
-
-    const handleStopTyping = ({ fromUserId }) => {
-      setTypingUsers(prev => {
-        const newSet = new Set(prev);
-        newSet.delete(fromUserId);
-        return newSet;
+    const onStopTyping = ({ fromUserId, chatId: tChatId }) => {
+      if (chatId && tChatId && tChatId !== chatId) return;
+      setTypingUsers((prev) => {
+        const next = new Set(prev);
+        next.delete(fromUserId);
+        return next;
       });
     };
 
-    socket.on('user-online', handleOnline);
-    socket.on('user-offline', handleOffline);
-    socket.on('user-typing', handleTyping);
-    socket.on('user-stop-typing', handleStopTyping);
+    const offTyping     = onSocketEvent('user-typing',      onTyping);
+    const offStopTyping = onSocketEvent('user-stop-typing', onStopTyping);
 
     return () => {
-      socket.off('user-online', handleOnline);
-      socket.off('user-offline', handleOffline);
-      socket.off('user-typing', handleTyping);
-      socket.off('user-stop-typing', handleStopTyping);
+      offTyping();
+      offStopTyping();
     };
-  }, [socket]);
+  }, [chatId]);
 
-  return { onlineUsers, typingUsers, connected };
+  // ── Clear typing state when socket disconnects ────────────────────────────
+  useEffect(() => {
+    if (!connected) setTypingUsers(new Set());
+  }, [connected]);
+
+  // ── Convenience helpers ───────────────────────────────────────────────────
+  const isTyping = useCallback(
+    (userId) => typingUsers.has(String(userId)),
+    [typingUsers]
+  );
+
+  return {
+    onlineUserIds,
+    typingUsers,        // Set<userId>
+    isOnline,           // (userId: string) => boolean
+    isTyping,           // (userId: string) => boolean
+    connected,
+  };
 };

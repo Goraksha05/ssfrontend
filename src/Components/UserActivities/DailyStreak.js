@@ -1,4 +1,4 @@
-// DailyStreak.jsx — Improved, mobile-responsive streak UI
+// DailyStreak.jsx — Accurate streak UI with deduplicated day count
 import React, { useState } from "react";
 import CalendarHeatmap from "react-calendar-heatmap";
 import "react-calendar-heatmap/dist/styles.css";
@@ -10,7 +10,7 @@ import BankDetailsModal from "../Common/BankDetailsModal";
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 
-/** Safe ISO date formatter */
+/** Safe ISO date string from any date value */
 const toISO = (d) => {
   const dt = new Date(d);
   return isNaN(dt.getTime()) ? null : dt.toISOString().split("T")[0];
@@ -18,27 +18,33 @@ const toISO = (d) => {
 
 const DailyStreak = ({ onActivityRecorded }) => {
   const {
-    streakCount,
-    streakDates,
+    streakCount,       // unique calendar days (from backend deduplication)
+    streakDates,       // [{ date, count }]
+    totalUniqueDays,   // server-confirmed unique day count (most accurate)
     fetchStreakHistory,
     fetchStreakData,
-    claimedDays,
+    claimedDays,       // ['30days', '60days', …]
   } = useStreak();
 
-  const milestones = usePlanSlabs("streak").map((s) => s.dailystreak);
+  // Use totalUniqueDays from API if available, fallback to streakCount
+  const accurateStreak = totalUniqueDays ?? streakCount;
+
+  const { slabs: rawSlabs } = usePlanSlabs("streak");
+  const milestones = rawSlabs
+    .map((s) => s.dailystreak)
+    .filter((d) => typeof d === "number")
+    .sort((a, b) => a - b);
 
   const [showHeatmap, setShowHeatmap] = useState(false);
   const [selectedDate, setSelectedDate] = useState(null);
   const [selectedDay, setSelectedDay] = useState("");
   const [loading, setLoading] = useState(false);
 
-  // Auto-clear toast messages handled by react-toastify
-
-  // ── Derived ─────────────────────────────────────────────────────────────────
-  const nextMilestone = milestones.find((m) => streakCount < m) ?? null;
-  const prevMilestone = [...milestones].reverse().find((m) => streakCount >= m) ?? 0;
+  // ── Derived progress ──────────────────────────────────────────────────────
+  const nextMilestone = milestones.find((m) => accurateStreak < m) ?? null;
+  const prevMilestone = [...milestones].reverse().find((m) => accurateStreak >= m) ?? 0;
   const progress = nextMilestone
-    ? Math.round(((streakCount - prevMilestone) / (nextMilestone - prevMilestone)) * 100)
+    ? Math.min(100, Math.round(((accurateStreak - prevMilestone) / (nextMilestone - prevMilestone)) * 100))
     : 100;
 
   const heatmapValues = streakDates
@@ -48,7 +54,7 @@ const DailyStreak = ({ onActivityRecorded }) => {
     })
     .filter(Boolean);
 
-  // ── Handlers ─────────────────────────────────────────────────────────────────
+  // ── Handlers ─────────────────────────────────────────────────────────────
   const toggleHeatmap = () => {
     if (!showHeatmap) fetchStreakHistory();
     setShowHeatmap((v) => !v);
@@ -69,7 +75,7 @@ const DailyStreak = ({ onActivityRecorded }) => {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.message || "Claim failed");
-      toast.success(data.message || "🎉 Reward claimed!");
+      toast.success(data.message || "🎉 Streak reward claimed!");
       fetchStreakData();
       onActivityRecorded?.();
       setSelectedDay("");
@@ -81,14 +87,15 @@ const DailyStreak = ({ onActivityRecorded }) => {
     }
   };
 
-  // ── Render ───────────────────────────────────────────────────────────────────
+  // ── Render ────────────────────────────────────────────────────────────────
   return (
     <div style={styles.container}>
-      {/* ── Streak Counter ── */}
+
+      {/* ── Hero Counter ── */}
       <div style={styles.heroCard}>
         <span style={styles.flameBig}>🔥</span>
         <div>
-          <div style={styles.heroCount}>{streakCount}</div>
+          <div style={styles.heroCount}>{accurateStreak}</div>
           <div style={styles.heroLabel}>Day Streak</div>
         </div>
         {nextMilestone && (
@@ -99,38 +106,34 @@ const DailyStreak = ({ onActivityRecorded }) => {
         )}
       </div>
 
-      {/* ── Progress to next milestone ── */}
+      {/* ── Progress bar ── */}
       {nextMilestone && (
         <div style={styles.progressWrap}>
           <div style={styles.progressRow}>
-            <span style={styles.progressText}>{streakCount} / {nextMilestone} days</span>
+            <span style={styles.progressText}>{accurateStreak} / {nextMilestone} days</span>
             <span style={styles.progressPct}>{progress}%</span>
           </div>
           <div style={styles.progressTrack}>
-            <div
-              style={{ ...styles.progressBar, width: `${progress}%` }}
-            />
+            <div style={{ ...styles.progressBar, width: `${progress}%` }} />
           </div>
           <span style={styles.progressHint}>
-            {nextMilestone - streakCount} more days to unlock your next reward
+            {nextMilestone - accurateStreak} more day{nextMilestone - accurateStreak !== 1 ? "s" : ""} to reach your next {nextMilestone}-day reward
           </span>
         </div>
       )}
 
-      {/* ── Milestones grid ── */}
+      {/* ── Milestone chips ── */}
       <div style={styles.milestonesGrid}>
         {milestones.map((day) => {
           const slabKey = `${day}days`;
           const isClaimed = Array.isArray(claimedDays) && claimedDays.includes(slabKey);
-          const isActive = streakCount >= day;
+          const isActive  = accurateStreak >= day;
           return (
             <div
               key={day}
               style={{
                 ...styles.milestoneChip,
-                ...(isClaimed ? styles.chipClaimed : {}),
-                ...(isActive && !isClaimed ? styles.chipActive : {}),
-                ...(!isActive ? styles.chipLocked : {}),
+                ...(isClaimed ? styles.chipClaimed : isActive ? styles.chipActive : styles.chipLocked),
               }}
             >
               <span style={styles.chipIcon}>
@@ -153,15 +156,11 @@ const DailyStreak = ({ onActivityRecorded }) => {
         >
           <option value="">Select a milestone…</option>
           {milestones.map((day) => {
-            const slabKey = `${day}days`;
+            const slabKey  = `${day}days`;
             const isClaimed = Array.isArray(claimedDays) && claimedDays.includes(slabKey);
-            const isActive = streakCount >= day;
+            const isActive  = accurateStreak >= day;
             return (
-              <option
-                key={day}
-                value={day}
-                disabled={!isActive || isClaimed}
-              >
+              <option key={day} value={day} disabled={!isActive || isClaimed}>
                 {day} Days {isClaimed ? "✅ Claimed" : !isActive ? "🔒 Locked" : "— Available"}
               </option>
             );
@@ -207,15 +206,13 @@ const DailyStreak = ({ onActivityRecorded }) => {
               const d = v?.date ? new Date(v.date) : null;
               return d
                 ? {
-                  "data-tooltip-id": "heatmap-tip",
-                  "data-tooltip-content": `${d.toDateString()}: 🔥 ${v.count || 1} streak`,
-                }
+                    "data-tooltip-id": "heatmap-tip",
+                    "data-tooltip-content": `${d.toDateString()}: 🔥 ${v.count || 1} log${v.count !== 1 ? "s" : ""}`,
+                  }
                 : {};
             }}
             showWeekdayLabels
-            onClick={(v) => {
-              if (v?.date) setSelectedDate(new Date(v.date));
-            }}
+            onClick={(v) => { if (v?.date) setSelectedDate(new Date(v.date)); }}
           />
           <Tooltip id="heatmap-tip" />
 
@@ -223,12 +220,7 @@ const DailyStreak = ({ onActivityRecorded }) => {
             <div style={styles.dateCard}>
               <p>📅 <strong>{selectedDate.toDateString()}</strong></p>
               <p>🔥 Streak recorded on this day</p>
-              <button
-                style={styles.closeBtn}
-                onClick={() => setSelectedDate(null)}
-              >
-                Close
-              </button>
+              <button style={styles.closeBtn} onClick={() => setSelectedDate(null)}>Close</button>
             </div>
           )}
         </div>
@@ -244,24 +236,20 @@ const styles = {
   heroCard: {
     display: "flex", alignItems: "center", gap: 20,
     background: "linear-gradient(135deg, #431407 0%, #7c2d12 100%)",
-    borderRadius: 14, padding: "20px 24px",
-    flexWrap: "wrap",
+    borderRadius: 14, padding: "20px 24px", flexWrap: "wrap",
   },
-  flameBig: { fontSize: 48, lineHeight: 1 },
+  flameBig:  { fontSize: 48, lineHeight: 1 },
   heroCount: { fontSize: 48, fontWeight: 900, color: "#ff6b35", lineHeight: 1 },
   heroLabel: { color: "#fed7aa", fontSize: 14, fontWeight: 600, marginTop: 2 },
-  heroNext: { marginLeft: "auto", textAlign: "right" },
+  heroNext:  { marginLeft: "auto", textAlign: "right" },
   nextLabel: { display: "block", color: "#94a3b8", fontSize: 12 },
-  nextVal: { display: "block", color: "#fb923c", fontWeight: 700, fontSize: 16 },
+  nextVal:   { display: "block", color: "#fb923c", fontWeight: 700, fontSize: 16 },
 
-  progressWrap: { display: "flex", flexDirection: "column", gap: 6 },
-  progressRow: { display: "flex", justifyContent: "space-between" },
-  progressText: { color: "#94a3b8", fontSize: 13 },
-  progressPct: { color: "#ff6b35", fontWeight: 700, fontSize: 13 },
-  progressTrack: {
-    height: 8, borderRadius: 99,
-    background: "#334155", overflow: "hidden",
-  },
+  progressWrap:  { display: "flex", flexDirection: "column", gap: 6 },
+  progressRow:   { display: "flex", justifyContent: "space-between" },
+  progressText:  { color: "#94a3b8", fontSize: 13 },
+  progressPct:   { color: "#ff6b35", fontWeight: 700, fontSize: 13 },
+  progressTrack: { height: 8, borderRadius: 99, background: "#334155", overflow: "hidden" },
   progressBar: {
     height: "100%", borderRadius: 99,
     background: "linear-gradient(90deg, #ff6b35, #fb923c)",
@@ -269,19 +257,17 @@ const styles = {
   },
   progressHint: { color: "#64748b", fontSize: 12 },
 
-  milestonesGrid: {
-    display: "flex", flexWrap: "wrap", gap: 8,
-  },
+  milestonesGrid: { display: "flex", flexWrap: "wrap", gap: 8 },
   milestoneChip: {
     display: "flex", alignItems: "center", gap: 5,
     padding: "6px 12px", borderRadius: 99, fontSize: 12, fontWeight: 700,
     border: "1px solid #334155", position: "relative",
   },
-  chipActive: { background: "#292524", border: "1px solid #ff6b35", color: "#ff6b35" },
+  chipActive:  { background: "#292524", border: "1px solid #ff6b35", color: "#ff6b35" },
   chipClaimed: { background: "#14532d", border: "1px solid #16a34a", color: "#86efac" },
-  chipLocked: { background: "#1e293b", color: "#475569" },
-  chipIcon: { fontSize: 14 },
-  chipLabel: {},
+  chipLocked:  { background: "#1e293b", color: "#475569" },
+  chipIcon:    { fontSize: 14 },
+  chipLabel:   {},
   chipBadge: {
     fontSize: 10, background: "#16a34a", color: "#fff",
     borderRadius: 99, padding: "1px 6px", marginLeft: 2,
@@ -308,7 +294,6 @@ const styles = {
     background: "none", border: "1px solid #334155", borderRadius: 8,
     color: "#94a3b8", padding: "8px 14px", fontSize: 13,
     cursor: "pointer", alignSelf: "flex-start",
-    transition: "border-color 0.2s, color 0.2s",
   },
   heatmapBox: {
     background: "#0f172a", borderRadius: 12, padding: 16,

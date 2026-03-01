@@ -1,309 +1,418 @@
-import React, { useEffect, useRef, useState } from "react";
-import { useAuth } from "../../../Context/Authorisation/AuthContext";
-import { useChat } from "../../../Context/ChatContext";
-import moment from "moment";
-import Modal from "react-bootstrap/Modal";
-import Button from "react-bootstrap/Button";
-import apiRequest from "../../../utils/apiRequest";
-import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
-import { faTrash } from "@fortawesome/free-solid-svg-icons";
+// src/Components/ChatRoom/Chat/MessageBubble.js
+//
+// Professional messenger bubble with:
+//   • Bubble "tail" on first message of each group (WhatsApp-style)
+//   • Avatar grouping — avatar only shown on last bubble of a group
+//   • Read receipts — ✓ sending, ✓ sent, ✓✓ delivered, ✓✓ read (blue)
+//   • Emoji reactions — hover reaction picker + rendered chips
+//   • Right-click / long-press context menu (Reply, Copy, Delete for me, Delete for all)
+//   • Working reply-to quoted preview with scroll-to-quoted-message
+//   • Inline image lightbox (no Modal library dependency)
+//   • Deleted message styled separately
 
-const MessageBubble = ({ msg }) => {
-    const { user } = useAuth();
-    const { setMessages } = useChat();
+import React, {
+  useEffect, useRef, useState, useCallback, useContext, createContext,
+} from 'react';
+import { useAuth } from '../../../Context/Authorisation/AuthContext';
+import { useChat } from '../../../Context/ChatContext';
+import { getInitials } from '../../../utils/getInitials';
+import moment from 'moment';
+import apiRequest from '../../../utils/apiRequest';
+import {
+  Reply, 
+  Copy, 
+  Trash2, 
+  X, 
+  // ChevronDown,
+  // Check, 
+  // CheckCheck,
+} from 'lucide-react';
 
-    const isMine = user && msg?.sender?._id === user._id;
-    const isNotMine = !isMine;
+// ── Context so MessageBubble can call parent's setReplyTo ────────
+export const ReplyContext = createContext(null);
 
-    const [showImage, setShowImage] = useState(false);
-    const [showOptions, setShowOptions] = useState(false);
-    const [showReactions, setShowReactions] = useState(false);
-    const [reaction, setReaction] = useState(msg.reaction || null);
-    const [deleting, setDeleting] = useState(false);
+// ── Colour helpers ────────────────────────────────────────────────
+const COLORS = ['#0ea5e9','#8b5cf6','#ec4899','#f59e0b','#10b981','#ef4444'];
+const getColor = (name = '') => {
+  let h = 0;
+  for (let i = 0; i < name.length; i++) h = name.charCodeAt(i) + ((h << 5) - h);
+  return COLORS[Math.abs(h) % COLORS.length];
+};
 
-    const longPressTimer = useRef(null);
-    const bubbleRef = useRef(null);
-
-    const handleDeleteForMe = async () => {
-        try {
-            setDeleting(true);
-            await apiRequest.put(`/api/message/delete-for-me/${msg._id}`);
-            setMessages((prev) => prev.filter((m) => m._id !== msg._id));
-        } catch (err) {
-            console.error("❌ Delete-for-me failed:", err.message);
-        } finally {
-            setDeleting(false);
-            setShowOptions(false);
-        }
-    };
-
-    const handleDeleteForEveryone = async () => {
-        try {
-            setDeleting(true);
-            await apiRequest.put(`/api/message/delete-everyone/${msg._id}`);
-            setMessages((prev) =>
-                prev.map((m) =>
-                    m._id === msg._id
-                        ? {
-                            ...m,
-                            text: null,
-                            mediaUrl: null,
-                            mediaType: null,
-                            isDeleted: true,
-                        }
-                        : m
-                )
-            );
-        } catch (err) {
-            console.error("❌ Delete-for-everyone failed:", err.message);
-        } finally {
-            setDeleting(false);
-            setShowOptions(false);
-        }
-    };
-
-    const handleTouchStart = () => {
-        longPressTimer.current = setTimeout(() => {
-            setShowOptions(true);
-            setShowReactions(true);
-        }, 600);
-    };
-
-    const handleTouchEnd = () => {
-        clearTimeout(longPressTimer.current);
-    };
-
-    useEffect(() => {
-        const handleOutsideClick = (e) => {
-            if (bubbleRef.current && !bubbleRef.current.contains(e.target)) {
-                setShowOptions(false);
-                setShowReactions(false);
-            }
-        };
-
-        document.addEventListener("touchstart", handleOutsideClick);
-        document.addEventListener("mousedown", handleOutsideClick);
-
-        return () => {
-            document.removeEventListener("touchstart", handleOutsideClick);
-            document.removeEventListener("mousedown", handleOutsideClick);
-        };
-    }, []);
-
-    if (msg.isDeleted) {
-        return (
-            <div className={`d-flex mb-2 px-2 ${isMine ? "justify-content-end" : "justify-content-start"}`}>
-                <div
-                    className={`p-2 px-3 rounded-pill small text-muted border ${isMine ? "bg-light" : "bg-white"
-                        } fst-italic`}
-                >
-                    This message was deleted
-                </div>
-            </div>
-        );
-    }
-
+// ── Status tick component ─────────────────────────────────────────
+const Tick = ({ status }) => {
+  if (status === 'sending') {
     return (
-        <>
+      <span className="tick sent" title="Sending…">
+        <svg viewBox="0 0 16 10" fill="currentColor">
+          <path d="M1 5l4 4L15 1" stroke="currentColor" strokeWidth="2" fill="none" strokeLinecap="round"/>
+        </svg>
+      </span>
+    );
+  }
+  if (status === 'sent') {
+    return (
+      <span className="tick sent" title="Sent">
+        <svg viewBox="0 0 16 10" fill="currentColor">
+          <path d="M1 5l4 4L15 1" stroke="currentColor" strokeWidth="2" fill="none" strokeLinecap="round"/>
+        </svg>
+      </span>
+    );
+  }
+  if (status === 'delivered') {
+    return (
+      <span className="tick delivered" title="Delivered">
+        <svg viewBox="0 0 22 10" fill="none">
+          <path d="M1 5l4 4L15 1" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
+          <path d="M7 5l4 4L21 1" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
+        </svg>
+      </span>
+    );
+  }
+  if (status === 'read') {
+    return (
+      <span className="tick read" title="Read">
+        <svg viewBox="0 0 22 10" fill="none">
+          <path d="M1 5l4 4L15 1" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
+          <path d="M7 5l4 4L21 1" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
+        </svg>
+      </span>
+    );
+  }
+  return null;
+};
+
+// ── Quick emojis ─────────────────────────────────────────────────
+const QUICK_EMOJIS = ['❤️', '👍', '😂', '😮', '😢', '🙏'];
+
+// ── Context menu ──────────────────────────────────────────────────
+const ContextMenu = ({ x, y, isMine, onReply, onCopy, onDeleteForMe, onDeleteForAll, onClose }) => {
+  const ref = useRef(null);
+
+  useEffect(() => {
+    const handler = (e) => {
+      if (ref.current && !ref.current.contains(e.target)) onClose();
+    };
+    setTimeout(() => document.addEventListener('mousedown', handler), 0);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [onClose]);
+
+  // Clamp to viewport
+  const style = { top: y, left: x };
+  if (x + 200 > window.innerWidth) style.left = window.innerWidth - 210;
+  if (y + 200 > window.innerHeight) style.top = y - 200;
+
+  return (
+    <div className="msg-context-menu" ref={ref} style={style}>
+      <button className="context-menu-item" onClick={onReply}>
+        <Reply size={15} /> Reply
+      </button>
+      <button className="context-menu-item" onClick={onCopy}>
+        <Copy size={15} /> Copy text
+      </button>
+      <div className="context-menu-divider" />
+      <button className="context-menu-item danger" onClick={onDeleteForMe}>
+        <Trash2 size={15} /> Delete for me
+      </button>
+      {isMine && (
+        <button className="context-menu-item danger" onClick={onDeleteForAll}>
+          <Trash2 size={15} /> Delete for everyone
+        </button>
+      )}
+    </div>
+  );
+};
+
+// ── Lightbox ──────────────────────────────────────────────────────
+const Lightbox = ({ src, onClose }) => {
+  useEffect(() => {
+    const handler = (e) => { if (e.key === 'Escape') onClose(); };
+    document.addEventListener('keydown', handler);
+    return () => document.removeEventListener('keydown', handler);
+  }, [onClose]);
+
+  return (
+    <div className="lightbox-overlay" onClick={onClose}>
+      <img src={src} alt="full size" onClick={(e) => e.stopPropagation()} />
+      <button className="lightbox-close" onClick={onClose} aria-label="Close">
+        <X size={20} />
+      </button>
+    </div>
+  );
+};
+
+// ── Main MessageBubble ────────────────────────────────────────────
+const MessageBubble = ({ msg, prevMsg, nextMsg, recipientInfo }) => {
+  const { user }        = useAuth();
+  const { setMessages } = useChat();
+  const setReplyTo      = useContext(ReplyContext);
+
+  const isMine = user && msg?.sender?._id === user._id;
+
+  // Grouping logic
+  const sameAsPrev = prevMsg?.sender?._id === msg?.sender?._id
+    && Math.abs(new Date(msg.createdAt) - new Date(prevMsg?.createdAt)) < 5 * 60_000;
+  const sameAsNext = nextMsg?.sender?._id === msg?.sender?._id
+    && Math.abs(new Date(nextMsg?.createdAt) - new Date(msg.createdAt)) < 5 * 60_000;
+
+  const isFirstInGroup = !sameAsPrev; // show tail + avatar slot label
+  const isLastInGroup  = !sameAsNext; // show avatar image
+
+  const [showReactions, setShowReactions] = useState(false);
+  const [reactions,     setReactions]     = useState(msg.reactions || []);
+  const [lightbox,      setLightbox]      = useState(false);
+  const [contextMenu,   setContextMenu]   = useState(null); // { x, y }
+  const [deleting,      setDeleting]      = useState(false);
+
+  const bubbleRef   = useRef(null);
+  const pressTimer  = useRef(null);
+  const hoverTimer  = useRef(null);
+
+  // ── Reactions ───────────────────────────────────────────────────
+  const handleReact = useCallback(async (emoji) => {
+    setShowReactions(false);
+    const existing = reactions.find((r) => r.userId === user._id && r.emoji === emoji);
+    const next = existing
+      ? reactions.filter((r) => !(r.userId === user._id && r.emoji === emoji))
+      : [...reactions, { userId: user._id, emoji }];
+    setReactions(next);
+    try {
+      await apiRequest.put(`/api/message/${msg._id}/react`, { emoji });
+    } catch {
+      setReactions(reactions); // revert
+    }
+  }, [reactions, msg._id, user._id]);
+
+  // Group reactions by emoji
+  const groupedReactions = reactions.reduce((acc, r) => {
+    acc[r.emoji] = (acc[r.emoji] || 0) + 1;
+    return acc;
+  }, {});
+
+  // ── Delete ───────────────────────────────────────────────────────
+  const handleDeleteForMe = useCallback(async () => {
+    setDeleting(true);
+    setContextMenu(null);
+    try {
+      await apiRequest.put(`/api/message/delete-for-me/${msg._id}`);
+      setMessages((prev) => prev.filter((m) => m._id !== msg._id));
+    } catch { setDeleting(false); }
+  }, [msg._id, setMessages]);
+
+  const handleDeleteForAll = useCallback(async () => {
+    setDeleting(true);
+    setContextMenu(null);
+    try {
+      await apiRequest.put(`/api/message/delete-everyone/${msg._id}`);
+      setMessages((prev) =>
+        prev.map((m) => m._id === msg._id
+          ? { ...m, text: null, mediaUrl: null, isDeleted: true }
+          : m)
+      );
+    } catch { setDeleting(false); }
+  }, [msg._id, setMessages]);
+
+  // ── Reply ────────────────────────────────────────────────────────
+  const handleReply = useCallback(() => {
+    setContextMenu(null);
+    setReplyTo?.({
+      _id:        msg._id,
+      senderName: isMine ? 'You' : (msg.sender?.name ?? 'Unknown'),
+      text:       msg.text || (msg.mediaUrl ? '📎 Media' : ''),
+    });
+  }, [msg, isMine, setReplyTo]);
+
+  // ── Copy ─────────────────────────────────────────────────────────
+  const handleCopy = useCallback(() => {
+    setContextMenu(null);
+    if (msg.text) navigator.clipboard?.writeText(msg.text);
+  }, [msg.text]);
+
+  // ── Context menu trigger ─────────────────────────────────────────
+  const openContextMenu = useCallback((e) => {
+    e.preventDefault();
+    setShowReactions(false);
+    setContextMenu({ x: e.clientX, y: e.clientY });
+  }, []);
+
+  // ── Long press (mobile) ──────────────────────────────────────────
+  const handleTouchStart = (e) => {
+    pressTimer.current = setTimeout(() => {
+      const t = e.touches[0];
+      setContextMenu({ x: t.clientX, y: t.clientY });
+    }, 600);
+  };
+  const handleTouchEnd = () => clearTimeout(pressTimer.current);
+
+  // ── Hover → show reaction picker (desktop) ───────────────────────
+  const handleMouseEnter = () => {
+    clearTimeout(hoverTimer.current);
+    hoverTimer.current = setTimeout(() => setShowReactions(true), 500);
+  };
+  const handleMouseLeave = () => {
+    clearTimeout(hoverTimer.current);
+    hoverTimer.current = setTimeout(() => setShowReactions(false), 300);
+  };
+
+  // ── Determine message status ─────────────────────────────────────
+  const status = msg._sending
+    ? 'sending'
+    : msg.readBy?.length > 1
+      ? 'read'
+      : msg.deliveredTo?.length > 1
+        ? 'delivered'
+        : 'sent';
+
+  // ── Avatar for received messages ─────────────────────────────────
+  const avatarSrc = recipientInfo?.profileImage ?? null;
+  const avatarName = recipientInfo?.name ?? msg.sender?.name ?? '?';
+
+  // ── Deleted ──────────────────────────────────────────────────────
+  if (msg.isDeleted) {
+    return (
+      <div className={`msg-group ${isMine ? 'sent' : 'received'}`}
+           style={{ marginTop: isFirstInGroup ? 10 : 2 }}>
+        <div className="msg-row" style={{ flexDirection: isMine ? 'row-reverse' : 'row' }}>
+          {!isMine && <div style={{ width: 28, flexShrink: 0 }} />}
+          <div className="bubble-wrap">
+            <div className={`bubble deleted ${isMine ? 'sent' : 'received'}`}>
+              🚫 This message was deleted
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <>
+      <div
+        className={`msg-group ${isMine ? 'sent' : 'received'} ${isFirstInGroup ? 'new-sender' : ''}`}
+        style={{ marginTop: isFirstInGroup ? 8 : 2, opacity: deleting ? 0.4 : 1 }}
+        onMouseEnter={handleMouseEnter}
+        onMouseLeave={handleMouseLeave}
+      >
+        {/* Reaction picker */}
+        {showReactions && (
+          <div className="reaction-picker">
+            {QUICK_EMOJIS.map((emoji) => (
+              <button key={emoji} className="react-btn" onClick={() => handleReact(emoji)}
+                      title={`React with ${emoji}`} aria-label={`React with ${emoji}`}>
+                {emoji}
+              </button>
+            ))}
+          </div>
+        )}
+
+        <div className={`msg-row ${isMine ? 'sent' : 'received'}`}>
+          {/* Avatar col (received only) */}
+          {!isMine && (
+            <div className="msg-avatar-col">
+              {isLastInGroup ? (
+                avatarSrc
+                  ? <img src={avatarSrc} alt={avatarName} />
+                  : <div className="msg-avatar-mini" style={{ background: getColor(avatarName) }}>
+                      {getInitials(avatarName)}
+                    </div>
+              ) : (
+                <div style={{ width: 28 }} />
+              )}
+            </div>
+          )}
+
+          {/* Bubble */}
+          <div className="bubble-wrap">
+            {/* Sender name (first in group, received) */}
+            {!isMine && isFirstInGroup && msg.sender?.name && (
+              <div className="bubble-sender-name">{msg.sender.name}</div>
+            )}
+
             <div
-                className={`d-flex flex-column mb-2 px-2 ${isMine ? "align-items-end" : "align-items-start"
-                    }`}
+              ref={bubbleRef}
+              className={[
+                'bubble',
+                isMine ? 'sent' : 'received',
+                isLastInGroup ? 'tail' : 'follow',
+              ].join(' ')}
+              onContextMenu={openContextMenu}
+              onTouchStart={handleTouchStart}
+              onTouchEnd={handleTouchEnd}
             >
-                <div
-                    ref={bubbleRef}
-                    className={`message-bubble position-relative px-3 py-2 shadow-sm ${isMine ? "bg-primary text-white" : "bg-light text-dark"
-                        }`}
-                    style={{
-                        maxWidth: "75%",
-                        borderRadius: isMine
-                            ? "1rem 1rem 0.25rem 1rem"
-                            : "1rem 1rem 1rem 0.25rem",
-                        wordBreak: "break-word",
-                        boxShadow: "0 2px 8px rgba(0,0,0,0.08)",
-                    }}
-                    onMouseEnter={() => window.innerWidth >= 768 && setShowReactions(true)}
-                    onMouseLeave={() => window.innerWidth >= 768 && setShowReactions(false)}
-                    onTouchStart={handleTouchStart}
-                    onTouchEnd={handleTouchEnd}
-                >
-                    {/* 👤 Sender Name (for group) */}
-                    {isNotMine && msg.sender?.name && (
-                        <div className="fw-semibold mb-1" style={{ fontSize: "0.85rem" }}>
-                            {msg.sender.name}
-                        </div>
-                    )}
-
-                    {/* 📎 Reply Preview */}
-                    {msg.replyTo && (
-                        <div
-                            className="mb-2 p-2 rounded bg-white border-start border-4"
-                            style={{ borderColor: isMine ? "#90cdf4" : "#adb5bd" }}
-                        >
-                            <small className="fw-bold">{msg.replyTo.senderName}</small>
-                            <div className="text-muted" style={{ fontSize: "0.85rem" }}>
-                                {msg.replyTo.text || "Media"}
-                            </div>
-                        </div>
-                    )}
-
-                    {/* 🗑️ Trash Icon */}
-                    {showOptions && (
-                        <div
-                            className="position-absolute"
-                            style={{
-                                top: "6px",
-                                right: isMine ? "6px" : "auto",
-                                left: isNotMine ? "6px" : "auto",
-                                zIndex: 10,
-                                cursor: "pointer",
-                            }}
-                            title="Delete"
-                        >
-                            <FontAwesomeIcon icon={faTrash} size="sm" />
-                        </div>
-                    )}
-
-                    {/* 🧾 Delete Menu */}
-                    {showOptions && (
-                        <div
-                            className="position-absolute bg-white border rounded shadow-sm"
-                            style={{
-                                top: "30px",
-                                right: isMine ? "0" : "auto",
-                                left: isNotMine ? "0" : "auto",
-                                width: "150px",
-                                zIndex: 9999,
-                            }}
-                        >
-                            <button
-                                className="dropdown-item small"
-                                onClick={handleDeleteForMe}
-                                disabled={deleting}
-                            >
-                                Delete for Me
-                            </button>
-                            {isMine && (
-                                <button
-                                    className="dropdown-item small text-danger"
-                                    onClick={handleDeleteForEveryone}
-                                    disabled={deleting}
-                                >
-                                    Delete for Everyone
-                                </button>
-                            )}
-                        </div>
-                    )}
-
-                    {/* ✉️ Text */}
-                    {msg.text && (
-                        <div className="mb-1" style={{ whiteSpace: "pre-wrap" }}>
-                            {msg.text}
-                        </div>
-                    )}
-
-                    {/* 🎥📸 Media */}
-                    {msg.mediaUrl && (
-                        <div className="mt-2">
-                            {msg.mediaType?.startsWith("video") ? (
-                                <video
-                                    src={msg.mediaUrl}
-                                    controls
-                                    className="rounded"
-                                    style={{
-                                        width: "100%",
-                                        maxHeight: "200px",
-                                        objectFit: "cover",
-                                    }}
-                                />
-                            ) : (
-                                <img
-                                    src={msg.mediaUrl}
-                                    alt="media"
-                                    onClick={() => setShowImage(true)}
-                                    className="rounded"
-                                    style={{
-                                        width: "120px",
-                                        height: "120px",
-                                        objectFit: "cover",
-                                        cursor: "pointer",
-                                    }}
-                                />
-                            )}
-                        </div>
-                    )}
-
-                    {/* 😀 Emoji Reaction Preview */}
-                    {reaction && (
-                        <div className="mt-1" style={{ fontSize: "1.2rem" }}>
-                            {reaction}
-                        </div>
-                    )}
-
-                    {/* 😀 Emoji Reaction Bar */}
-                    {showReactions && (
-                        <div
-                            className="position-absolute d-flex gap-2 px-2 py-1 bg-white rounded shadow-sm"
-                            style={{
-                                bottom: "100%",
-                                right: isMine ? 0 : "auto",
-                                left: isNotMine ? 0 : "auto",
-                                transform: "translateY(-6px)",
-                                zIndex: 1000,
-                                fontSize: "1.25rem",
-                            }}
-                        >
-                            {["👍", "❤️", "😂", "😮"].map((emo) => (
-                                <span
-                                    key={emo}
-                                    onClick={() => {
-                                        setReaction(emo);
-                                        setShowReactions(false);
-                                        // Optional: emit socket/update DB
-                                    }}
-                                    style={{ cursor: "pointer" }}
-                                >
-                                    {emo}
-                                </span>
-                            ))}
-                        </div>
-                    )}
+              {/* Reply quote */}
+              {msg.replyTo && (
+                <div className="reply-quote"
+                     onClick={() => {
+                       document.getElementById(`msg-${msg.replyTo._id}`)
+                         ?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                     }}>
+                  <div className="reply-quote-name">{msg.replyTo.senderName}</div>
+                  <div className="reply-quote-text">{msg.replyTo.text || '📎 Media'}</div>
                 </div>
+              )}
 
-                {/* 🕒 Time */}
-                <div className={`small mt-1 ${isMine ? "text-white-50" : "text-muted"}`}>
-                    {moment(msg.createdAt).format("hh:mm A")}
+              {/* Text */}
+              {msg.text && <div className="bubble-text">{msg.text}</div>}
+
+              {/* Media */}
+              {msg.mediaUrl && (
+                <div className="bubble-media">
+                  {msg.mediaType?.startsWith('video') ? (
+                    <video src={msg.mediaUrl} controls />
+                  ) : (
+                    <img
+                      src={msg.mediaUrl}
+                      alt="media"
+                      loading="lazy"
+                      onClick={() => setLightbox(true)}
+                    />
+                  )}
                 </div>
+              )}
+
+              {/* Meta: time + tick */}
+              <div className="bubble-meta">
+                <span className="bubble-time">{moment(msg.createdAt).format('h:mm A')}</span>
+                {isMine && <Tick status={status} />}
+              </div>
             </div>
 
-            {/* 🖼️ Image Modal */}
-            {msg.mediaType === "image" && (
-                <Modal
-                    show={showImage}
-                    onHide={() => setShowImage(false)}
-                    centered
-                    size="lg"
-                    contentClassName="bg-dark text-white border-0"
-                >
-                    <Modal.Header className="border-0">
-                        <Button
-                            variant="light"
-                            className="ms-auto btn-close"
-                            onClick={() => setShowImage(false)}
-                            aria-label="Close"
-                        />
-                    </Modal.Header>
-                    <Modal.Body className="p-0 text-center">
-                        <img
-                            src={msg.mediaUrl}
-                            alt="full"
-                            className="img-fluid"
-                            style={{ maxHeight: "90vh", objectFit: "contain" }}
-                        />
-                    </Modal.Body>
-                </Modal>
+            {/* Reactions */}
+            {Object.keys(groupedReactions).length > 0 && (
+              <div className="reactions">
+                {Object.entries(groupedReactions).map(([emoji, count]) => (
+                  <button
+                    key={emoji}
+                    className="reaction-chip"
+                    onClick={() => handleReact(emoji)}
+                    title={`${count} reaction${count > 1 ? 's' : ''}`}
+                  >
+                    {emoji}
+                    {count > 1 && <span className="react-count">{count}</span>}
+                  </button>
+                ))}
+              </div>
             )}
-        </>
-    );
+          </div>
+        </div>
+      </div>
+
+      {/* Context menu (portal-like via fixed positioning) */}
+      {contextMenu && (
+        <ContextMenu
+          x={contextMenu.x} y={contextMenu.y}
+          isMine={isMine}
+          onReply={handleReply}
+          onCopy={handleCopy}
+          onDeleteForMe={handleDeleteForMe}
+          onDeleteForAll={handleDeleteForAll}
+          onClose={() => setContextMenu(null)}
+        />
+      )}
+
+      {/* Lightbox */}
+      {lightbox && <Lightbox src={msg.mediaUrl} onClose={() => setLightbox(false)} />}
+    </>
+  );
 };
 
 export default MessageBubble;

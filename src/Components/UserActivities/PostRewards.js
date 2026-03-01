@@ -1,4 +1,4 @@
-// PostRewards.jsx – Improved, mobile-responsive post rewards UI
+// PostRewards.jsx — Accurate post rewards UI
 import React, { useContext, useState } from "react";
 import { useAuth } from "../../Context/Authorisation/AuthContext";
 import PostContext from "../../Context/Posts/PostContext";
@@ -9,52 +9,41 @@ import BankDetailsModal from "../Common/BankDetailsModal";
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 
-const PostRewards = ({ userId, onActivityRecorded, activities = [] }) => {
+const PostRewards = ({ userId, onActivityRecorded }) => {
   const { user } = useAuth();
   const { statePosts } = useContext(PostContext);
 
-  // ── Normalize userId ──────────────────────────────────────────────────────
-  // The parent may pass the whole user object, user._id, or user.id.
-  // We resolve to a plain string so usePostCount always gets what it expects.
+  // Resolve userId to a string consistently
   const resolvedUserId =
     (userId?._id || userId?.id || userId)?.toString() ||
     (user?._id || user?.id)?.toString() ||
     null;
 
   const postCount = usePostCount(statePosts, resolvedUserId);
-  const rewardMilestones = usePlanSlabs("posts").map((s) => s.postsCount);
+
+  const { slabs: rawSlabs } = usePlanSlabs("posts");
+  const rewardMilestones = rawSlabs
+    .map((s) => s.postsCount)
+    .filter((p) => typeof p === "number")
+    .sort((a, b) => a - b);
+
   const isSubscribed = user?.subscription?.active;
 
   const [selectedMilestone, setSelectedMilestone] = useState("");
   const [loading, setLoading] = useState(false);
 
-  // ── Claimed milestones ────────────────────────────────────────────────────
-  // The activity route returns: { type: 'post', date, slabAwarded? }
-  // RewardClaim records milestone as a number (the postsCount slab).
-  // We check both shapes to be safe.
-  const claimedPostRewards = activities
-    .filter((a) => {
-      if (!a) return false;
-      // Shape from GET /api/activity/user  → type === 'post' with slabAwarded
-      if (a.type === "post" && a.slabAwarded !== undefined) return true;
-      // Legacy / alternative shape that stored postreward directly
-      if (a.postreward !== undefined) return true;
-      return false;
-    })
-    .map((a) => String(a.slabAwarded ?? a.postreward));
+  // ── Claimed milestones ──────────────────────────────────────────────────
+  // Source of truth: user.redeemedPostSlabs (set by backend on claim)
+  const allClaimed = (user?.redeemedPostSlabs ?? []).map(String);
 
-  // Also respect user.redeemedPostSlabs if available (most reliable source)
-  const redeemedFromUser = (user?.redeemedPostSlabs ?? []).map(String);
-  const allClaimed = [...new Set([...claimedPostRewards, ...redeemedFromUser])];
-
-  // ── Progress bar ──────────────────────────────────────────────────────────
+  // ── Progress bar ────────────────────────────────────────────────────────
   const nextMilestone = rewardMilestones.find((m) => postCount < m) ?? null;
   const prevMilestone = [...rewardMilestones].reverse().find((m) => postCount >= m) ?? 0;
   const progress = nextMilestone
-    ? Math.round(((postCount - prevMilestone) / (nextMilestone - prevMilestone)) * 100)
+    ? Math.min(100, Math.round(((postCount - prevMilestone) / (nextMilestone - prevMilestone)) * 100))
     : 100;
 
-  // ── Claim handler ─────────────────────────────────────────────────────────
+  // ── Claim handler ────────────────────────────────────────────────────────
   const handleClaim = async (bankDetails, closeModal) => {
     setLoading(true);
     try {
@@ -88,15 +77,19 @@ const PostRewards = ({ userId, onActivityRecorded, activities = [] }) => {
     return (
       <div style={styles.lockedBox}>
         <span style={styles.lockEmoji}>🔒</span>
-        <p style={styles.lockMsg}>Post Rewards are available after an active subscription.</p>
+        <p style={styles.lockMsg}>Post Rewards require an active subscription.</p>
         <p style={styles.lockSub}>Subscribe to start earning rewards for your posts!</p>
       </div>
     );
   }
 
+  const canClaim = !!selectedMilestone && !loading &&
+    postCount >= Number(selectedMilestone) &&
+    !allClaimed.includes(String(selectedMilestone));
+
   return (
     <div style={styles.container}>
-      {/* ── Counter ── */}
+      {/* ── Hero Counter ── */}
       <div style={styles.heroCard}>
         <span style={styles.heroEmoji}>📝</span>
         <div>
@@ -122,7 +115,7 @@ const PostRewards = ({ userId, onActivityRecorded, activities = [] }) => {
             <div style={{ ...styles.progressBar, width: `${progress}%` }} />
           </div>
           <span style={styles.progressHint}>
-            {nextMilestone - postCount} more posts to unlock your next reward
+            {nextMilestone - postCount} more post{nextMilestone - postCount !== 1 ? "s" : ""} to unlock your next reward
           </span>
         </div>
       )}
@@ -131,15 +124,13 @@ const PostRewards = ({ userId, onActivityRecorded, activities = [] }) => {
       <div style={styles.chipsRow}>
         {rewardMilestones.map((m) => {
           const isClaimed = allClaimed.includes(String(m));
-          const isActive = postCount >= m;
+          const isActive  = postCount >= m;
           return (
             <div
               key={m}
               style={{
                 ...styles.chip,
-                ...(isClaimed ? styles.chipClaimed : {}),
-                ...(isActive && !isClaimed ? styles.chipActive : {}),
-                ...(!isActive ? styles.chipLocked : {}),
+                ...(isClaimed ? styles.chipClaimed : isActive ? styles.chipActive : styles.chipLocked),
               }}
             >
               {isClaimed ? "✅" : isActive ? "🏆" : "🔒"} {m}p
@@ -158,13 +149,12 @@ const PostRewards = ({ userId, onActivityRecorded, activities = [] }) => {
         >
           <option value="">Select a milestone…</option>
           {rewardMilestones.map((m) => {
-            const key = String(m);
+            const key       = String(m);
             const isClaimed = allClaimed.includes(key);
-            const isActive = postCount >= m;
+            const isActive  = postCount >= m;
             return (
               <option key={m} value={key} disabled={!isActive || isClaimed}>
-                {m} Posts{" "}
-                {isClaimed ? "✅ Claimed" : !isActive ? "🔒 Locked" : "— Available"}
+                {m} Posts {isClaimed ? "✅ Claimed" : !isActive ? "🔒 Locked" : "— Available"}
               </option>
             );
           })}
@@ -172,11 +162,8 @@ const PostRewards = ({ userId, onActivityRecorded, activities = [] }) => {
 
         <button
           type="button"
-          style={{
-            ...styles.claimBtn,
-            ...(!selectedMilestone || loading ? styles.claimBtnDisabled : {}),
-          }}
-          disabled={!selectedMilestone || loading}
+          style={{ ...styles.claimBtn, ...(!canClaim ? styles.claimBtnDisabled : {}) }}
+          disabled={!canClaim}
           data-bs-toggle="modal"
           data-bs-target="#postBankModal"
         >
@@ -201,12 +188,11 @@ const styles = {
   lockedBox: {
     display: "flex", flexDirection: "column", alignItems: "center",
     gap: 10, padding: "40px 20px", textAlign: "center",
-    background: "#0f172a", borderRadius: 14,
-    border: "1px dashed #334155",
+    background: "#0f172a", borderRadius: 14, border: "1px dashed #334155",
   },
   lockEmoji: { fontSize: 40 },
-  lockMsg: { color: "#fbbf24", fontWeight: 700, fontSize: 15, margin: 0 },
-  lockSub: { color: "#64748b", fontSize: 13, margin: 0 },
+  lockMsg:   { color: "#fbbf24", fontWeight: 700, fontSize: 15, margin: 0 },
+  lockSub:   { color: "#64748b", fontSize: 13, margin: 0 },
 
   heroCard: {
     display: "flex", alignItems: "center", gap: 20,
@@ -216,14 +202,14 @@ const styles = {
   heroEmoji: { fontSize: 44, lineHeight: 1 },
   heroCount: { fontSize: 48, fontWeight: 900, color: "#fbbf24", lineHeight: 1 },
   heroLabel: { color: "#fde68a", fontSize: 14, fontWeight: 600, marginTop: 2 },
-  heroNext: { marginLeft: "auto", textAlign: "right" },
+  heroNext:  { marginLeft: "auto", textAlign: "right" },
   nextLabel: { display: "block", color: "#94a3b8", fontSize: 12 },
-  nextVal: { display: "block", color: "#f59e0b", fontWeight: 700, fontSize: 16 },
+  nextVal:   { display: "block", color: "#f59e0b", fontWeight: 700, fontSize: 16 },
 
-  progressWrap: { display: "flex", flexDirection: "column", gap: 6 },
-  progressRow: { display: "flex", justifyContent: "space-between" },
-  progressText: { color: "#94a3b8", fontSize: 13 },
-  progressPct: { color: "#f59e0b", fontWeight: 700, fontSize: 13 },
+  progressWrap:  { display: "flex", flexDirection: "column", gap: 6 },
+  progressRow:   { display: "flex", justifyContent: "space-between" },
+  progressText:  { color: "#94a3b8", fontSize: 13 },
+  progressPct:   { color: "#f59e0b", fontWeight: 700, fontSize: 13 },
   progressTrack: { height: 8, borderRadius: 99, background: "#334155", overflow: "hidden" },
   progressBar: {
     height: "100%", borderRadius: 99,
@@ -237,9 +223,9 @@ const styles = {
     padding: "6px 12px", borderRadius: 99, fontSize: 12, fontWeight: 700,
     border: "1px solid #334155",
   },
-  chipActive: { background: "#292524", border: "1px solid #f59e0b", color: "#f59e0b" },
+  chipActive:  { background: "#292524", border: "1px solid #f59e0b", color: "#f59e0b" },
   chipClaimed: { background: "#14532d", border: "1px solid #16a34a", color: "#86efac" },
-  chipLocked: { background: "#1e293b", color: "#475569" },
+  chipLocked:  { background: "#1e293b", color: "#475569" },
 
   claimSection: { display: "flex", flexDirection: "column", gap: 10 },
   claimLabel: { color: "#94a3b8", fontWeight: 600, fontSize: 14 },

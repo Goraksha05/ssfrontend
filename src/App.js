@@ -67,7 +67,6 @@ function AppContent() {
                                 <ReferralProvider>
                                     <SocketProvider>
                                         <SubscriptionProvider>
-                                            <ChatProvider>
                                                 {!isAdmin && isAuthenticated && (
                                                     <>
                                                         <Navbartemp title={<b>SoShoLife</b>} myHome="Home" />
@@ -125,7 +124,6 @@ function AppContent() {
                                                 </Routes>
 
                                                 <ToastContainer position="top-right" autoClose={5000} />
-                                            </ChatProvider>
                                         </SubscriptionProvider>
                                     </SocketProvider>
                                 </ReferralProvider>
