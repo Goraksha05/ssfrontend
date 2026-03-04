@@ -1,0 +1,433 @@
+/* ============================================================
+   theme-components.css — SoShoLife Dark / Light Mode System
+   FILE 2 OF 3  ▸  Bootstrap & Shared UI Overrides
+
+   SECTIONS IN THIS FILE
+   ─────────────────────
+   18. Modal (Bootstrap) Theming
+   19. Bootstrap Component Overrides
+       — Buttons, Badges, Alerts, List Groups
+       — Tables, Pagination, Tabs/Nav Pills
+       — Accordion, Offcanvas, Tooltips, Popovers
+   20. Calendar Heatmap (react-calendar-heatmap)
+   21. Profile Popover Card
+   22. Upload Preview
+   23. General Form Controls (outside modals)
+   24. Toast Notifications
+   25. UL / LI Overrides (friend/suggestion lists)
+   26. Selection Colour
+   27. Focus Ring (accessibility)
+   28. Reduced Motion (prefers-reduced-motion)
+   ============================================================ */
+
+/* ────────────────────────────────────────────────────────────
+   18. MODAL (Bootstrap) THEMING
+   ──────────────────────────────────────────────────────────── */
+
+body.theme-dark .modal-content {
+  background-color: var(--bg-card);
+  border-color: var(--border);
+  color: var(--text-primary);
+}
+
+body.theme-dark .modal-header {
+  border-bottom-color: var(--border);
+  color: var(--text-primary);
+}
+
+body.theme-dark .modal-footer {
+  border-top-color: var(--border);
+}
+
+body.theme-dark .modal-title { color: var(--text-heading); }
+
+body.theme-dark .btn-close {
+  filter: invert(1) grayscale(1) brightness(1.5);
+}
+
+/* Modal form controls */
+body.theme-dark .modal .form-control,
+body.theme-dark .modal .form-select {
+  background-color: var(--bg-input);
+  border-color: var(--border);
+  color: var(--text-primary);
+}
+
+body.theme-dark .modal .form-control:focus,
+body.theme-dark .modal .form-select:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-glow);
+  background-color: var(--bg-card);
+}
+
+body.theme-dark .modal .form-control::placeholder { color: var(--text-muted); }
+body.theme-dark .modal .form-label { color: var(--text-secondary); }
+
+
+/* ────────────────────────────────────────────────────────────
+   19. BOOTSTRAP COMPONENT OVERRIDES
+   ──────────────────────────────────────────────────────────── */
+
+/* ── Buttons ─────────────────────────────────────────── */
+body.theme-dark .btn-primary {
+  background-color: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+body.theme-dark .btn-primary:hover {
+  background-color: #0284c7;
+  border-color: #0284c7;
+}
+
+body.theme-dark .btn-secondary {
+  background-color: var(--bg-hover);
+  border-color: var(--border);
+  color: var(--text-primary);
+}
+body.theme-dark .btn-secondary:hover {
+  background-color: #2a3a5c;
+}
+
+body.theme-dark .btn-outline-primary {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+body.theme-dark .btn-outline-primary:hover {
+  background-color: var(--accent);
+  color: #fff;
+}
+
+body.theme-dark .btn-outline-secondary {
+  border-color: var(--border);
+  color: var(--text-secondary);
+}
+body.theme-dark .btn-outline-secondary:hover {
+  background-color: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+body.theme-dark .btn-outline-danger {
+  border-color: #ef4444;
+  color: #ef4444;
+}
+body.theme-dark .btn-outline-danger:hover {
+  background-color: #ef4444;
+  color: #fff;
+}
+
+body.theme-dark .btn-link {
+  color: var(--text-link);
+}
+
+/* ── Badges ──────────────────────────────────────────── */
+body.theme-dark .badge.bg-primary    { background-color: var(--accent) !important; }
+body.theme-dark .badge.bg-secondary  { background-color: var(--bg-hover) !important; color: var(--text-primary) !important; }
+
+/* ── Alerts ──────────────────────────────────────────── */
+body.theme-dark .alert {
+  background-color: var(--bg-card);
+  border-color: var(--border);
+  color: var(--text-primary);
+}
+
+/* ── List groups ─────────────────────────────────────── */
+body.theme-dark .list-group-item {
+  background-color: var(--bg-card);
+  border-color: var(--border);
+  color: var(--text-primary);
+}
+
+body.theme-dark .list-group-item:hover {
+  background-color: var(--bg-hover);
+}
+
+body.theme-dark .list-group-item.active {
+  background-color: var(--accent);
+  border-color: var(--accent);
+}
+
+/* ── Tables ──────────────────────────────────────────── */
+body.theme-dark .table {
+  color: var(--text-primary);
+  border-color: var(--border);
+}
+
+body.theme-dark .table > :not(caption) > * > * {
+  background-color: var(--bg-card);
+  border-bottom-color: var(--border);
+  color: var(--text-primary);
+}
+
+body.theme-dark .table-striped > tbody > tr:nth-of-type(odd) > * {
+  background-color: var(--bg-card-alt);
+}
+
+body.theme-dark .table-hover > tbody > tr:hover > * {
+  background-color: var(--bg-hover);
+}
+
+body.theme-dark thead tr {
+  background-color: var(--bg-card-alt);
+  color: var(--text-heading);
+}
+
+/* ── Pagination ──────────────────────────────────────── */
+body.theme-dark .page-item .page-link {
+  background-color: var(--bg-card);
+  border-color: var(--border);
+  color: var(--text-link);
+}
+
+body.theme-dark .page-item.active .page-link {
+  background-color: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+body.theme-dark .page-item.disabled .page-link {
+  background-color: var(--bg-card-alt);
+  color: var(--text-muted);
+}
+
+/* ── Tabs / Nav pills ────────────────────────────────── */
+body.theme-dark .nav-tabs .nav-link {
+  color: var(--text-secondary);
+  border-color: transparent;
+}
+
+body.theme-dark .nav-tabs .nav-link:hover {
+  color: var(--text-primary);
+  border-color: var(--border);
+}
+
+body.theme-dark .nav-tabs .nav-link.active {
+  background-color: var(--bg-card);
+  border-color: var(--border) var(--border) var(--bg-card);
+  color: var(--text-primary);
+}
+
+body.theme-dark .nav-pills .nav-link { color: var(--text-secondary); }
+body.theme-dark .nav-pills .nav-link.active {
+  background-color: var(--accent);
+  color: #fff;
+}
+
+/* ── Accordion ───────────────────────────────────────── */
+body.theme-dark .accordion-item {
+  background-color: var(--bg-card);
+  border-color: var(--border);
+}
+
+body.theme-dark .accordion-header .accordion-button {
+  background-color: var(--bg-card);
+  color: var(--text-primary);
+  box-shadow: none;
+}
+
+body.theme-dark .accordion-button::after {
+  filter: invert(1) brightness(1.5);
+}
+
+body.theme-dark .accordion-button:not(.collapsed) {
+  background-color: var(--bg-hover);
+  color: var(--accent);
+}
+
+body.theme-dark .accordion-body {
+  background-color: var(--bg-card-alt);
+  color: var(--text-secondary);
+}
+
+/* ── Offcanvas / Drawer ──────────────────────────────── */
+body.theme-dark .offcanvas {
+  background-color: var(--bg-card);
+  color: var(--text-primary);
+}
+
+body.theme-dark .offcanvas-header {
+  border-bottom-color: var(--border);
+}
+
+/* ── Tooltips ────────────────────────────────────────── */
+body.theme-dark .tooltip .tooltip-inner {
+  background-color: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+/* ── Popovers ────────────────────────────────────────── */
+body.theme-dark .popover {
+  background-color: var(--bg-card);
+  border-color: var(--border);
+}
+
+body.theme-dark .popover-body    { color: var(--text-primary); }
+body.theme-dark .popover-header  { background-color: var(--bg-card-alt); color: var(--text-heading); border-bottom-color: var(--border); }
+
+
+/* ────────────────────────────────────────────────────────────
+   20. CALENDAR HEATMAP  (react-calendar-heatmap)
+   ──────────────────────────────────────────────────────────── */
+
+body.theme-dark .react-calendar-heatmap .color-empty  { fill: #1e2840; }
+body.theme-dark .react-calendar-heatmap .color-scale-1 { fill: #164e80; }
+body.theme-dark .react-calendar-heatmap .color-scale-2 { fill: #1d6eb0; }
+body.theme-dark .react-calendar-heatmap .color-scale-3 { fill: #2489d8; }
+body.theme-dark .react-calendar-heatmap .color-scale-4 { fill: var(--accent); }
+
+body.theme-light .react-calendar-heatmap .color-empty  { fill: #e2f0ff; }
+body.theme-light .react-calendar-heatmap .color-scale-1 { fill: #71b8ff; }
+body.theme-light .react-calendar-heatmap .color-scale-2 { fill: #389bff; }
+body.theme-light .react-calendar-heatmap .color-scale-3 { fill: #1c8dff; }
+body.theme-light .react-calendar-heatmap .color-scale-4 { fill: #007fff; }
+
+
+/* ────────────────────────────────────────────────────────────
+   21. PROFILE POPOVER CARD
+   ──────────────────────────────────────────────────────────── */
+
+body.theme-dark .position-absolute.bg-white {
+  background-color: var(--bg-card) !important;
+  border-color: var(--border) !important;
+  color: var(--text-primary) !important;
+}
+
+body.theme-dark .position-absolute.bg-white strong { color: var(--text-primary); }
+body.theme-dark .position-absolute.bg-white .text-muted { color: var(--text-muted) !important; }
+
+
+/* ────────────────────────────────────────────────────────────
+   22. UPLOAD PREVIEW
+   ──────────────────────────────────────────────────────────── */
+
+body.theme-dark .upload-preview-wrapper {
+  border-color: var(--border);
+  box-shadow: var(--shadow-card);
+}
+
+
+/* ────────────────────────────────────────────────────────────
+   23. GENERAL FORM CONTROLS  (outside modals)
+   ──────────────────────────────────────────────────────────── */
+
+body.theme-dark .form-control,
+body.theme-dark .form-select,
+body.theme-dark input[type="text"],
+body.theme-dark input[type="email"],
+body.theme-dark input[type="password"],
+body.theme-dark input[type="search"],
+body.theme-dark input[type="number"],
+body.theme-dark input[type="tel"],
+body.theme-dark textarea,
+body.theme-dark select {
+  background-color: var(--bg-input);
+  border-color: var(--border);
+  color: var(--text-primary);
+}
+
+body.theme-dark .form-control:focus,
+body.theme-dark .form-select:focus,
+body.theme-dark input:focus,
+body.theme-dark textarea:focus,
+body.theme-dark select:focus {
+  background-color: var(--bg-card);
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-glow);
+  color: var(--text-primary);
+}
+
+body.theme-dark .form-control::placeholder,
+body.theme-dark input::placeholder,
+body.theme-dark textarea::placeholder {
+  color: var(--text-muted);
+  opacity: 1;
+}
+
+body.theme-dark .form-label,
+body.theme-dark label {
+  color: var(--text-secondary);
+}
+
+body.theme-dark .form-check-input {
+  background-color: var(--bg-input);
+  border-color: var(--border);
+}
+
+body.theme-dark .form-check-input:checked {
+  background-color: var(--accent);
+  border-color: var(--accent);
+}
+
+body.theme-dark .input-group-text {
+  background-color: var(--bg-card-alt);
+  border-color: var(--border);
+  color: var(--text-secondary);
+}
+
+
+/* ────────────────────────────────────────────────────────────
+   24. TOAST NOTIFICATIONS
+   ──────────────────────────────────────────────────────────── */
+
+body.theme-dark .Toastify__toast {
+  background-color: var(--bg-card);
+  color: var(--text-primary);
+  box-shadow: var(--shadow-card);
+}
+
+body.theme-dark .Toastify__toast--success { border-left: 4px solid #22c55e; }
+body.theme-dark .Toastify__toast--error   { border-left: 4px solid #ef4444; }
+body.theme-dark .Toastify__toast--warning { border-left: 4px solid #f59e0b; }
+body.theme-dark .Toastify__toast--info    { border-left: 4px solid var(--accent); }
+
+body.theme-dark .Toastify__close-button  { color: var(--text-muted); }
+body.theme-dark .Toastify__progress-bar  { background: var(--accent); }
+
+
+/* ────────────────────────────────────────────────────────────
+   25. UL / LI OVERRIDES  (friend/suggestion lists)
+   ──────────────────────────────────────────────────────────── */
+
+body.theme-dark ul li { color: var(--text-primary); }
+
+body.theme-dark ul li button {
+  background-color: var(--accent);
+}
+
+body.theme-dark ul li button:hover {
+  background-color: #0284c7;
+}
+
+
+/* ────────────────────────────────────────────────────────────
+   26. SELECTION COLOUR
+   ──────────────────────────────────────────────────────────── */
+
+body.theme-dark  ::selection { background: rgba(14, 165, 233, 0.35); color: #fff; }
+body.theme-light ::selection { background: rgba(59, 79, 216, 0.2);   color: #1a1d3a; }
+
+
+/* ────────────────────────────────────────────────────────────
+   27. FOCUS RING  (accessibility)
+   ──────────────────────────────────────────────────────────── */
+
+body.theme-dark  *:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+body.theme-light *:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+
+/* ────────────────────────────────────────────────────────────
+   28. REDUCED MOTION  (respect OS preference)
+   ──────────────────────────────────────────────────────────── */
+
+@media (prefers-reduced-motion: reduce) {
+  body.theme-dark *,
+  body.theme-light * {
+    transition: none !important;
+    animation:  none !important;
+  }
+}
+
+/* ============================================================
+   COMPONENT-SPECIFIC THEMING  (sections 29 – 44)
+   Covers all inline-styled components that use hard-coded
+   colours, making them respond to .theme-dark / .theme-light.
+   ============================================================ */

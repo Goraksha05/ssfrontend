@@ -4,16 +4,24 @@ import { Link, useNavigate } from "react-router-dom";
 import { jwtDecode } from "jwt-decode";
 import { useAuth } from "../Context/Authorisation/AuthContext";
 import { useSubscription } from "../Context/Subscription/SubscriptionContext";
-import i18n from '../i18n/i18n';
+import { useI18n } from "../Context/i18nContext";           // ← i18nContext hook
 import '@fortawesome/fontawesome-free/css/all.min.css';
 import Logo from "./XLogo/logoImage";
 import { BadgeCheck, Search, Bell, Home, Activity, User, ChevronDown, Globe, X } from 'lucide-react';
 import { useFriend } from "../Context/Friend/FriendContext";
 import { Modal, Button } from "react-bootstrap";
-import NotificationsPanel from '../Components/NotificationsPanel'
+import NotificationsPanel from '../Components/NotificationsPanel';
 import apiRequest from "../utils/apiRequest";
 import SubscribeIcon from '../Assets/PrimeMembers.png';
 import LogoutIcon from '../Assets/LogoutButton.png';
+import ThemeToggle from '../Components/ThemeToggle';
+
+// ─── NOTE on i18n.js ──────────────────────────────────────────────────────────
+// The old `i18n.js` (i18next/react-i18next) is no longer imported here.
+// All language state is managed by <I18nProvider> via the useI18n() hook.
+// You can safely DELETE src/i18n/i18n.js unless another part of the app
+// still imports it.
+// ─────────────────────────────────────────────────────────────────────────────
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 
@@ -72,7 +80,6 @@ const styles = {
     width: "100%",
     padding: "9px 0",
   },
-  // Nav links desktop
   navLinks: {
     display: "flex",
     alignItems: "center",
@@ -96,7 +103,6 @@ const styles = {
     background: "rgba(0,180,255,0.1)",
     color: "#7dd3fc",
   },
-  // Right cluster
   rightCluster: {
     display: "flex",
     alignItems: "center",
@@ -104,7 +110,6 @@ const styles = {
     marginLeft: "auto",
     flexShrink: 0,
   },
-  // Avatar greeting pill
   greetingPill: {
     display: "flex",
     alignItems: "center",
@@ -134,7 +139,6 @@ const styles = {
     fontWeight: 700,
     whiteSpace: "nowrap",
   },
-  // Icon buttons
   iconBtn: {
     position: "relative",
     display: "flex",
@@ -150,7 +154,6 @@ const styles = {
     transition: "background 0.18s, color 0.18s",
     flexShrink: 0,
   },
-  // Badge
   badge: {
     position: "absolute",
     top: "4px",
@@ -168,7 +171,6 @@ const styles = {
     lineHeight: 1,
     border: "1.5px solid #0a0f1e",
   },
-  // Dropdown results
   dropdownResults: {
     position: "absolute",
     top: "calc(100% + 8px)",
@@ -198,7 +200,6 @@ const styles = {
     border: "2px solid rgba(0,180,255,0.3)",
     flexShrink: 0,
   },
-  // Policies dropdown
   policiesDropdown: {
     position: "relative",
     display: "inline-block",
@@ -226,7 +227,6 @@ const styles = {
     borderBottom: "1px solid rgba(255,255,255,0.04)",
     transition: "background 0.15s",
   },
-  // Lang dropdown
   langDropdown: {
     position: "relative",
   },
@@ -238,8 +238,9 @@ const styles = {
     border: "1px solid rgba(0,180,255,0.18)",
     borderRadius: "14px",
     boxShadow: "0 16px 40px rgba(0,0,0,0.6)",
-    minWidth: "160px",
-    overflow: "hidden",
+    minWidth: "180px",
+    maxHeight: "320px",
+    overflowY: "auto",
     zIndex: 2000,
   },
   langItem: {
@@ -256,7 +257,6 @@ const styles = {
     borderBottom: "1px solid rgba(255,255,255,0.04)",
     transition: "background 0.15s",
   },
-  // Mobile hamburger
   hamburger: {
     display: "none",
     flexDirection: "column",
@@ -278,7 +278,6 @@ const styles = {
     borderRadius: "2px",
     transition: "all 0.2s",
   },
-  // Mobile drawer
   mobileDrawer: {
     background: "#0b1528",
     borderTop: "1px solid rgba(0,180,255,0.1)",
@@ -299,7 +298,6 @@ const styles = {
     fontWeight: 600,
     transition: "background 0.15s",
   },
-  // Profile modal override
   modalOverlay: {
     display: "flex",
     alignItems: "flex-start",
@@ -330,13 +328,21 @@ export default function Navbartemp({ title, myHome }) {
   const { isAuthenticated, logout, notificationCount, setNotificationCount, authtoken } = useAuth();
   const { openSubscription } = useSubscription();
   const navigate = useNavigate();
+
+  // ── i18n ──────────────────────────────────────────────────────────────
+  // lang       : active language code, e.g. "en", "hi", "mr"
+  // setLang    : call with a language code to switch instantly & persist
+  // t          : translation object — use t.someKey or t.format("key", vars)
+  // LANGUAGES  : full list of supported languages for the picker UI
+  const { lang, setLang, t, LANGUAGES } = useI18n();
+  // ──────────────────────────────────────────────────────────────────────
+
   const [userName, setUserName] = useState("Unknown");
   const logoutTimer = useRef(null);
   const [showNotifications, setShowNotifications] = useState(false);
   const [isCollapsed, setIsCollapsed] = useState(true);
   const navbarRef = useRef();
   const searchRef = useRef();
-  const [currentLang, setCurrentLang] = useState(i18n.language || 'en');
   const [showLangMenu, setShowLangMenu] = useState(false);
   const [showPoliciesMenu, setShowPoliciesMenu] = useState(false);
   const langRef = useRef();
@@ -431,8 +437,6 @@ export default function Navbartemp({ title, myHome }) {
     };
   }, [handleLogout]);
 
-  useEffect(() => { i18n.changeLanguage(currentLang); }, [currentLang]);
-
   /* ── Outside click / Escape ── */
   useEffect(() => {
     const handler = (e) => {
@@ -464,15 +468,12 @@ export default function Navbartemp({ title, myHome }) {
 
   const storedUser = JSON.parse(localStorage.getItem("User") || "{}");
   const isPrime = storedUser?.subscription?.active;
-  // const initials = userName !== "Unknown" ? userName.slice(0, 2).toUpperCase() : "?";
 
-  const LANGS = [
-    { code: "en", flag: "🇬🇧", label: "English" },
-    { code: "hi", flag: "🇮🇳", label: "हिंदी" },
-    { code: "ta", flag: "🇮🇳", label: "தமிழ்" },
-    { code: "bn", flag: "🇮🇳", label: "বাংলা" },
-    { code: "mr", flag: "🇮🇳", label: "मराठी" },
-  ];
+  /* ── Language change handler ── */
+  const handleLangChange = (code) => {
+    setLang(code);          // updates context, persists to localStorage, flips RTL dir
+    setShowLangMenu(false);
+  };
 
   return (
     <>
@@ -485,7 +486,7 @@ export default function Navbartemp({ title, myHome }) {
             <Logo />
           </Link>
 
-          {/* Search bar – hidden on very small mobile, shown ≥480 */}
+          {/* Search bar */}
           <div ref={searchRef} style={{ ...styles.searchWrap, display: "flex", flexDirection: "column" }}>
             <div
               style={{
@@ -497,7 +498,7 @@ export default function Navbartemp({ title, myHome }) {
               <input
                 type="search"
                 style={styles.searchInput}
-                placeholder="Search friends..."
+                placeholder={t.searchPlaceholder || "Search friends..."}
                 value={searchQuery}
                 onChange={handleSearchChange}
                 onFocus={() => setSearchFocused(true)}
@@ -533,10 +534,14 @@ export default function Navbartemp({ title, myHome }) {
                       <div style={{ color: "#e2f3ff", fontSize: "14px", fontWeight: 700 }}>{user.name}</div>
                       <div style={{ color: "rgba(150,200,255,0.55)", fontSize: "12px" }}>@{user.username}</div>
                     </div>
-                    <span style={{ marginLeft: "auto", color: "rgba(0,180,255,0.6)", fontSize: "12px" }}>View →</span>
+                    <span style={{ marginLeft: "auto", color: "rgba(0,180,255,0.6)", fontSize: "12px" }}>
+                      {t.viewProfile || "View →"}
+                    </span>
                   </div>
                 )) : (
-                  <div style={{ padding: "14px 18px", color: "rgba(150,200,255,0.5)", fontSize: "13px" }}>No users found</div>
+                  <div style={{ padding: "14px 18px", color: "rgba(150,200,255,0.5)", fontSize: "13px" }}>
+                    {t.noUsersFound || "No users found"}
+                  </div>
                 )}
               </div>
             )}
@@ -544,9 +549,15 @@ export default function Navbartemp({ title, myHome }) {
 
           {/* Desktop nav links */}
           <div style={styles.navLinks} className="d-none d-lg-flex">
-            <NavLinkItem to="/" icon={Home} onClick={handleNavItemClick}>{myHome || "Home"}</NavLinkItem>
-            <NavLinkItem to="/activity" icon={Activity} onClick={handleNavItemClick}>Activity</NavLinkItem>
-            <NavLinkItem to="/profile" icon={User} onClick={handleNavItemClick}>Profile</NavLinkItem>
+            <NavLinkItem to="/" icon={Home} onClick={handleNavItemClick}>
+              {myHome || t.navHome || "Home"}
+            </NavLinkItem>
+            <NavLinkItem to="/activity" icon={Activity} onClick={handleNavItemClick}>
+              {t.navActivity || "Activity"}
+            </NavLinkItem>
+            <NavLinkItem to="/profile" icon={User} onClick={handleNavItemClick}>
+              {t.navProfile || "Profile"}
+            </NavLinkItem>
 
             {/* Policies dropdown */}
             <div ref={policiesRef} style={styles.policiesDropdown}>
@@ -554,16 +565,16 @@ export default function Navbartemp({ title, myHome }) {
                 style={{ ...styles.navLink, background: "none", border: "none" }}
                 onClick={() => setShowPoliciesMenu(p => !p)}
               >
-                <span>Policies</span>
+                <span>{t.navPolicies || "Policies"}</span>
                 <ChevronDown size={13} style={{ opacity: 0.6 }} />
               </button>
               {showPoliciesMenu && (
                 <div style={styles.policiesMenu}>
                   {[
-                    { to: "/aboutus", label: "About Us" },
-                    { to: "/privacypolicy", label: "Privacy Policy" },
-                    { to: "/refcanclepolicy", label: "Refund & Cancel" },
-                    { to: "/contactus", label: "Contact Us" },
+                    { to: "/aboutus",         labelKey: "policyAboutUs",       fallback: "About Us" },
+                    { to: "/privacypolicy",   labelKey: "policyPrivacy",       fallback: "Privacy Policy" },
+                    { to: "/refcanclepolicy", labelKey: "policyRefund",        fallback: "Refund & Cancel" },
+                    { to: "/contactus",       labelKey: "policyContact",       fallback: "Contact Us" },
                   ].map(item => (
                     <Link
                       key={item.to}
@@ -573,7 +584,7 @@ export default function Navbartemp({ title, myHome }) {
                       onMouseEnter={e => e.currentTarget.style.background = "rgba(0,180,255,0.08)"}
                       onMouseLeave={e => e.currentTarget.style.background = "transparent"}
                     >
-                      {item.label}
+                      {t[item.labelKey] || item.fallback}
                     </Link>
                   ))}
                 </div>
@@ -587,18 +598,19 @@ export default function Navbartemp({ title, myHome }) {
               <>
                 {/* User greeting pill */}
                 <div style={styles.greetingPill} className="d-none d-md-flex">
-                  {/* <div style={styles.avatarCircle}>{initials}</div> */}
-                  <span style={{...styles.greetText, fontSize: "18px"}}>
+                  <span style={{ ...styles.greetText, fontSize: "18px" }}>
                     {isPrime && (
                       <BadgeCheck size={21} style={{ color: "#38bdf8", marginRight: "4px", verticalAlign: "middle" }} fill="currentColor" stroke="white" />
                     )}
-                    Hi, {userName.split(" ")[0]}
+                    {t.greeting
+                      ? t.format("greeting", { name: userName.split(" ")[0] })
+                      : `Hi, ${userName.split(" ")[0]}`}
                   </span>
                 </div>
 
-                {/* Subscribe button – uses PrimeMembers.png asset */}
+                {/* Subscribe button */}
                 <button
-                  title="Become a Prime Member"
+                  title={t.subscribeCta || "Become a Prime Member"}
                   onClick={openSubscription}
                   className="d-none d-sm-flex"
                   style={{
@@ -618,7 +630,7 @@ export default function Navbartemp({ title, myHome }) {
                 >
                   <img
                     src={SubscribeIcon}
-                    alt="Subscribe – Become a Prime Member"
+                    alt={t.subscribeCta || "Subscribe – Become a Prime Member"}
                     style={{ height: "38px", width: "auto", display: "block" }}
                   />
                 </button>
@@ -626,7 +638,7 @@ export default function Navbartemp({ title, myHome }) {
                 {/* Bell */}
                 <button
                   onClick={() => setShowNotifications(p => !p)}
-                  title="Notifications"
+                  title={t.notifications || "Notifications"}
                   style={{
                     ...styles.iconBtn,
                     ...(bellHover ? { background: "rgba(99,102,241,0.18)", color: "#a5b4fc" } : {}),
@@ -640,40 +652,48 @@ export default function Navbartemp({ title, myHome }) {
                   )}
                 </button>
 
-                {/* Language selector */}
+                {/* ── Language selector ──────────────────────────────────────
+                    Uses LANGUAGES from useI18n() — the full list defined in
+                    i18nContext.js. Calling setLang(code) switches the language
+                    everywhere in the app instantly.
+                ─────────────────────────────────────────────────────────── */}
                 <div ref={langRef} style={styles.langDropdown}>
                   <button
                     style={{ ...styles.iconBtn, width: "auto", padding: "0 10px", gap: "5px", fontSize: "12px", fontWeight: 700 }}
                     onClick={() => setShowLangMenu(p => !p)}
-                    title="Language"
+                    title={t.selectLanguage || "Language"}
                   >
                     <Globe size={14} />
-                    <span className="d-none d-md-inline">{currentLang.toUpperCase()}</span>
+                    <span className="d-none d-md-inline">{lang.toUpperCase()}</span>
                   </button>
+
                   {showLangMenu && (
                     <div style={styles.langMenu}>
-                      {LANGS.map(l => (
+                      {LANGUAGES.map(l => (
                         <button
                           key={l.code}
                           style={{
                             ...styles.langItem,
-                            ...(currentLang === l.code ? { color: "#38bdf8", background: "rgba(0,180,255,0.08)" } : {}),
+                            ...(lang === l.code ? { color: "#38bdf8", background: "rgba(0,180,255,0.08)" } : {}),
                           }}
-                          onClick={() => { setCurrentLang(l.code); setShowLangMenu(false); }}
+                          onClick={() => handleLangChange(l.code)}
                           onMouseEnter={e => e.currentTarget.style.background = "rgba(0,180,255,0.08)"}
-                          onMouseLeave={e => e.currentTarget.style.background = currentLang === l.code ? "rgba(0,180,255,0.08)" : "transparent"}
+                          onMouseLeave={e => e.currentTarget.style.background = lang === l.code ? "rgba(0,180,255,0.08)" : "transparent"}
                         >
-                          {l.flag} {l.label}
+                          {l.flag}&nbsp;&nbsp;{l.label}
+                          {lang === l.code && (
+                            <span style={{ marginLeft: "auto", fontSize: "10px", opacity: 0.6 }}>✓</span>
+                          )}
                         </button>
                       ))}
                     </div>
                   )}
                 </div>
 
-                {/* Logout – uses LogoutButton.png asset */}
+                {/* Logout */}
                 <button
                   onClick={() => handleLogout(false)}
-                  title="Logout"
+                  title={t.logout || "Logout"}
                   className="d-none d-sm-flex align-items-center"
                   style={{
                     background: "none",
@@ -690,12 +710,14 @@ export default function Navbartemp({ title, myHome }) {
                 >
                   <img
                     src={LogoutIcon}
-                    alt="Logout"
+                    alt={t.logout || "Logout"}
                     style={{ width: "38px", height: "38px", display: "block" }}
                   />
                 </button>
               </>
             )}
+
+            <ThemeToggle />
 
             {/* Mobile hamburger */}
             <button
@@ -716,9 +738,9 @@ export default function Navbartemp({ title, myHome }) {
           <div ref={navbarRef} style={styles.mobileDrawer}>
             {/* Nav links */}
             {[
-              { to: "/", icon: Home, label: myHome || "Home" },
-              { to: "/activity", icon: Activity, label: "Activity" },
-              { to: "/profile", icon: User, label: "Profile" },
+              { to: "/",         icon: Home,     label: myHome || t.navHome     || "Home"     },
+              { to: "/activity", icon: Activity, label: t.navActivity            || "Activity" },
+              { to: "/profile",  icon: User,     label: t.navProfile             || "Profile"  },
             ].map(item => (
               <Link
                 key={item.to}
@@ -735,12 +757,14 @@ export default function Navbartemp({ title, myHome }) {
 
             {/* Policies sub-links */}
             <div style={{ borderTop: "1px solid rgba(255,255,255,0.06)", paddingTop: "6px", marginTop: "2px" }}>
-              <div style={{ color: "rgba(150,200,255,0.4)", fontSize: "11px", fontWeight: 700, padding: "4px 14px 6px", letterSpacing: "0.05em", textTransform: "uppercase" }}>Policies</div>
+              <div style={{ color: "rgba(150,200,255,0.4)", fontSize: "11px", fontWeight: 700, padding: "4px 14px 6px", letterSpacing: "0.05em", textTransform: "uppercase" }}>
+                {t.navPolicies || "Policies"}
+              </div>
               {[
-                { to: "/aboutus", label: "About Us" },
-                { to: "/privacypolicy", label: "Privacy Policy" },
-                { to: "/refcanclepolicy", label: "Refund & Cancel" },
-                { to: "/contactus", label: "Contact Us" },
+                { to: "/aboutus",         labelKey: "policyAboutUs",  fallback: "About Us"       },
+                { to: "/privacypolicy",   labelKey: "policyPrivacy",  fallback: "Privacy Policy" },
+                { to: "/refcanclepolicy", labelKey: "policyRefund",   fallback: "Refund & Cancel"},
+                { to: "/contactus",       labelKey: "policyContact",  fallback: "Contact Us"     },
               ].map(item => (
                 <Link
                   key={item.to}
@@ -748,45 +772,65 @@ export default function Navbartemp({ title, myHome }) {
                   style={{ ...styles.mobileLinkItem, fontSize: "13px", padding: "8px 14px", color: "rgba(180,210,255,0.65)" }}
                   onClick={handleNavItemClick}
                 >
-                  {item.label}
+                  {t[item.labelKey] || item.fallback}
                 </Link>
               ))}
+            </div>
+
+            {/* Mobile language picker */}
+            <div style={{ borderTop: "1px solid rgba(255,255,255,0.06)", paddingTop: "8px", marginTop: "2px" }}>
+              <div style={{ color: "rgba(150,200,255,0.4)", fontSize: "11px", fontWeight: 700, padding: "4px 14px 6px", letterSpacing: "0.05em", textTransform: "uppercase" }}>
+                {t.selectLanguage || "Language"}
+              </div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: "6px", padding: "0 14px 6px" }}>
+                {LANGUAGES.map(l => (
+                  <button
+                    key={l.code}
+                    onClick={() => { handleLangChange(l.code); handleNavItemClick(); }}
+                    style={{
+                      background: lang === l.code ? "rgba(0,180,255,0.15)" : "rgba(255,255,255,0.05)",
+                      border: lang === l.code ? "1px solid rgba(0,180,255,0.4)" : "1px solid rgba(255,255,255,0.08)",
+                      borderRadius: "20px",
+                      padding: "5px 12px",
+                      color: lang === l.code ? "#38bdf8" : "rgba(200,230,255,0.7)",
+                      fontSize: "12px",
+                      fontWeight: 600,
+                      cursor: "pointer",
+                      transition: "all 0.15s",
+                    }}
+                  >
+                    {l.flag} {l.label}
+                  </button>
+                ))}
+              </div>
             </div>
 
             {/* Mobile auth actions */}
             {isAuthenticated && (
               <div style={{ borderTop: "1px solid rgba(255,255,255,0.06)", paddingTop: "8px", marginTop: "2px", display: "flex", gap: "12px", alignItems: "center", justifyContent: "center" }}>
-                {/* Subscribe image button */}
                 <button
                   onClick={openSubscription}
-                  title="Become a Prime Member"
+                  title={t.subscribeCta || "Become a Prime Member"}
                   style={{
-                    background: "none",
-                    border: "none",
-                    padding: 0,
-                    cursor: "pointer",
+                    background: "none", border: "none", padding: 0, cursor: "pointer",
                     transition: "transform 0.18s, filter 0.18s",
                   }}
                   onMouseEnter={e => { e.currentTarget.style.transform = "scale(1.05)"; e.currentTarget.style.filter = "drop-shadow(0 0 8px rgba(0,200,255,0.5))"; }}
                   onMouseLeave={e => { e.currentTarget.style.transform = "scale(1)"; e.currentTarget.style.filter = "none"; }}
                 >
-                  <img src={SubscribeIcon} alt="Subscribe" style={{ height: "42px", width: "auto", display: "block" }} />
+                  <img src={SubscribeIcon} alt={t.subscribeCta || "Subscribe"} style={{ height: "42px", width: "auto", display: "block" }} />
                 </button>
-                {/* Logout image button */}
                 <button
                   onClick={() => handleLogout(false)}
-                  title="Logout"
+                  title={t.logout || "Logout"}
                   style={{
-                    background: "none",
-                    border: "none",
-                    padding: 0,
-                    cursor: "pointer",
+                    background: "none", border: "none", padding: 0, cursor: "pointer",
                     transition: "transform 0.18s, filter 0.18s",
                   }}
                   onMouseEnter={e => { e.currentTarget.style.transform = "scale(1.1)"; e.currentTarget.style.filter = "drop-shadow(0 0 8px rgba(255,60,60,0.55))"; }}
                   onMouseLeave={e => { e.currentTarget.style.transform = "scale(1)"; e.currentTarget.style.filter = "none"; }}
                 >
-                  <img src={LogoutIcon} alt="Logout" style={{ width: "42px", height: "42px", display: "block" }} />
+                  <img src={LogoutIcon} alt={t.logout || "Logout"} style={{ width: "42px", height: "42px", display: "block" }} />
                 </button>
               </div>
             )}
@@ -811,7 +855,7 @@ export default function Navbartemp({ title, myHome }) {
           style={{ background: "linear-gradient(135deg,#0f1e35,#0a1628)", borderBottom: "1px solid rgba(0,180,255,0.15)", color: "#e2f3ff" }}
         >
           <Modal.Title style={{ fontFamily: "'Nunito',sans-serif", fontWeight: 800 }}>
-            {selectedUser?.user_id?.name || "User Profile"}
+            {selectedUser?.user_id?.name || t.userProfile || "User Profile"}
           </Modal.Title>
         </Modal.Header>
 
@@ -832,23 +876,25 @@ export default function Navbartemp({ title, myHome }) {
               </div>
               <div style={{ background: "rgba(0,180,255,0.05)", borderRadius: "10px", padding: "14px 16px", border: "1px solid rgba(0,180,255,0.1)" }}>
                 <p style={{ margin: "0 0 8px", fontSize: "14px" }}>
-                  <span style={{ color: "rgba(150,200,255,0.5)", marginRight: "8px" }}>Gender</span>
-                  <strong style={{ color: "#e2f3ff" }}>{selectedUser.sex || "Not specified"}</strong>
+                  <span style={{ color: "rgba(150,200,255,0.5)", marginRight: "8px" }}>{t.gender || "Gender"}</span>
+                  <strong style={{ color: "#e2f3ff" }}>{selectedUser.sex || t.notSpecified || "Not specified"}</strong>
                 </p>
                 <p style={{ margin: 0, fontSize: "14px" }}>
-                  <span style={{ color: "rgba(150,200,255,0.5)", marginRight: "8px" }}>Relationship</span>
-                  <strong style={{ color: "#e2f3ff" }}>{selectedUser.relationship || "Not specified"}</strong>
+                  <span style={{ color: "rgba(150,200,255,0.5)", marginRight: "8px" }}>{t.relationship || "Relationship"}</span>
+                  <strong style={{ color: "#e2f3ff" }}>{selectedUser.relationship || t.notSpecified || "Not specified"}</strong>
                 </p>
               </div>
             </>
           ) : (
-            <div style={{ textAlign: "center", padding: "24px", color: "rgba(150,200,255,0.5)" }}>Loading profile…</div>
+            <div style={{ textAlign: "center", padding: "24px", color: "rgba(150,200,255,0.5)" }}>
+              {t.loadingProfile || "Loading profile…"}
+            </div>
           )}
         </Modal.Body>
 
         <Modal.Footer style={{ background: "#0a1628", borderTop: "1px solid rgba(0,180,255,0.1)" }}>
           <Button variant="outline-secondary" onClick={() => setShowProfileModal(false)}>
-            Close
+            {t.close || "Close"}
           </Button>
           <Button
             style={{ background: "linear-gradient(135deg,#0ea5e9,#6366f1)", border: "none", fontWeight: 700, boxShadow: "0 4px 15px rgba(14,165,233,0.3)" }}
@@ -863,7 +909,7 @@ export default function Navbartemp({ title, myHome }) {
             }}
           >
             <i className="fas fa-user-plus me-2" />
-            Add Friend
+            {t.addFriend || "Add Friend"}
           </Button>
         </Modal.Footer>
       </Modal>

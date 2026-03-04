@@ -11,10 +11,16 @@ const SERVER_URL = process.env.REACT_APP_SERVER_URL;
 
 const Activity = () => {
   const { user: currentUser, isAuthenticated, token } = useAuth();
-  const [userData, setUserData]     = useState(null);
+  const [
+    // userData, 
+    setUserData
+  ]     = useState(null);
   const [activeTab, setActiveTab]   = useState('streak');
   const [showRewards, setShowRewards] = useState(false);
-  const [fetching, setFetching]     = useState(false);
+  const [
+    // fetching, 
+    setFetching
+  ]     = useState(false);
   const { statePosts } = useContext(postContext);
 
   const fetchUser = useCallback(async () => {
@@ -31,7 +37,7 @@ const Activity = () => {
     } finally {
       setFetching(false);
     }
-  }, [currentUser, token]);
+  }, [currentUser, token, setFetching, setUserData]);
 
   useEffect(() => {
     if (isAuthenticated && currentUser) fetchUser();
@@ -52,11 +58,11 @@ const Activity = () => {
     { key: 'post',     label: '📝 Posts',      color: '#f59e0b' },
   ];
 
-  const rewardItems = [
-    { icon: '🛒', label: 'Grocery Coupons', value: `₹${userData?.totalGroceryCoupons || 0}`,  color: '#10b981' },
-    { icon: '📈', label: 'Company Shares',  value: userData?.totalShares || 0,                 color: '#6366f1' },
-    { icon: '🎟️', label: 'Referral Tokens', value: userData?.totalReferralToken || 0,           color: '#f59e0b' },
-  ];
+  // const rewardItems = [
+  //   { icon: '🛒', label: 'Grocery Coupons', value: `₹${userData?.totalGroceryCoupons || 0}`,  color: '#10b981' },
+  //   { icon: '📈', label: 'Company Shares',  value: userData?.totalShares || 0,                 color: '#6366f1' },
+  //   { icon: '🎟️', label: 'Referral Tokens', value: userData?.totalReferralToken || 0,           color: '#f59e0b' },
+  // ];
 
   return (
     <div style={styles.page}>
@@ -71,7 +77,7 @@ const Activity = () => {
       </div>
 
       {/* ── Reward Summary Cards ── */}
-      {fetching ? (
+      {/* {fetching ? (
         <div style={styles.skeletonRow}>
           {[0,1,2].map(i => <div key={i} style={styles.skeleton} />)}
         </div>
@@ -85,7 +91,7 @@ const Activity = () => {
             </div>
           ))}
         </div>
-      )}
+      )} */}
 
       {/* ── Tab Navigation ── */}
       <div style={styles.tabBar}>
