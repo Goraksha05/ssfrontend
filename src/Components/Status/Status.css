@@ -1,0 +1,907 @@
+/* ================================================================
+   STATUS FEATURE — Status.css
+   Covers: StatusTab, StatusViewer, StatusComposer,
+           ChatListStatusAvatar
+   Imports & extends the ChatRoom.css design token system
+   (--accent, --bg-*, --text-*, --border-color, --shadow-*, etc.)
+   ================================================================ */
+
+/* ── Status brand colour (WhatsApp green) ────────────────────── */
+:root {
+  --status-green:       #25D366;
+  --status-green-dark:  #1fba59;
+  --status-green-dim:   #1a7a42;
+  --status-ring-seen:   #d1d5db;   /* grey ring = all viewed */
+  --status-ring-unseen: #25D366;   /* green ring = unread    */
+}
+
+/* ================================================================
+   STATUS TAB (sidebar panel)
+   ================================================================ */
+
+/* Wrapper — fills the sidebar's flex column */
+.status-tab {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: var(--bg-primary);
+  overflow: hidden;
+  user-select: none;
+}
+
+/* ── My-status row ────────────────────────────────────────────── */
+.status-tab__my-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 16px 10px;
+  cursor: pointer;
+  border-radius: 14px;
+  transition: background 0.15s;
+  position: relative;
+  margin: 4px 8px 0;
+}
+.status-tab__my-row:hover { background: var(--bg-hover); }
+
+.status-tab__my-info { flex: 1; min-width: 0; }
+.status-tab__my-name {
+  font-size: 14.5px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin: 0 0 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.status-tab__my-sub {
+  font-size: 12.5px;
+  color: var(--text-secondary);
+  margin: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ── Add (+) button overlaid on avatar ────────────────────────── */
+.status-tab__add-btn {
+  position: absolute;
+  /* sits on bottom-right of the ring avatar */
+  bottom: -2px;
+  right: -2px;
+  width: 20px; height: 20px;
+  border-radius: 50%;
+  background: var(--status-green);
+  color: #fff;
+  border: 2px solid var(--bg-primary);
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer;
+  transition: background 0.15s, transform 0.15s;
+  z-index: 2;
+  padding: 0;
+}
+.status-tab__add-btn:hover {
+  background: var(--status-green-dark);
+  transform: scale(1.1);
+}
+
+/* ── Three-dot menu button ────────────────────────────────────── */
+.status-tab__menu-btn {
+  flex-shrink: 0;
+  width: 32px; height: 32px;
+  border-radius: 50%;
+  border: none;
+  background: transparent;
+  color: var(--text-tertiary);
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s, background 0.15s, color 0.15s;
+}
+.status-tab__my-row:hover .status-tab__menu-btn { opacity: 1; }
+.status-tab__menu-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+/* ── Dropdown menu ────────────────────────────────────────────── */
+.status-tab__dropdown {
+  position: absolute;
+  right: 12px;
+  top: calc(100% + 4px);
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  border-radius: 14px;
+  box-shadow: var(--shadow-lg);
+  z-index: 50;
+  min-width: 170px;
+  overflow: hidden;
+  animation: statusMenuIn 0.15s cubic-bezier(0.34,1.56,0.64,1) both;
+}
+@keyframes statusMenuIn {
+  from { opacity: 0; transform: scale(0.9) translateY(-6px); }
+  to   { opacity: 1; transform: scale(1)   translateY(0);    }
+}
+.status-tab__dropdown button {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 12px 18px;
+  font-size: 14px;
+  font-weight: 500;
+  border: none;
+  background: none;
+  cursor: pointer;
+  color: var(--text-primary);
+  transition: background 0.12s;
+  font-family: var(--font, sans-serif);
+}
+.status-tab__dropdown button:hover { background: var(--bg-hover); }
+.status-tab__dropdown button.danger { color: var(--danger, #ef4444); }
+
+/* ── Divider ──────────────────────────────────────────────────── */
+.status-tab__divider {
+  height: 1px;
+  background: var(--border-color);
+  margin: 4px 16px 8px;
+  flex-shrink: 0;
+}
+
+/* ── "Recent updates" section heading ─────────────────────────── */
+.status-tab__section-label {
+  font-size: 11.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-tertiary);
+  padding: 4px 18px 6px;
+}
+
+/* ── Feed scroll area ─────────────────────────────────────────── */
+.status-tab__feed {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 4px 8px 12px;
+}
+.status-tab__feed::-webkit-scrollbar { width: 4px; }
+.status-tab__feed::-webkit-scrollbar-track { background: transparent; }
+.status-tab__feed::-webkit-scrollbar-thumb {
+  background: var(--border-color);
+  border-radius: 4px;
+}
+
+/* ── Individual contact-status row ────────────────────────────── */
+.status-tab__contact-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 10px;
+  border-radius: 12px;
+  cursor: pointer;
+  transition: background 0.15s;
+  border: none;
+  background: none;
+  width: 100%;
+  text-align: left;
+}
+.status-tab__contact-row:hover { background: var(--bg-hover); }
+
+.status-tab__contact-info { flex: 1; min-width: 0; }
+.status-tab__contact-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin: 0 0 2px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.status-tab__contact-time {
+  font-size: 12px;
+  color: var(--text-tertiary);
+  margin: 0;
+}
+.status-tab__contact-time.unread {
+  color: var(--status-green);
+  font-weight: 600;
+}
+
+/* Unread indicator dot */
+.status-tab__unread-dot {
+  width: 9px; height: 9px;
+  border-radius: 50%;
+  background: var(--status-green);
+  flex-shrink: 0;
+}
+
+/* ── Spinner (loading state) ──────────────────────────────────── */
+.status-tab__spinner {
+  width: 26px; height: 26px;
+  border: 2.5px solid var(--border-color);
+  border-top-color: var(--status-green);
+  border-radius: 50%;
+  animation: statusSpin 0.7s linear infinite;
+  margin: 40px auto;
+}
+@keyframes statusSpin { to { transform: rotate(360deg); } }
+
+/* ── Empty state ──────────────────────────────────────────────── */
+.status-tab__empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 48px 24px;
+  color: var(--text-tertiary);
+  text-align: center;
+}
+.status-tab__empty svg { opacity: 0.25; }
+.status-tab__empty p { font-size: 13.5px; margin: 0; }
+
+/* ── Ring Avatar (used inside StatusTab) ──────────────────────── */
+.status-ring-avatar {
+  position: relative;
+  flex-shrink: 0;
+  border-radius: 50%;
+  padding: 2.5px;
+}
+.status-ring-avatar.unread  { background: var(--status-ring-unseen); }
+.status-ring-avatar.seen    { background: var(--status-ring-seen);   }
+.status-ring-avatar img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  object-fit: cover;
+  /* inner white gap between ring and photo */
+  box-shadow: 0 0 0 2px var(--bg-primary);
+}
+
+/* Dark-mode ring gap fix */
+[data-theme="dark"] .status-ring-avatar img {
+  box-shadow: 0 0 0 2px var(--bg-primary);
+}
+
+/* ================================================================
+   STATUS VIEWER (full-screen story player)
+   ================================================================ */
+
+.status-viewer {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  display: flex;
+  flex-direction: column;
+  background: #000;
+  overflow: hidden;
+  /* iOS safe-area support */
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+/* ── Progress bar row ─────────────────────────────────────────── */
+.status-viewer__progress-row {
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  z-index: 20;
+  display: flex;
+  gap: 3px;
+  padding: 10px 10px 0;
+}
+.status-viewer__progress-track {
+  flex: 1;
+  height: 3px;
+  border-radius: 3px;
+  background: rgba(255,255,255,0.28);
+  overflow: hidden;
+}
+.status-viewer__progress-fill {
+  height: 100%;
+  background: #fff;
+  border-radius: 3px;
+  transition: none;   /* driven by JS, no CSS transition */
+}
+
+/* ── Header overlay ───────────────────────────────────────────── */
+.status-viewer__header {
+  position: absolute;
+  top: 20px; left: 0; right: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 14px;
+}
+.status-viewer__header-avatar {
+  width: 42px; height: 42px;
+  border-radius: 50%;
+  object-fit: cover;
+  border: 2px solid rgba(255,255,255,0.6);
+  flex-shrink: 0;
+}
+.status-viewer__header-info { flex: 1; min-width: 0; }
+.status-viewer__header-name {
+  color: #fff;
+  font-size: 14.5px;
+  font-weight: 700;
+  margin: 0 0 1px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  text-shadow: 0 1px 6px rgba(0,0,0,0.5);
+}
+.status-viewer__header-time {
+  color: rgba(255,255,255,0.65);
+  font-size: 12px;
+  margin: 0;
+}
+.status-viewer__close-btn {
+  background: none; border: none;
+  color: rgba(255,255,255,0.8);
+  width: 36px; height: 36px;
+  border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background 0.15s, color 0.15s;
+}
+.status-viewer__close-btn:hover {
+  background: rgba(255,255,255,0.12);
+  color: #fff;
+}
+
+/* ── Content area ─────────────────────────────────────────────── */
+.status-viewer__content {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  position: relative;
+}
+/* Text status */
+.status-viewer__text {
+  color: #fff;
+  font-size: clamp(18px, 5vw, 30px);
+  text-align: center;
+  padding: 0 36px;
+  line-height: 1.55;
+  max-width: 90vw;
+  text-shadow: 0 1px 8px rgba(0,0,0,0.4);
+  word-break: break-word;
+}
+/* Image/video */
+.status-viewer__media-img {
+  max-height: 80vh;
+  max-width: 100%;
+  object-fit: contain;
+  display: block;
+  pointer-events: none;
+  user-select: none;
+}
+.status-viewer__media-video {
+  max-height: 80vh;
+  max-width: 100%;
+  display: block;
+}
+.status-viewer__caption {
+  position: absolute;
+  bottom: 0; left: 0; right: 0;
+  padding: 12px 20px 16px;
+  background: linear-gradient(to top, rgba(0,0,0,0.55), transparent);
+  color: #fff;
+  font-size: 14.5px;
+  text-align: center;
+  text-shadow: 0 1px 4px rgba(0,0,0,0.6);
+}
+
+/* ── Tap zones ────────────────────────────────────────────────── */
+.status-viewer__tap-zones {
+  position: absolute;
+  inset: 0;
+  z-index: 10;
+  display: flex;
+  pointer-events: none;
+}
+.status-viewer__tap-prev,
+.status-viewer__tap-next {
+  pointer-events: all;
+  cursor: pointer;
+}
+.status-viewer__tap-prev { width: 33%; }
+.status-viewer__tap-next { width: 33%; margin-left: auto; }
+
+/* ── Footer — viewer count (owner) ───────────────────────────── */
+.status-viewer__footer {
+  position: absolute;
+  bottom: 0; left: 0; right: 0;
+  z-index: 20;
+  padding-bottom: env(safe-area-inset-bottom, 8px);
+}
+.status-viewer__seen-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  padding: 16px 20px;
+  background: linear-gradient(to top, rgba(0,0,0,0.55), transparent);
+  border: none;
+  color: rgba(255,255,255,0.8);
+  font-size: 14px;
+  cursor: pointer;
+  transition: color 0.15s;
+  font-family: var(--font, sans-serif);
+}
+.status-viewer__seen-btn:hover { color: #fff; }
+
+/* ── Viewers bottom sheet ─────────────────────────────────────── */
+.status-viewer__sheet-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 30;
+  background: rgba(0,0,0,0.45);
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  animation: sheetFadeIn 0.2s ease;
+}
+@keyframes sheetFadeIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+.status-viewer__sheet {
+  background: var(--bg-primary);
+  border-radius: 20px 20px 0 0;
+  max-height: 60vh;
+  overflow-y: auto;
+  animation: sheetSlideUp 0.28s cubic-bezier(0.34,1.56,0.64,1) both;
+}
+@keyframes sheetSlideUp {
+  from { transform: translateY(40px); opacity: 0; }
+  to   { transform: translateY(0);    opacity: 1; }
+}
+.status-viewer__sheet::-webkit-scrollbar { width: 4px; }
+.status-viewer__sheet::-webkit-scrollbar-track { background: transparent; }
+.status-viewer__sheet::-webkit-scrollbar-thumb { background: var(--border-color); border-radius: 4px; }
+
+.status-viewer__sheet-header {
+  position: sticky;
+  top: 0;
+  background: var(--bg-primary);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 18px 14px;
+  border-bottom: 1px solid var(--border-color);
+  z-index: 1;
+}
+.status-viewer__sheet-header h3 {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text-primary);
+  margin: 0;
+}
+.status-viewer__sheet-close {
+  background: none; border: none;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  width: 30px; height: 30px;
+  border-radius: 50%;
+  transition: background 0.15s, color 0.15s;
+}
+.status-viewer__sheet-close:hover { background: var(--bg-hover); color: var(--text-primary); }
+
+/* Viewer row */
+.status-viewer__viewer-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 18px;
+  transition: background 0.12s;
+}
+.status-viewer__viewer-row:hover { background: var(--bg-hover); }
+.status-viewer__viewer-row img {
+  width: 44px; height: 44px;
+  border-radius: 50%;
+  object-fit: cover;
+  flex-shrink: 0;
+}
+.status-viewer__viewer-info { flex: 1; min-width: 0; }
+.status-viewer__viewer-name {
+  font-size: 14px; font-weight: 600;
+  color: var(--text-primary); margin: 0 0 2px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.status-viewer__viewer-username {
+  font-size: 12px; color: var(--text-tertiary); margin: 0;
+}
+.status-viewer__viewer-time {
+  font-size: 11.5px;
+  color: var(--text-tertiary);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+/* Sheet empty / loading states */
+.status-viewer__sheet-empty,
+.status-viewer__sheet-loading {
+  padding: 24px 18px;
+  text-align: center;
+  font-size: 13.5px;
+  color: var(--text-tertiary);
+}
+
+/* ================================================================
+   STATUS COMPOSER (full-screen)
+   ================================================================ */
+
+.status-composer {
+  position: fixed;
+  inset: 0;
+  z-index: 1300;
+  display: flex;
+  flex-direction: column;
+  background: #000;
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+/* ── Composer header ──────────────────────────────────────────── */
+.status-composer__header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 16px;
+  background: rgba(0,0,0,0.75);
+  flex-shrink: 0;
+}
+.status-composer__close-btn {
+  background: none; border: none;
+  color: rgba(255,255,255,0.7);
+  width: 36px; height: 36px;
+  border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+.status-composer__close-btn:hover { background: rgba(255,255,255,0.1); color: #fff; }
+.status-composer__title {
+  flex: 1;
+  color: #fff;
+  font-size: 16px;
+  font-weight: 600;
+  margin: 0;
+}
+
+/* Mode toggle pills */
+.status-composer__mode-btn {
+  font-size: 12px;
+  padding: 5px 14px;
+  border-radius: 20px;
+  border: none;
+  cursor: pointer;
+  font-weight: 500;
+  transition: background 0.15s, color 0.15s;
+  font-family: var(--font, sans-serif);
+}
+.status-composer__mode-btn.active {
+  background: var(--status-green);
+  color: #fff;
+}
+.status-composer__mode-btn:not(.active) {
+  background: rgba(255,255,255,0.18);
+  color: rgba(255,255,255,0.75);
+}
+.status-composer__mode-btn:hover:not(.active) {
+  background: rgba(255,255,255,0.28);
+  color: #fff;
+}
+
+/* ── Preview / canvas area ────────────────────────────────────── */
+.status-composer__canvas {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  overflow: hidden;
+}
+
+/* Text mode — coloured background */
+.status-composer__text-area {
+  width: 100%;
+  padding: 0 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.status-composer__textarea {
+  background: transparent;
+  border: none;
+  outline: none;
+  resize: none;
+  color: #fff;
+  font-size: clamp(20px, 5vw, 28px);
+  text-align: center;
+  width: 100%;
+  line-height: 1.5;
+  caret-color: #fff;
+  min-height: 120px;
+  font-family: var(--font, sans-serif);
+}
+.status-composer__textarea::placeholder { color: rgba(255,255,255,0.45); }
+
+/* Media mode */
+.status-composer__media-preview {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  width: 100%;
+  height: 100%;
+  padding: 16px;
+}
+.status-composer__media-preview img,
+.status-composer__media-preview video {
+  max-height: 55vh;
+  max-width: 100%;
+  border-radius: 12px;
+  object-fit: contain;
+}
+.status-composer__caption-input {
+  width: 100%;
+  max-width: 380px;
+  background: rgba(0,0,0,0.5);
+  border: none; outline: none;
+  color: #fff;
+  border-radius: 14px;
+  padding: 10px 14px;
+  font-size: 14px;
+  resize: none;
+  font-family: var(--font, sans-serif);
+}
+.status-composer__caption-input::placeholder { color: rgba(255,255,255,0.4); }
+
+/* Empty media placeholder */
+.status-composer__media-placeholder {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  color: rgba(255,255,255,0.45);
+  cursor: pointer;
+  transition: color 0.15s;
+}
+.status-composer__media-placeholder:hover { color: rgba(255,255,255,0.75); }
+.status-composer__media-placeholder span { font-size: 13.5px; }
+
+/* ── Toolbar (bottom controls) ────────────────────────────────── */
+.status-composer__toolbar {
+  flex-shrink: 0;
+  background: rgba(0,0,0,0.88);
+  padding: 12px 16px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* Colour swatch row */
+.status-composer__colors {
+  display: flex;
+  gap: 9px;
+  overflow-x: auto;
+  padding-bottom: 2px;
+}
+.status-composer__colors::-webkit-scrollbar { display: none; }
+.status-composer__color-swatch {
+  width: 28px; height: 28px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  border: 2.5px solid transparent;
+  cursor: pointer;
+  transition: transform 0.15s, border-color 0.15s;
+}
+.status-composer__color-swatch:hover { transform: scale(1.15); }
+.status-composer__color-swatch.selected {
+  border-color: #fff;
+  transform: scale(1.1);
+}
+
+/* Font style row */
+.status-composer__fonts {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding-bottom: 2px;
+}
+.status-composer__fonts::-webkit-scrollbar { display: none; }
+.status-composer__font-btn {
+  padding: 4px 14px;
+  border-radius: 20px;
+  border: none;
+  font-size: 12.5px;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background 0.15s, color 0.15s;
+  font-family: var(--font, sans-serif);
+}
+.status-composer__font-btn.active {
+  background: var(--status-green);
+  color: #fff;
+}
+.status-composer__font-btn:not(.active) {
+  background: rgba(255,255,255,0.12);
+  color: rgba(255,255,255,0.65);
+}
+.status-composer__font-btn:hover:not(.active) {
+  background: rgba(255,255,255,0.22);
+  color: #fff;
+}
+
+/* Privacy row */
+.status-composer__privacy {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.status-composer__privacy-label {
+  font-size: 12px;
+  color: rgba(255,255,255,0.45);
+  flex-shrink: 0;
+}
+.status-composer__privacy-select {
+  background: transparent;
+  border: none; outline: none;
+  color: rgba(255,255,255,0.65);
+  font-size: 12.5px;
+  cursor: pointer;
+  font-family: var(--font, sans-serif);
+  /* browser-native styling */
+  -webkit-appearance: none;
+  appearance: none;
+}
+.status-composer__privacy-select option { background: #1a1a1a; color: #fff; }
+
+/* Error message */
+.status-composer__error {
+  font-size: 12.5px;
+  color: #f87171;
+  margin: 0;
+}
+
+/* Post button */
+.status-composer__submit {
+  width: 100%;
+  padding: 13px;
+  border-radius: 22px;
+  border: none;
+  background: var(--status-green);
+  color: #fff;
+  font-size: 15px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 0.15s, opacity 0.15s, transform 0.1s;
+  font-family: var(--font, sans-serif);
+  letter-spacing: 0.01em;
+}
+.status-composer__submit:hover:not(:disabled) {
+  background: var(--status-green-dark);
+  transform: translateY(-1px);
+}
+.status-composer__submit:active:not(:disabled) { transform: translateY(0); }
+.status-composer__submit:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* ================================================================
+   CHAT-LIST STATUS AVATAR  (ring dot in sidebar + header)
+   ================================================================ */
+
+.status-avatar-wrap {
+  position: relative;
+  flex-shrink: 0;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* The ring itself — a coloured border using box-shadow so it
+   doesn't disturb layout flow */
+.status-avatar-wrap.has-status {
+  cursor: pointer;
+  /* outer ring gap uses box-shadow so no extra wrapper needed */
+  box-shadow:
+    0 0 0 2.5px var(--bg-primary),         /* gap  */
+    0 0 0 5px   var(--status-ring-seen);   /* ring (default grey) */
+  transition: box-shadow 0.2s;
+}
+.status-avatar-wrap.has-status.unread {
+  box-shadow:
+    0 0 0 2.5px var(--bg-primary),
+    0 0 0 5px   var(--status-ring-unseen);
+}
+.status-avatar-wrap.has-status:hover {
+  box-shadow:
+    0 0 0 2.5px var(--bg-primary),
+    0 0 0 5px   var(--status-green-dark);
+}
+
+.status-avatar-wrap img,
+.status-avatar-wrap .status-avatar-fallback {
+  display: block;
+  border-radius: 50%;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.status-avatar-fallback {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  color: #fff;
+  font-size: inherit;
+}
+
+/* Pulse animation when ring is unread */
+@keyframes statusRingPulse {
+  0%, 100% { box-shadow: 0 0 0 2.5px var(--bg-primary), 0 0 0 5px var(--status-ring-unseen); }
+  50%       { box-shadow: 0 0 0 2.5px var(--bg-primary), 0 0 0 7px var(--status-green-dim);  }
+}
+.status-avatar-wrap.has-status.unread {
+  animation: statusRingPulse 2.4s ease-in-out infinite;
+}
+/* Stop pulse on hover for a cleaner feel */
+.status-avatar-wrap.has-status.unread:hover {
+  animation: none;
+}
+
+/* Dark-mode ring gap colour override */
+[data-theme="dark"] .status-avatar-wrap.has-status {
+  box-shadow:
+    0 0 0 2.5px var(--bg-primary),
+    0 0 0 5px   var(--status-ring-seen);
+}
+[data-theme="dark"] .status-avatar-wrap.has-status.unread {
+  animation: statusRingPulseDark 2.4s ease-in-out infinite;
+}
+@keyframes statusRingPulseDark {
+  0%, 100% { box-shadow: 0 0 0 2.5px var(--bg-primary), 0 0 0 5px var(--status-ring-unseen); }
+  50%       { box-shadow: 0 0 0 2.5px var(--bg-primary), 0 0 0 7px var(--status-green-dim);  }
+}
+
+/* ── Viewer loading skeleton ──────────────────────────────────── */
+.status-viewer__skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px 18px;
+}
+.status-viewer__skeleton-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 0;
+}
+.status-viewer__skeleton-avatar {
+  width: 44px; height: 44px;
+  border-radius: 50%;
+  background: var(--bg-tertiary);
+  flex-shrink: 0;
+  animation: shimmer 1.4s infinite;
+}
+.status-viewer__skeleton-lines { flex: 1; display: flex; flex-direction: column; gap: 8px; }
+.status-viewer__skeleton-line {
+  height: 12px;
+  border-radius: 6px;
+  background: var(--bg-tertiary);
+  animation: shimmer 1.4s infinite;
+}
+
+/* ── Responsive tweaks ────────────────────────────────────────── */
+@media (max-width: 768px) {
+  .status-viewer__header { padding: 4px 12px; }
+  .status-composer__toolbar { padding: 10px 12px 16px; }
+  .status-composer__textarea { font-size: 22px; }
+}
+@media (max-width: 480px) {
+  .status-viewer__text { font-size: 18px; padding: 0 24px; }
+  .status-tab__my-row  { padding: 12px 12px 8px; }
+}

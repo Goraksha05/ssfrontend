@@ -6,6 +6,7 @@ import usePostCount from "../../utils/PostCount";
 import usePlanSlabs from "../../hooks/usePlanSlabs";
 import { toast } from "react-toastify";
 import BankDetailsModal from "../Common/BankDetailsModal";
+import "./Rewards.css";
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 
@@ -13,7 +14,6 @@ const PostRewards = ({ userId, onActivityRecorded }) => {
   const { user } = useAuth();
   const { statePosts } = useContext(PostContext);
 
-  // Resolve userId to a string consistently
   const resolvedUserId =
     (userId?._id || userId?.id || userId)?.toString() ||
     (user?._id || user?.id)?.toString() ||
@@ -33,7 +33,6 @@ const PostRewards = ({ userId, onActivityRecorded }) => {
   const [loading, setLoading] = useState(false);
 
   // ── Claimed milestones ──────────────────────────────────────────────────
-  // Source of truth: user.redeemedPostSlabs (set by backend on claim)
   const allClaimed = (user?.redeemedPostSlabs ?? []).map(String);
 
   // ── Progress bar ────────────────────────────────────────────────────────
@@ -75,64 +74,65 @@ const PostRewards = ({ userId, onActivityRecorded }) => {
   // ── Not subscribed ────────────────────────────────────────────────────────
   if (!isSubscribed) {
     return (
-      <div style={styles.lockedBox}>
-        <span style={styles.lockEmoji}>🔒</span>
-        <p style={styles.lockMsg}>Post Rewards require an active subscription.</p>
-        <p style={styles.lockSub}>Subscribe to start earning rewards for your posts!</p>
+      <div className="post-locked-box">
+        <span className="post-locked-emoji">🔒</span>
+        <p className="post-locked-msg">Post Rewards require an active subscription.</p>
+        <p className="post-locked-sub">Subscribe to start earning rewards for your posts!</p>
       </div>
     );
   }
 
-  const canClaim = !!selectedMilestone && !loading &&
+  const canClaim =
+    !!selectedMilestone &&
+    !loading &&
     postCount >= Number(selectedMilestone) &&
     !allClaimed.includes(String(selectedMilestone));
 
   return (
-    <div style={styles.container}>
+    <div className="rewards-container-sm">
+
       {/* ── Hero Counter ── */}
-      <div style={styles.heroCard}>
-        <span style={styles.heroEmoji}>📝</span>
+      <div className="post-hero-card">
+        <span className="post-hero-emoji">📝</span>
         <div>
-          <div style={styles.heroCount}>{postCount}</div>
-          <div style={styles.heroLabel}>Total Posts</div>
+          <div className="post-hero-count">{postCount}</div>
+          <div className="post-hero-label">Total Posts</div>
         </div>
         {nextMilestone && (
-          <div style={styles.heroNext}>
-            <span style={styles.nextLabel}>Next reward at</span>
-            <span style={styles.nextVal}>{nextMilestone} posts</span>
+          <div className="post-hero-next">
+            <span className="post-next-label">Next reward at</span>
+            <span className="post-next-val">{nextMilestone} posts</span>
           </div>
         )}
       </div>
 
       {/* ── Progress bar ── */}
       {nextMilestone && (
-        <div style={styles.progressWrap}>
-          <div style={styles.progressRow}>
-            <span style={styles.progressText}>{postCount} / {nextMilestone} posts</span>
-            <span style={styles.progressPct}>{progress}%</span>
+        <div className="rewards-progress-wrap">
+          <div className="rewards-progress-row">
+            <span className="rewards-progress-text">{postCount} / {nextMilestone} posts</span>
+            <span className="rewards-progress-pct post">{progress}%</span>
           </div>
-          <div style={styles.progressTrack}>
-            <div style={{ ...styles.progressBar, width: `${progress}%` }} />
+          <div className="rewards-progress-track">
+            <div
+              className="rewards-progress-bar post"
+              style={{ width: `${progress}%` }}
+            />
           </div>
-          <span style={styles.progressHint}>
+          <span className="rewards-progress-hint">
             {nextMilestone - postCount} more post{nextMilestone - postCount !== 1 ? "s" : ""} to unlock your next reward
           </span>
         </div>
       )}
 
       {/* ── Milestone chips ── */}
-      <div style={styles.chipsRow}>
+      <div className="rewards-chips-row">
         {rewardMilestones.map((m) => {
           const isClaimed = allClaimed.includes(String(m));
           const isActive  = postCount >= m;
+          const stateClass = isClaimed ? "claimed" : isActive ? "active-post" : "locked";
           return (
-            <div
-              key={m}
-              style={{
-                ...styles.chip,
-                ...(isClaimed ? styles.chipClaimed : isActive ? styles.chipActive : styles.chipLocked),
-              }}
-            >
+            <div key={m} className={`post-chip ${stateClass}`}>
               {isClaimed ? "✅" : isActive ? "🏆" : "🔒"} {m}p
             </div>
           );
@@ -140,12 +140,12 @@ const PostRewards = ({ userId, onActivityRecorded }) => {
       </div>
 
       {/* ── Claim selector ── */}
-      <div style={styles.claimSection}>
-        <label style={styles.claimLabel}>🎁 Claim a post reward:</label>
+      <div className="rewards-claim-section">
+        <label className="rewards-claim-label">🎁 Claim a post reward:</label>
         <select
           value={selectedMilestone}
           onChange={(e) => setSelectedMilestone(e.target.value)}
-          style={styles.select}
+          className="rewards-select"
         >
           <option value="">Select a milestone…</option>
           {rewardMilestones.map((m) => {
@@ -162,7 +162,7 @@ const PostRewards = ({ userId, onActivityRecorded }) => {
 
         <button
           type="button"
-          style={{ ...styles.claimBtn, ...(!canClaim ? styles.claimBtnDisabled : {}) }}
+          className="rewards-claim-btn post"
           disabled={!canClaim}
           data-bs-toggle="modal"
           data-bs-target="#postBankModal"
@@ -179,68 +179,6 @@ const PostRewards = ({ userId, onActivityRecorded }) => {
       />
     </div>
   );
-};
-
-// ── Styles ────────────────────────────────────────────────────────────────────
-const styles = {
-  container: { display: "flex", flexDirection: "column", gap: 18 },
-
-  lockedBox: {
-    display: "flex", flexDirection: "column", alignItems: "center",
-    gap: 10, padding: "40px 20px", textAlign: "center",
-    background: "#0f172a", borderRadius: 14, border: "1px dashed #334155",
-  },
-  lockEmoji: { fontSize: 40 },
-  lockMsg:   { color: "#fbbf24", fontWeight: 700, fontSize: 15, margin: 0 },
-  lockSub:   { color: "#64748b", fontSize: 13, margin: 0 },
-
-  heroCard: {
-    display: "flex", alignItems: "center", gap: 20,
-    background: "linear-gradient(135deg, #422006, #78350f)",
-    borderRadius: 14, padding: "20px 24px", flexWrap: "wrap",
-  },
-  heroEmoji: { fontSize: 44, lineHeight: 1 },
-  heroCount: { fontSize: 48, fontWeight: 900, color: "#fbbf24", lineHeight: 1 },
-  heroLabel: { color: "#fde68a", fontSize: 14, fontWeight: 600, marginTop: 2 },
-  heroNext:  { marginLeft: "auto", textAlign: "right" },
-  nextLabel: { display: "block", color: "#94a3b8", fontSize: 12 },
-  nextVal:   { display: "block", color: "#f59e0b", fontWeight: 700, fontSize: 16 },
-
-  progressWrap:  { display: "flex", flexDirection: "column", gap: 6 },
-  progressRow:   { display: "flex", justifyContent: "space-between" },
-  progressText:  { color: "#94a3b8", fontSize: 13 },
-  progressPct:   { color: "#f59e0b", fontWeight: 700, fontSize: 13 },
-  progressTrack: { height: 8, borderRadius: 99, background: "#334155", overflow: "hidden" },
-  progressBar: {
-    height: "100%", borderRadius: 99,
-    background: "linear-gradient(90deg, #f59e0b, #fbbf24)",
-    transition: "width 0.6s ease",
-  },
-  progressHint: { color: "#64748b", fontSize: 12 },
-
-  chipsRow: { display: "flex", flexWrap: "wrap", gap: 8 },
-  chip: {
-    padding: "6px 12px", borderRadius: 99, fontSize: 12, fontWeight: 700,
-    border: "1px solid #334155",
-  },
-  chipActive:  { background: "#292524", border: "1px solid #f59e0b", color: "#f59e0b" },
-  chipClaimed: { background: "#14532d", border: "1px solid #16a34a", color: "#86efac" },
-  chipLocked:  { background: "#1e293b", color: "#475569" },
-
-  claimSection: { display: "flex", flexDirection: "column", gap: 10 },
-  claimLabel: { color: "#94a3b8", fontWeight: 600, fontSize: 14 },
-  select: {
-    background: "#0f172a", border: "1px solid #334155", borderRadius: 10,
-    color: "#e2e8f0", padding: "10px 14px", fontSize: 14, width: "100%",
-  },
-  claimBtn: {
-    background: "linear-gradient(135deg, #f59e0b, #d97706)",
-    border: "none", borderRadius: 10, color: "#0f172a",
-    padding: "12px 0", fontWeight: 800, fontSize: 15,
-    cursor: "pointer", width: "100%",
-    boxShadow: "0 4px 15px rgba(245,158,11,0.4)",
-  },
-  claimBtnDisabled: { opacity: 0.45, cursor: "not-allowed" },
 };
 
 export default PostRewards;

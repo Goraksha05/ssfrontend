@@ -4,14 +4,7 @@ import PostItem from './HomePostitem';
 
 /* ─── Skeleton post card ──────────────────────────────────────────────────── */
 const SkeletonPost = () => (
-  <div style={{
-    background: '#1a2035',
-    border: '1.5px solid #252d45',
-    borderRadius: 14,
-    overflow: 'hidden',
-    marginBottom: 16,
-    animation: 'skeletonPulse 1.5s ease-in-out infinite',
-  }}>
+  <div className="skeleton-card">
     {/* Header */}
     <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '14px 14px 0' }}>
       <div style={{ width: 42, height: 42, borderRadius: '50%', background: '#252d45', flexShrink: 0 }} />

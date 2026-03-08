@@ -1,30 +1,45 @@
 // src/Components/ChatRoom/ChatRoom.js
 //
-// Orchestrates the full chat UI.
-// Owns `replyTo` state and passes it to both ChatWindow (for context)
-// and MessageInput (for preview bar + send payload).
+// Changes for status feature:
+//   • Added a "Status" tab button in the sidebar header alongside "Chats"
+//   • Renders <StatusTab> when activeTab === 'status'
+//   • StatusProvider is expected to be mounted higher up (in index.js / App.js).
+//     ChatRoom just consumes it via useStatus() inside StatusTab.
+//   • Tab switching resets mobile chat open state so the UX doesn't get confused.
 
 import React, { useState, useEffect } from 'react';
 import { useNavigate }   from 'react-router-dom';
-import { Sun, Moon, X, MessageCircle } from 'lucide-react';
+import { Sun, Moon, X, MessageCircle, Circle } from 'lucide-react';
 import ChatList     from './Chat/ChatList';
 import ChatWindow   from './Chat/ChatWindow';
 import MessageInput from './Chat/MessageInput';
+import StatusTab    from '../Status/StatusTab';
+import { useAuth }  from '../../Context/Authorisation/AuthContext';
 import './ChatRoom.css';
 
 const ChatRoom = () => {
   const navigate = useNavigate();
+  const { user } = useAuth();
 
   const [theme, setTheme] = useState(
     () => localStorage.getItem('messenger-theme') || 'dark'
   );
   const [isMobileChatOpen, setIsMobileChatOpen] = useState(false);
   const [replyTo,          setReplyTo]          = useState(null);
+  // 'chats' | 'status'
+  const [activeTab,        setActiveTab]        = useState('chats');
 
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme);
     localStorage.setItem('messenger-theme', theme);
   }, [theme]);
+
+  const handleTabSwitch = (tab) => {
+    setActiveTab(tab);
+    // Switching away from a chat clears mobile panel so layout is clean
+    if (tab !== 'chats') setIsMobileChatOpen(false);
+    setReplyTo(null);
+  };
 
   return (
     <div className="messenger-container">
@@ -56,26 +71,55 @@ const ChatRoom = () => {
       <div className="messenger-main">
         {/* Sidebar */}
         <div className="messenger-sidebar">
-          <ChatList
-            onChatSelect={() => {
-              if (window.innerWidth <= 768) setIsMobileChatOpen(true);
-              setReplyTo(null); // clear reply when switching chats
-            }}
-          />
+          {/* ── Tab bar ────────────────────────────────────────────── */}
+          <div className="messenger-tab-bar">
+            <button
+              className={`messenger-tab-btn ${activeTab === 'chats' ? 'active' : ''}`}
+              onClick={() => handleTabSwitch('chats')}
+              aria-pressed={activeTab === 'chats'}
+            >
+              <MessageCircle size={16} />
+              <span>Chats</span>
+            </button>
+            <button
+              className={`messenger-tab-btn ${activeTab === 'status' ? 'active' : ''}`}
+              onClick={() => handleTabSwitch('status')}
+              aria-pressed={activeTab === 'status'}
+            >
+              <Circle size={16} />
+              <span>Status</span>
+            </button>
+          </div>
+
+          {/* ── Tab content ─────────────────────────────────────────── */}
+          {activeTab === 'chats' && (
+            <ChatList
+              onChatSelect={() => {
+                if (window.innerWidth <= 768) setIsMobileChatOpen(true);
+                setReplyTo(null);
+              }}
+            />
+          )}
+
+          {activeTab === 'status' && user && (
+            <StatusTab currentUser={user} />
+          )}
         </div>
 
-        {/* Chat panel */}
-        <div className={`messenger-chat ${isMobileChatOpen ? 'active' : ''}`}>
-          <ChatWindow
-            onBackToList={() => setIsMobileChatOpen(false)}
-            replyTo={replyTo}
-            setReplyTo={setReplyTo}
-          />
-          <MessageInput
-            replyTo={replyTo}
-            setReplyTo={setReplyTo}
-          />
-        </div>
+        {/* Chat panel — only shown when chats tab is active */}
+        {activeTab === 'chats' && (
+          <div className={`messenger-chat ${isMobileChatOpen ? 'active' : ''}`}>
+            <ChatWindow
+              onBackToList={() => setIsMobileChatOpen(false)}
+              replyTo={replyTo}
+              setReplyTo={setReplyTo}
+            />
+            <MessageInput
+              replyTo={replyTo}
+              setReplyTo={setReplyTo}
+            />
+          </div>
+        )}
       </div>
     </div>
   );

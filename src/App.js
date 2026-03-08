@@ -47,7 +47,8 @@ import { NotificationProvider } from './Context/NotificationContext';
 import { ChatProvider } from './Context/ChatContext';
 import ChatRoom from './Components/ChatRoom/ChatRoom';
 import InviteCard from './Components/InviteCard'
-import { I18nProvider } from './Context/i18nContext';
+import { I18nProvider } from './i18n/i18nContext';
+import { StatusProvider } from './Context/StatusContext';
 
 const queryClient = new QueryClient();
 
@@ -70,64 +71,66 @@ function AppContent() {
                                 <ReferralProvider>
                                     <SocketProvider>
                                         <SubscriptionProvider>
-                                            {!isAdmin && isAuthenticated && (
-                                                <>
-                                                    <Navbartemp title={<b>SoShoLife</b>} myHome="Home" />
-                                                    <Subscription />
-                                                </>
-                                            )}
-
-                                            <Routes>
-                                                {/* ─── Admin Routes ───────────── */}
-                                                {isAdmin && (
+                                            <StatusProvider>
+                                                {!isAdmin && isAuthenticated && (
                                                     <>
-                                                        <Route path="/admin" element={<Navigate to="/admin/dashboard" replace />} />
-                                                        <Route path="/admin/*" element={
-                                                            <AdminRoute>
-                                                                <AdminLayout />
-                                                                <AdminDashboard />
-                                                                <AdminUserReport />
-                                                            </AdminRoute>
-                                                        } />
-                                                        <Route path="*" element={<Navigate to="/admin/dashboard" />} />
+                                                        <Navbartemp title={<b>SoShoLife</b>} myHome="Home" />
+                                                        <Subscription />
                                                     </>
                                                 )}
 
-                                                {/* ─── Public Routes ───────────── */}
-                                                {!isAuthenticated && (
-                                                    <>
-                                                        <Route path="/" element={<WelcomPage />} />
-                                                        <Route path="/login" element={<LogSignNewModel />} />
-                                                        <Route path="/terms-popup" element={<TermsPopup />} />
-                                                        <Route path="*" element={<Navigate to="/" />} />
-                                                    </>
-                                                )}
+                                                <Routes>
+                                                    {/* ─── Admin Routes ───────────── */}
+                                                    {isAdmin && (
+                                                        <>
+                                                            <Route path="/admin" element={<Navigate to="/admin/dashboard" replace />} />
+                                                            <Route path="/admin/*" element={
+                                                                <AdminRoute>
+                                                                    <AdminLayout />
+                                                                    <AdminDashboard />
+                                                                    <AdminUserReport />
+                                                                </AdminRoute>
+                                                            } />
+                                                            <Route path="*" element={<Navigate to="/admin/dashboard" />} />
+                                                        </>
+                                                    )}
 
-                                                {/* ─── Authenticated User Routes ───────────── */}
-                                                {isAuthenticated && !isAdmin && (
-                                                    <>
-                                                        <Route path="/" element={<Home />} />
-                                                        <Route path="/activity" element={<Activity />} />
-                                                        <Route path="/invitaion" element={<InviteCard />} />
-                                                        <Route path="/allfriends" element={<Friend />} />
-                                                        <Route path="/friendrequest" element={<FriendReq />} />
-                                                        <Route path="/suggestions" element={<Suggestions />} />
-                                                        <Route path="/profile" element={<Profile />} />
-                                                        <Route path="/login" element={<Navigate to="/" />} />
-                                                        <Route path="*" element={<Navigate to="/" />} />
-                                                        <Route path="/reels/fullscreen" element={<FullscreenReels />} />
+                                                    {/* ─── Public Routes ───────────── */}
+                                                    {!isAuthenticated && (
+                                                        <>
+                                                            <Route path="/" element={<WelcomPage />} />
+                                                            <Route path="/login" element={<LogSignNewModel />} />
+                                                            <Route path="/terms-popup" element={<TermsPopup />} />
+                                                            <Route path="*" element={<Navigate to="/" />} />
+                                                        </>
+                                                    )}
 
-                                                        <Route path="/aboutus" element={<AboutUs />} />
-                                                        <Route path="/contactus" element={<ContactUs />} />
-                                                        <Route path="/privacypolicy" element={<PrivacyPolicy />} />
-                                                        <Route path="/refcanclepolicy" element={<RefCancelPolicy />} />
+                                                    {/* ─── Authenticated User Routes ───────────── */}
+                                                    {isAuthenticated && !isAdmin && (
+                                                        <>
+                                                            <Route path="/" element={<Home />} />
+                                                            <Route path="/activity" element={<Activity />} />
+                                                            <Route path="/invitaion" element={<InviteCard />} />
+                                                            <Route path="/allfriends" element={<Friend />} />
+                                                            <Route path="/friendrequest" element={<FriendReq />} />
+                                                            <Route path="/suggestions" element={<Suggestions />} />
+                                                            <Route path="/profile" element={<Profile />} />
+                                                            <Route path="/login" element={<Navigate to="/" />} />
+                                                            <Route path="*" element={<Navigate to="/" />} />
+                                                            <Route path="/reels/fullscreen" element={<FullscreenReels />} />
 
-                                                        <Route path="/chat" element={<ChatRoom />} />
-                                                    </>
-                                                )}
-                                            </Routes>
+                                                            <Route path="/aboutus" element={<AboutUs />} />
+                                                            <Route path="/contactus" element={<ContactUs />} />
+                                                            <Route path="/privacypolicy" element={<PrivacyPolicy />} />
+                                                            <Route path="/refcanclepolicy" element={<RefCancelPolicy />} />
 
-                                            <ToastContainer position="top-right" autoClose={5000} />
+                                                            <Route path="/chat" element={<ChatRoom />} />
+                                                        </>
+                                                    )}
+                                                </Routes>
+
+                                                <ToastContainer position="top-right" autoClose={5000} />
+                                            </StatusProvider>
                                         </SubscriptionProvider>
                                     </SocketProvider>
                                 </ReferralProvider>

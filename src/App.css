@@ -866,7 +866,7 @@ ul li button:hover {
     border-radius: 50px;
     border: none;
     background: transparent;
-    color: rgba(255, 255, 255, 0.55);
+    color: rgb(255, 255, 255);
     font-family: 'Baloo 2', cursive;
     font-size: 1rem;
     font-weight: 700;
@@ -876,14 +876,14 @@ ul li button:hover {
 
 .rl-tab.active-login {
     background: linear-gradient(135deg, #1565c0, #0288d1);
-    color: #fff;
-    box-shadow: 0 3px 14px rgba(2, 136, 209, 0.5);
+    color: rgb(255, 255, 255);
+    /* box-shadow: 0 3px 14px rgba(2, 136, 209, 0.5); */
 }
 
 .rl-tab.active-signup {
     background: linear-gradient(135deg, #2e7d32, #00c853);
     color: #fff;
-    box-shadow: 0 3px 14px rgba(0, 200, 83, 0.45);
+    /* box-shadow: 0 3px 14px rgba(0, 200, 83, 0.45); */
 }
 
 /* Form Card */

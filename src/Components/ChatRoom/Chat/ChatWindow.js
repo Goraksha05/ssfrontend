@@ -1,26 +1,24 @@
 // src/Components/ChatRoom/Chat/ChatWindow.js
 //
-// Professional chat window with:
-//   • Date separators between messages ("Today", "Yesterday", "Mon 14 Jan")
-//   • Unread message divider
-//   • Scroll-to-bottom floating button with unread pip
-//   • Smart scroll — auto-scrolls only when already near bottom
-//   • Passes prevMsg/nextMsg to MessageBubble for grouping
-//   • ReplyContext provider so bubbles can set reply state
-//   • Typing indicator in header status line (not just in message area)
+// Changes for status feature:
+//   • The recipient avatar in the chat header is now wrapped in
+//     <ChatListStatusAvatar> — clicking it opens the recipient's
+//     status stories exactly like WhatsApp.
+//   • All other logic is unchanged.
 
 import React, {
   useEffect, useRef, useMemo, useState, useCallback,
 } from 'react';
 import { ArrowLeft, Phone, Video, MoreVertical, ChevronDown } from 'lucide-react';
-import { useAuth }       from '../../../Context/Authorisation/AuthContext';
-import { useSocket }     from '../../../Context/SocketContext';
-import { useChat }       from '../../../Context/ChatContext';
-import { usePresence }   from '../../../hooks/usePresence';
-import { onSocketEvent } from '../../../WebSocket/WebSocketClient';
-import apiRequest        from '../../../utils/apiRequest';
+import { useAuth }              from '../../../Context/Authorisation/AuthContext';
+import { useSocket }            from '../../../Context/SocketContext';
+import { useChat }              from '../../../Context/ChatContext';
+import { usePresence }          from '../../../hooks/usePresence';
+import { onSocketEvent }        from '../../../WebSocket/WebSocketClient';
+import apiRequest               from '../../../utils/apiRequest';
 import MessageBubble, { ReplyContext } from './MessageBubble';
-import { getInitials }   from '../../../utils/getInitials';
+import { getInitials }          from '../../../utils/getInitials';
+import ChatListStatusAvatar     from '../../Status/ChatListStatusAvatar';
 
 const COLORS = ['#0ea5e9','#8b5cf6','#ec4899','#f59e0b','#10b981','#ef4444'];
 const getColor = (name = '') => {
@@ -63,7 +61,7 @@ const ChatWindow = ({ onBackToList, replyTo, setReplyTo }) => {
   const messagesAreaRef  = useRef(null);
   const [showScrollBtn,  setShowScrollBtn]  = useState(false);
   const [newMsgCount,    setNewMsgCount]    = useState(0);
-  const firstUnreadRef   = useRef(null); // index of first unread msg
+  const firstUnreadRef   = useRef(null);
 
   // ── Recipient ─────────────────────────────────────────────────────
   const chatMembers = useMemo(
@@ -201,15 +199,31 @@ const ChatWindow = ({ onBackToList, replyTo, setReplyTo }) => {
             <ArrowLeft size={20} />
           </button>
 
-          <div className="chat-header-avatar">
-            {recipientInfo.profileImage
-              ? <img src={recipientInfo.profileImage} alt={recipientInfo.name} />
-              : <div className="chat-header-avatar-placeholder"
-                     style={{ background: getColor(recipientInfo.name) }}>
+          {/* ── Recipient avatar — shows status ring, opens viewer on click ── */}
+          <div className="chat-header-avatar" style={{ position: 'relative' }}>
+            <ChatListStatusAvatar
+              userId={recipient?._id}
+              name={recipientInfo.name}
+              avatarUrl={recipientInfo.profileImage}
+              currentUserId={user?._id}
+              size={10}
+              fallbackRender={
+                // Shown when no avatar URL — matches original placeholder style
+                <div
+                  className="chat-header-avatar-placeholder"
+                  style={{ background: getColor(recipientInfo.name) }}
+                >
                   {getInitials(recipientInfo.name)}
                 </div>
-            }
-            {recipientOnline && <span className="header-online-dot" aria-label="Online" />}
+              }
+            />
+            {recipientOnline && (
+              <span
+                className="header-online-dot"
+                aria-label="Online"
+                style={{ position: 'absolute', bottom: 1, right: 1, zIndex: 10 }}
+              />
+            )}
           </div>
 
           <div className="chat-header-info">
@@ -241,7 +255,6 @@ const ChatWindow = ({ onBackToList, replyTo, setReplyTo }) => {
           const prev = dedupedMessages[idx - 1] ?? null;
           const next = dedupedMessages[idx + 1] ?? null;
 
-          // Date separator
           const showDateSep = idx === 0 || !isSameDay(msg.createdAt, prev?.createdAt);
 
           return (

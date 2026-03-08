@@ -4,8 +4,9 @@ import { Link, useNavigate } from "react-router-dom";
 import { jwtDecode } from "jwt-decode";
 import { useAuth } from "../Context/Authorisation/AuthContext";
 import { useSubscription } from "../Context/Subscription/SubscriptionContext";
-import { useI18n } from "../Context/i18nContext";           // ← i18nContext hook
+import { useI18n } from "../i18n/i18nContext";           // ← i18nContext hook
 import '@fortawesome/fontawesome-free/css/all.min.css';
+import './Navbar.css';
 import Logo from "./XLogo/logoImage";
 import { BadgeCheck, Search, Bell, Home, Activity, User, ChevronDown, Globe, X } from 'lucide-react';
 import { useFriend } from "../Context/Friend/FriendContext";
@@ -25,286 +26,7 @@ import ThemeToggle from '../Components/ThemeToggle';
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 
-/* ─── Inline styles ───────────────────────────────────────────────────── */
-const styles = {
-  nav: {
-    position: "fixed",
-    top: 0,
-    left: 0,
-    right: 0,
-    zIndex: 1030,
-    background: "linear-gradient(135deg, #0a0f1e 0%, #0d1b2a 60%, #0f2040 100%)",
-    borderBottom: "1px solid rgba(0,180,255,0.12)",
-    boxShadow: "0 4px 32px rgba(0,0,0,0.5), 0 1px 0 rgba(0,180,255,0.08)",
-    backdropFilter: "blur(12px)",
-    fontFamily: "'Nunito', sans-serif",
-  },
-  inner: {
-    maxWidth: "1400px",
-    margin: "0 auto",
-    display: "flex",
-    alignItems: "center",
-    padding: "0 16px",
-    height: "62px",
-    gap: "12px",
-  },
-  brand: {
-    display: "flex",
-    alignItems: "center",
-    textDecoration: "none",
-    flexShrink: 0,
-    marginRight: "8px",
-  },
-  searchWrap: {
-    position: "relative",
-    flex: "1",
-    maxWidth: "340px",
-    minWidth: "160px",
-  },
-  searchInner: {
-    display: "flex",
-    alignItems: "center",
-    background: "rgba(255,255,255,0.06)",
-    border: "1px solid rgba(255,255,255,0.1)",
-    borderRadius: "50px",
-    padding: "0 14px",
-    gap: "8px",
-    transition: "border-color 0.2s, box-shadow 0.2s",
-  },
-  searchInput: {
-    background: "transparent",
-    border: "none",
-    outline: "none",
-    color: "#e8f4ff",
-    fontSize: "14px",
-    width: "100%",
-    padding: "9px 0",
-  },
-  navLinks: {
-    display: "flex",
-    alignItems: "center",
-    gap: "2px",
-    flexShrink: 0,
-  },
-  navLink: {
-    display: "flex",
-    alignItems: "center",
-    gap: "6px",
-    padding: "7px 13px",
-    borderRadius: "10px",
-    textDecoration: "none",
-    color: "rgba(220,240,255,0.7)",
-    fontSize: "14px",
-    fontWeight: 600,
-    transition: "background 0.18s, color 0.18s",
-    whiteSpace: "nowrap",
-  },
-  navLinkHover: {
-    background: "rgba(0,180,255,0.1)",
-    color: "#7dd3fc",
-  },
-  rightCluster: {
-    display: "flex",
-    alignItems: "center",
-    gap: "8px",
-    marginLeft: "auto",
-    flexShrink: 0,
-  },
-  greetingPill: {
-    display: "flex",
-    alignItems: "center",
-    gap: "8px",
-    background: "rgba(255,255,255,0.06)",
-    border: "1px solid rgba(255,255,255,0.08)",
-    borderRadius: "50px",
-    padding: "5px 14px 5px 6px",
-    cursor: "default",
-  },
-  avatarCircle: {
-    width: "30px",
-    height: "30px",
-    borderRadius: "50%",
-    background: "linear-gradient(135deg, #0ea5e9, #6366f1)",
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    fontSize: "13px",
-    fontWeight: 800,
-    color: "#fff",
-    flexShrink: 0,
-  },
-  greetText: {
-    color: "#e2f3ff",
-    fontSize: "13px",
-    fontWeight: 700,
-    whiteSpace: "nowrap",
-  },
-  iconBtn: {
-    position: "relative",
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    width: "38px",
-    height: "38px",
-    borderRadius: "10px",
-    border: "none",
-    background: "rgba(255,255,255,0.06)",
-    color: "rgba(200,230,255,0.75)",
-    cursor: "pointer",
-    transition: "background 0.18s, color 0.18s",
-    flexShrink: 0,
-  },
-  badge: {
-    position: "absolute",
-    top: "4px",
-    right: "4px",
-    width: "16px",
-    height: "16px",
-    borderRadius: "50%",
-    background: "#ef4444",
-    color: "#fff",
-    fontSize: "9px",
-    fontWeight: 800,
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    lineHeight: 1,
-    border: "1.5px solid #0a0f1e",
-  },
-  dropdownResults: {
-    position: "absolute",
-    top: "calc(100% + 8px)",
-    left: 0,
-    right: 0,
-    background: "#0f1e35",
-    border: "1px solid rgba(0,180,255,0.18)",
-    borderRadius: "14px",
-    boxShadow: "0 16px 40px rgba(0,0,0,0.6)",
-    overflow: "hidden",
-    zIndex: 2000,
-  },
-  dropdownItem: {
-    display: "flex",
-    alignItems: "center",
-    gap: "10px",
-    padding: "10px 14px",
-    cursor: "pointer",
-    borderBottom: "1px solid rgba(255,255,255,0.04)",
-    transition: "background 0.15s",
-  },
-  dropdownAvatar: {
-    width: "34px",
-    height: "34px",
-    borderRadius: "50%",
-    objectFit: "cover",
-    border: "2px solid rgba(0,180,255,0.3)",
-    flexShrink: 0,
-  },
-  policiesDropdown: {
-    position: "relative",
-    display: "inline-block",
-  },
-  policiesMenu: {
-    position: "absolute",
-    top: "calc(100% + 8px)",
-    left: "50%",
-    transform: "translateX(-50%)",
-    background: "#0f1e35",
-    border: "1px solid rgba(0,180,255,0.18)",
-    borderRadius: "14px",
-    boxShadow: "0 16px 40px rgba(0,0,0,0.6)",
-    minWidth: "200px",
-    overflow: "hidden",
-    zIndex: 2000,
-  },
-  policiesItem: {
-    display: "block",
-    padding: "10px 18px",
-    color: "rgba(200,230,255,0.8)",
-    fontSize: "14px",
-    fontWeight: 600,
-    textDecoration: "none",
-    borderBottom: "1px solid rgba(255,255,255,0.04)",
-    transition: "background 0.15s",
-  },
-  langDropdown: {
-    position: "relative",
-  },
-  langMenu: {
-    position: "absolute",
-    top: "calc(100% + 8px)",
-    right: 0,
-    background: "#0f1e35",
-    border: "1px solid rgba(0,180,255,0.18)",
-    borderRadius: "14px",
-    boxShadow: "0 16px 40px rgba(0,0,0,0.6)",
-    minWidth: "180px",
-    maxHeight: "320px",
-    overflowY: "auto",
-    zIndex: 2000,
-  },
-  langItem: {
-    display: "block",
-    width: "100%",
-    padding: "10px 18px",
-    color: "rgba(200,230,255,0.8)",
-    fontSize: "13px",
-    fontWeight: 600,
-    background: "transparent",
-    border: "none",
-    textAlign: "left",
-    cursor: "pointer",
-    borderBottom: "1px solid rgba(255,255,255,0.04)",
-    transition: "background 0.15s",
-  },
-  hamburger: {
-    display: "none",
-    flexDirection: "column",
-    gap: "5px",
-    width: "38px",
-    height: "38px",
-    alignItems: "center",
-    justifyContent: "center",
-    background: "rgba(255,255,255,0.06)",
-    border: "1px solid rgba(255,255,255,0.08)",
-    borderRadius: "10px",
-    cursor: "pointer",
-    flexShrink: 0,
-  },
-  hamburgerLine: {
-    width: "18px",
-    height: "2px",
-    background: "rgba(200,230,255,0.8)",
-    borderRadius: "2px",
-    transition: "all 0.2s",
-  },
-  mobileDrawer: {
-    background: "#0b1528",
-    borderTop: "1px solid rgba(0,180,255,0.1)",
-    padding: "12px 16px 16px",
-    display: "flex",
-    flexDirection: "column",
-    gap: "6px",
-  },
-  mobileLinkItem: {
-    display: "flex",
-    alignItems: "center",
-    gap: "10px",
-    padding: "10px 14px",
-    borderRadius: "10px",
-    textDecoration: "none",
-    color: "rgba(200,230,255,0.8)",
-    fontSize: "15px",
-    fontWeight: 600,
-    transition: "background 0.15s",
-  },
-  modalOverlay: {
-    display: "flex",
-    alignItems: "flex-start",
-    justifyContent: "center",
-    paddingTop: "10vh",
-  },
-};
+
 
 /* ─── Small reusable hover-aware link ────────────────────────────────── */
 function NavLinkItem({ to, icon: Icon, children, onClick }) {
@@ -312,7 +34,7 @@ function NavLinkItem({ to, icon: Icon, children, onClick }) {
   return (
     <Link
       to={to}
-      style={{ ...styles.navLink, ...(hover ? styles.navLinkHover : {}) }}
+      className={`navbar-nav-link${hover ? " active" : ""}`}
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
       onClick={onClick}
@@ -355,9 +77,7 @@ export default function Navbartemp({ title, myHome }) {
 
   const [selectedUser, setSelectedUser] = useState(null);
   const [showProfileModal, setShowProfileModal] = useState(false);
-  const [logoutHover, setLogoutHover] = useState(false);
-  const [subHover, setSubHover] = useState(false);
-  const [bellHover, setBellHover] = useState(false);
+
 
   const { sendRequest } = useFriend();
 
@@ -478,27 +198,22 @@ export default function Navbartemp({ title, myHome }) {
   return (
     <>
       {/* ══════════════════════════════════════════════════════════ NAV */}
-      <nav style={styles.nav}>
-        <div style={styles.inner}>
+      <nav className="navbar-root">
+        <div className="navbar-inner">
 
           {/* Brand */}
-          <Link style={styles.brand} to="/">
+          <Link className="navbar-brand" to="/">
             <Logo />
           </Link>
 
           {/* Search bar */}
-          <div ref={searchRef} style={{ ...styles.searchWrap, display: "flex", flexDirection: "column" }}>
-            <div
-              style={{
-                ...styles.searchInner,
-                ...(searchFocused ? { borderColor: "rgba(0,180,255,0.45)", boxShadow: "0 0 0 3px rgba(0,180,255,0.1)" } : {}),
-              }}
-            >
+          <div ref={searchRef} className="navbar-search-wrap">
+            <div className={`navbar-search-inner${searchFocused ? " focused" : ""}`}>
               <Search size={15} style={{ color: "rgba(150,200,255,0.5)", flexShrink: 0 }} />
               <input
                 type="search"
-                style={styles.searchInput}
-                placeholder={t.searchPlaceholder || "Search friends..."}
+                className="navbar-search-input"
+                placeholder={t["nav.search_placeholder"] || "Search friends..."}
                 value={searchQuery}
                 onChange={handleSearchChange}
                 onFocus={() => setSearchFocused(true)}
@@ -506,7 +221,7 @@ export default function Navbartemp({ title, myHome }) {
               />
               {searchQuery && (
                 <button
-                  style={{ background: "none", border: "none", cursor: "pointer", color: "rgba(150,200,255,0.5)", padding: 0, display: "flex" }}
+                  className="navbar-search-clear"
                   onClick={() => { setSearchQuery(""); setShowSearchResults(false); }}
                 >
                   <X size={14} />
@@ -516,31 +231,29 @@ export default function Navbartemp({ title, myHome }) {
 
             {/* Search results dropdown */}
             {showSearchResults && (
-              <div style={styles.dropdownResults}>
+              <div className="navbar-dropdown-results">
                 {searchResults.length > 0 ? searchResults.map((user) => (
                   <div
                     key={user._id}
-                    style={styles.dropdownItem}
+                    className="navbar-dropdown-item"
                     onClick={() => { setShowSearchResults(false); setSearchQuery(""); openProfileModal(user._id); }}
-                    onMouseEnter={e => e.currentTarget.style.background = "rgba(0,180,255,0.08)"}
-                    onMouseLeave={e => e.currentTarget.style.background = "transparent"}
                   >
                     <img
                       src={user.profileImage || "/default-avatar.png"}
                       alt={user.name}
-                      style={styles.dropdownAvatar}
+                      className="navbar-dropdown-avatar"
                     />
                     <div>
-                      <div style={{ color: "#e2f3ff", fontSize: "14px", fontWeight: 700 }}>{user.name}</div>
-                      <div style={{ color: "rgba(150,200,255,0.55)", fontSize: "12px" }}>@{user.username}</div>
+                      <div className="navbar-dropdown-name">{user.name}</div>
+                      <div className="navbar-dropdown-username">@{user.username}</div>
                     </div>
-                    <span style={{ marginLeft: "auto", color: "rgba(0,180,255,0.6)", fontSize: "12px" }}>
-                      {t.viewProfile || "View →"}
+                    <span className="navbar-dropdown-view">
+                      {t["nav.view_profile"] || "View →"}
                     </span>
                   </div>
                 )) : (
-                  <div style={{ padding: "14px 18px", color: "rgba(150,200,255,0.5)", fontSize: "13px" }}>
-                    {t.noUsersFound || "No users found"}
+                  <div className="navbar-dropdown-empty">
+                    {t["nav.no_users_found"] || "No users found"}
                   </div>
                 )}
               </div>
@@ -548,41 +261,39 @@ export default function Navbartemp({ title, myHome }) {
           </div>
 
           {/* Desktop nav links */}
-          <div style={styles.navLinks} className="d-none d-lg-flex">
+          <div className="navbar-nav-links d-none d-lg-flex">
             <NavLinkItem to="/" icon={Home} onClick={handleNavItemClick}>
-              {myHome || t.navHome || "Home"}
+              {myHome || t["nav.home"] || "Home"}
             </NavLinkItem>
             <NavLinkItem to="/activity" icon={Activity} onClick={handleNavItemClick}>
-              {t.navActivity || "Activity"}
+              {t["nav.activity"] || "Activity"}
             </NavLinkItem>
             <NavLinkItem to="/profile" icon={User} onClick={handleNavItemClick}>
-              {t.navProfile || "Profile"}
+              {t["nav.profile"] || "Profile"}
             </NavLinkItem>
 
             {/* Policies dropdown */}
-            <div ref={policiesRef} style={styles.policiesDropdown}>
+            <div ref={policiesRef} className="navbar-policies-dropdown">
               <button
-                style={{ ...styles.navLink, background: "none", border: "none" }}
+                className="navbar-nav-link"
                 onClick={() => setShowPoliciesMenu(p => !p)}
               >
-                <span>{t.navPolicies || "Policies"}</span>
+                <span>{t["nav.policies"] || "Policies"}</span>
                 <ChevronDown size={13} style={{ opacity: 0.6 }} />
               </button>
               {showPoliciesMenu && (
-                <div style={styles.policiesMenu}>
+                <div className="navbar-policies-menu">
                   {[
-                    { to: "/aboutus",         labelKey: "policyAboutUs",       fallback: "About Us" },
-                    { to: "/privacypolicy",   labelKey: "policyPrivacy",       fallback: "Privacy Policy" },
-                    { to: "/refcanclepolicy", labelKey: "policyRefund",        fallback: "Refund & Cancel" },
-                    { to: "/contactus",       labelKey: "policyContact",       fallback: "Contact Us" },
+                    { to: "/aboutus",         labelKey: "nav.about_us",       fallback: "About Us" },
+                    { to: "/privacypolicy",   labelKey: "nav.privacy_policy",       fallback: "Privacy Policy" },
+                    { to: "/refcanclepolicy", labelKey: "nav.refund_cancel",        fallback: "Refund & Cancel" },
+                    { to: "/contactus",       labelKey: "nav.contact_us",       fallback: "Contact Us" },
                   ].map(item => (
                     <Link
                       key={item.to}
                       to={item.to}
-                      style={styles.policiesItem}
+                      className="navbar-policies-item"
                       onClick={() => { handleNavItemClick(); setShowPoliciesMenu(false); }}
-                      onMouseEnter={e => e.currentTarget.style.background = "rgba(0,180,255,0.08)"}
-                      onMouseLeave={e => e.currentTarget.style.background = "transparent"}
                     >
                       {t[item.labelKey] || item.fallback}
                     </Link>
@@ -593,62 +304,41 @@ export default function Navbartemp({ title, myHome }) {
           </div>
 
           {/* Right cluster */}
-          <div style={styles.rightCluster}>
+          <div className="navbar-right-cluster">
             {isAuthenticated && (
               <>
                 {/* User greeting pill */}
-                <div style={styles.greetingPill} className="d-none d-md-flex">
-                  <span style={{ ...styles.greetText, fontSize: "18px" }}>
+                <div className="navbar-greeting-pill d-none d-md-flex">
+                  <span className="navbar-greet-text">
                     {isPrime && (
                       <BadgeCheck size={21} style={{ color: "#38bdf8", marginRight: "4px", verticalAlign: "middle" }} fill="currentColor" stroke="white" />
                     )}
-                    {t.greeting
-                      ? t.format("greeting", { name: userName.split(" ")[0] })
-                      : `Hi, ${userName.split(" ")[0]}`}
+                    {t["nav.hi_greeting"] ? `${t["nav.hi_greeting"]}, ${userName.split(" ")[0]}` : `Hi, ${userName.split(" ")[0]}`}
                   </span>
                 </div>
 
                 {/* Subscribe button */}
                 <button
-                  title={t.subscribeCta || "Become a Prime Member"}
+                  title={t["nav.become_prime"] || "Become a Prime Member"}
                   onClick={openSubscription}
-                  className="d-none d-sm-flex"
-                  style={{
-                    background: "none",
-                    border: "none",
-                    padding: 0,
-                    cursor: "pointer",
-                    flexShrink: 0,
-                    borderRadius: "50px",
-                    overflow: "hidden",
-                    transform: subHover ? "scale(1.04)" : "scale(1)",
-                    filter: subHover ? "brightness(1.12) drop-shadow(0 0 8px rgba(0,200,255,0.5))" : "drop-shadow(0 2px 6px rgba(0,0,0,0.4))",
-                    transition: "transform 0.18s, filter 0.18s",
-                  }}
-                  onMouseEnter={() => setSubHover(true)}
-                  onMouseLeave={() => setSubHover(false)}
+                  className="navbar-subscribe-btn d-none d-sm-flex"
                 >
                   <img
                     src={SubscribeIcon}
-                    alt={t.subscribeCta || "Subscribe – Become a Prime Member"}
-                    style={{ height: "38px", width: "auto", display: "block" }}
+                    alt={t["nav.become_prime"] || "Subscribe – Become a Prime Member"}
+                    className="navbar-subscribe-img"
                   />
                 </button>
 
                 {/* Bell */}
                 <button
                   onClick={() => setShowNotifications(p => !p)}
-                  title={t.notifications || "Notifications"}
-                  style={{
-                    ...styles.iconBtn,
-                    ...(bellHover ? { background: "rgba(99,102,241,0.18)", color: "#a5b4fc" } : {}),
-                  }}
-                  onMouseEnter={() => setBellHover(true)}
-                  onMouseLeave={() => setBellHover(false)}
+                  title={t["nav.notifications"] || "Notifications"}
+                  className="navbar-icon-btn"
                 >
                   <Bell size={17} />
                   {notificationCount > 0 && (
-                    <span style={styles.badge}>{notificationCount > 9 ? "9+" : notificationCount}</span>
+                    <span className="navbar-badge">{notificationCount > 9 ? "9+" : notificationCount}</span>
                   )}
                 </button>
 
@@ -657,32 +347,27 @@ export default function Navbartemp({ title, myHome }) {
                     i18nContext.js. Calling setLang(code) switches the language
                     everywhere in the app instantly.
                 ─────────────────────────────────────────────────────────── */}
-                <div ref={langRef} style={styles.langDropdown}>
+                <div ref={langRef} className="navbar-lang-dropdown">
                   <button
-                    style={{ ...styles.iconBtn, width: "auto", padding: "0 10px", gap: "5px", fontSize: "12px", fontWeight: 700 }}
+                    className="navbar-icon-btn navbar-icon-btn--lang"
                     onClick={() => setShowLangMenu(p => !p)}
-                    title={t.selectLanguage || "Language"}
+                    title={t["nav.language"] || "Language"}
                   >
                     <Globe size={14} />
                     <span className="d-none d-md-inline">{lang.toUpperCase()}</span>
                   </button>
 
                   {showLangMenu && (
-                    <div style={styles.langMenu}>
+                    <div className="navbar-lang-menu">
                       {LANGUAGES.map(l => (
                         <button
                           key={l.code}
-                          style={{
-                            ...styles.langItem,
-                            ...(lang === l.code ? { color: "#38bdf8", background: "rgba(0,180,255,0.08)" } : {}),
-                          }}
+                          className={`navbar-lang-item${lang === l.code ? " active" : ""}`}
                           onClick={() => handleLangChange(l.code)}
-                          onMouseEnter={e => e.currentTarget.style.background = "rgba(0,180,255,0.08)"}
-                          onMouseLeave={e => e.currentTarget.style.background = lang === l.code ? "rgba(0,180,255,0.08)" : "transparent"}
                         >
                           {l.flag}&nbsp;&nbsp;{l.label}
                           {lang === l.code && (
-                            <span style={{ marginLeft: "auto", fontSize: "10px", opacity: 0.6 }}>✓</span>
+                            <span className="navbar-lang-item-check">✓</span>
                           )}
                         </button>
                       ))}
@@ -693,25 +378,13 @@ export default function Navbartemp({ title, myHome }) {
                 {/* Logout */}
                 <button
                   onClick={() => handleLogout(false)}
-                  title={t.logout || "Logout"}
-                  className="d-none d-sm-flex align-items-center"
-                  style={{
-                    background: "none",
-                    border: "none",
-                    padding: 0,
-                    cursor: "pointer",
-                    flexShrink: 0,
-                    transform: logoutHover ? "scale(1.08)" : "scale(1)",
-                    filter: logoutHover ? "brightness(1.15) drop-shadow(0 0 8px rgba(255,60,60,0.55))" : "drop-shadow(0 2px 5px rgba(0,0,0,0.5))",
-                    transition: "transform 0.18s, filter 0.18s",
-                  }}
-                  onMouseEnter={() => setLogoutHover(true)}
-                  onMouseLeave={() => setLogoutHover(false)}
+                  title={t["logout"] || "Logout"}
+                  className="navbar-logout-btn d-none d-sm-flex align-items-center"
                 >
                   <img
                     src={LogoutIcon}
-                    alt={t.logout || "Logout"}
-                    style={{ width: "38px", height: "38px", display: "block" }}
+                    alt={t["logout"] || "Logout"}
+                    className="navbar-logout-img"
                   />
                 </button>
               </>
@@ -721,34 +394,31 @@ export default function Navbartemp({ title, myHome }) {
 
             {/* Mobile hamburger */}
             <button
-              style={{ ...styles.hamburger, display: "flex" }}
-              className="d-lg-none"
+              className="navbar-hamburger d-lg-none"
               onClick={() => setIsCollapsed(p => !p)}
               aria-label="Toggle menu"
             >
-              <span style={{ ...styles.hamburgerLine, transform: !isCollapsed ? "rotate(45deg) translate(5px, 5px)" : "none" }} />
-              <span style={{ ...styles.hamburgerLine, opacity: !isCollapsed ? 0 : 1 }} />
-              <span style={{ ...styles.hamburgerLine, transform: !isCollapsed ? "rotate(-45deg) translate(5px, -5px)" : "none" }} />
+              <span className="navbar-hamburger-line" style={{ transform: !isCollapsed ? "rotate(45deg) translate(5px, 5px)" : "none" }} />
+              <span className="navbar-hamburger-line" style={{ opacity: !isCollapsed ? 0 : 1 }} />
+              <span className="navbar-hamburger-line" style={{ transform: !isCollapsed ? "rotate(-45deg) translate(5px, -5px)" : "none" }} />
             </button>
           </div>
         </div>
 
         {/* ── Mobile Drawer ── */}
         {!isCollapsed && (
-          <div ref={navbarRef} style={styles.mobileDrawer}>
+          <div ref={navbarRef} className="navbar-mobile-drawer">
             {/* Nav links */}
             {[
-              { to: "/",         icon: Home,     label: myHome || t.navHome     || "Home"     },
-              { to: "/activity", icon: Activity, label: t.navActivity            || "Activity" },
-              { to: "/profile",  icon: User,     label: t.navProfile             || "Profile"  },
+              { to: "/",         icon: Home,     label: myHome || t["nav.home"] || "Home"     },
+              { to: "/activity", icon: Activity, label: t["nav.activity"] || "Activity" },
+              { to: "/profile",  icon: User,     label: t["nav.profile"] || "Profile"  },
             ].map(item => (
               <Link
                 key={item.to}
                 to={item.to}
-                style={styles.mobileLinkItem}
+                className="navbar-mobile-link"
                 onClick={handleNavItemClick}
-                onMouseEnter={e => e.currentTarget.style.background = "rgba(0,180,255,0.08)"}
-                onMouseLeave={e => e.currentTarget.style.background = "transparent"}
               >
                 <item.icon size={17} style={{ color: "#38bdf8" }} />
                 {item.label}
@@ -756,20 +426,20 @@ export default function Navbartemp({ title, myHome }) {
             ))}
 
             {/* Policies sub-links */}
-            <div style={{ borderTop: "1px solid rgba(255,255,255,0.06)", paddingTop: "6px", marginTop: "2px" }}>
-              <div style={{ color: "rgba(150,200,255,0.4)", fontSize: "11px", fontWeight: 700, padding: "4px 14px 6px", letterSpacing: "0.05em", textTransform: "uppercase" }}>
-                {t.navPolicies || "Policies"}
+            <div className="navbar-mobile-section">
+              <div className="navbar-mobile-section-label">
+                {t["nav.policies"] || "Policies"}
               </div>
               {[
-                { to: "/aboutus",         labelKey: "policyAboutUs",  fallback: "About Us"       },
-                { to: "/privacypolicy",   labelKey: "policyPrivacy",  fallback: "Privacy Policy" },
-                { to: "/refcanclepolicy", labelKey: "policyRefund",   fallback: "Refund & Cancel"},
-                { to: "/contactus",       labelKey: "policyContact",  fallback: "Contact Us"     },
+                { to: "/aboutus",         labelKey: "nav.about_us",  fallback: "About Us"       },
+                { to: "/privacypolicy",   labelKey: "nav.privacy_policy",  fallback: "Privacy Policy" },
+                { to: "/refcanclepolicy", labelKey: "nav.refund_cancel",   fallback: "Refund & Cancel"},
+                { to: "/contactus",       labelKey: "nav.contact_us",  fallback: "Contact Us"     },
               ].map(item => (
                 <Link
                   key={item.to}
                   to={item.to}
-                  style={{ ...styles.mobileLinkItem, fontSize: "13px", padding: "8px 14px", color: "rgba(180,210,255,0.65)" }}
+                  className="navbar-mobile-link navbar-mobile-link--small"
                   onClick={handleNavItemClick}
                 >
                   {t[item.labelKey] || item.fallback}
@@ -778,26 +448,16 @@ export default function Navbartemp({ title, myHome }) {
             </div>
 
             {/* Mobile language picker */}
-            <div style={{ borderTop: "1px solid rgba(255,255,255,0.06)", paddingTop: "8px", marginTop: "2px" }}>
-              <div style={{ color: "rgba(150,200,255,0.4)", fontSize: "11px", fontWeight: 700, padding: "4px 14px 6px", letterSpacing: "0.05em", textTransform: "uppercase" }}>
-                {t.selectLanguage || "Language"}
+            <div className="navbar-mobile-section">
+              <div className="navbar-mobile-section-label">
+                {t["nav.language"] || "Language"}
               </div>
-              <div style={{ display: "flex", flexWrap: "wrap", gap: "6px", padding: "0 14px 6px" }}>
+              <div className="navbar-mobile-lang-grid">
                 {LANGUAGES.map(l => (
                   <button
                     key={l.code}
                     onClick={() => { handleLangChange(l.code); handleNavItemClick(); }}
-                    style={{
-                      background: lang === l.code ? "rgba(0,180,255,0.15)" : "rgba(255,255,255,0.05)",
-                      border: lang === l.code ? "1px solid rgba(0,180,255,0.4)" : "1px solid rgba(255,255,255,0.08)",
-                      borderRadius: "20px",
-                      padding: "5px 12px",
-                      color: lang === l.code ? "#38bdf8" : "rgba(200,230,255,0.7)",
-                      fontSize: "12px",
-                      fontWeight: 600,
-                      cursor: "pointer",
-                      transition: "all 0.15s",
-                    }}
+                    className={`navbar-mobile-lang-btn${lang === l.code ? " active" : ""}`}
                   >
                     {l.flag} {l.label}
                   </button>
@@ -807,30 +467,20 @@ export default function Navbartemp({ title, myHome }) {
 
             {/* Mobile auth actions */}
             {isAuthenticated && (
-              <div style={{ borderTop: "1px solid rgba(255,255,255,0.06)", paddingTop: "8px", marginTop: "2px", display: "flex", gap: "12px", alignItems: "center", justifyContent: "center" }}>
+              <div className="navbar-mobile-auth-actions">
                 <button
                   onClick={openSubscription}
-                  title={t.subscribeCta || "Become a Prime Member"}
-                  style={{
-                    background: "none", border: "none", padding: 0, cursor: "pointer",
-                    transition: "transform 0.18s, filter 0.18s",
-                  }}
-                  onMouseEnter={e => { e.currentTarget.style.transform = "scale(1.05)"; e.currentTarget.style.filter = "drop-shadow(0 0 8px rgba(0,200,255,0.5))"; }}
-                  onMouseLeave={e => { e.currentTarget.style.transform = "scale(1)"; e.currentTarget.style.filter = "none"; }}
+                  title={t["nav.become_prime"] || "Become a Prime Member"}
+                  className="navbar-mobile-subscribe-btn"
                 >
-                  <img src={SubscribeIcon} alt={t.subscribeCta || "Subscribe"} style={{ height: "42px", width: "auto", display: "block" }} />
+                  <img src={SubscribeIcon} alt={t["nav.become_prime"] || "Subscribe"} className="navbar-mobile-subscribe-img" />
                 </button>
                 <button
                   onClick={() => handleLogout(false)}
-                  title={t.logout || "Logout"}
-                  style={{
-                    background: "none", border: "none", padding: 0, cursor: "pointer",
-                    transition: "transform 0.18s, filter 0.18s",
-                  }}
-                  onMouseEnter={e => { e.currentTarget.style.transform = "scale(1.1)"; e.currentTarget.style.filter = "drop-shadow(0 0 8px rgba(255,60,60,0.55))"; }}
-                  onMouseLeave={e => { e.currentTarget.style.transform = "scale(1)"; e.currentTarget.style.filter = "none"; }}
+                  title={t["logout"] || "Logout"}
+                  className="navbar-mobile-logout-btn"
                 >
-                  <img src={LogoutIcon} alt={t.logout || "Logout"} style={{ width: "42px", height: "42px", display: "block" }} />
+                  <img src={LogoutIcon} alt={t["logout"] || "Logout"} className="navbar-mobile-logout-img" />
                 </button>
               </div>
             )}
@@ -839,7 +489,7 @@ export default function Navbartemp({ title, myHome }) {
       </nav>
 
       {/* Spacer so content doesn't hide under fixed nav */}
-      <div style={{ height: "62px" }} />
+      <div className="navbar-spacer" />
 
       {/* ── Notifications Panel ── */}
       <NotificationsPanel
@@ -852,52 +502,51 @@ export default function Navbartemp({ title, myHome }) {
       <Modal show={showProfileModal} onHide={() => setShowProfileModal(false)} centered>
         <Modal.Header
           closeButton
-          style={{ background: "linear-gradient(135deg,#0f1e35,#0a1628)", borderBottom: "1px solid rgba(0,180,255,0.15)", color: "#e2f3ff" }}
+          className="navbar-modal-header"
         >
-          <Modal.Title style={{ fontFamily: "'Nunito',sans-serif", fontWeight: 800 }}>
-            {selectedUser?.user_id?.name || t.userProfile || "User Profile"}
+          <Modal.Title className="navbar-modal-title">
+            {selectedUser?.user_id?.name || t["nav.profile"] || "User Profile"}
           </Modal.Title>
         </Modal.Header>
 
-        <Modal.Body style={{ background: "#0d1b2a", color: "#cce3f5" }}>
+        <Modal.Body className="navbar-modal-body">
           {selectedUser ? (
             <>
               <div className="text-center" style={{ marginBottom: "20px" }}>
                 <img
                   src={selectedUser.profileavatar?.URL || "/default-avatar.png"}
                   alt={selectedUser.user_id?.name}
-                  className="rounded-circle mb-3"
-                  style={{ width: "88px", height: "88px", objectFit: "cover", border: "3px solid rgba(0,180,255,0.4)", boxShadow: "0 0 20px rgba(0,180,255,0.2)" }}
+                  className="rounded-circle mb-3 navbar-modal-avatar"
                 />
-                <h5 style={{ color: "#e2f3ff", fontWeight: 800, marginBottom: "4px" }}>@{selectedUser.user_id?.username}</h5>
-                <p style={{ color: "rgba(150,200,255,0.6)", fontSize: "13px", margin: 0 }}>
+                <h5 className="navbar-modal-username">@{selectedUser.user_id?.username}</h5>
+                <p className="navbar-modal-location">
                   {selectedUser.currentcity || "N/A"}{selectedUser.hometown && ` · ${selectedUser.hometown}`}
                 </p>
               </div>
-              <div style={{ background: "rgba(0,180,255,0.05)", borderRadius: "10px", padding: "14px 16px", border: "1px solid rgba(0,180,255,0.1)" }}>
-                <p style={{ margin: "0 0 8px", fontSize: "14px" }}>
-                  <span style={{ color: "rgba(150,200,255,0.5)", marginRight: "8px" }}>{t.gender || "Gender"}</span>
-                  <strong style={{ color: "#e2f3ff" }}>{selectedUser.sex || t.notSpecified || "Not specified"}</strong>
+              <div className="navbar-modal-info-box">
+                <p className="navbar-modal-info-row">
+                  <span className="navbar-modal-info-label">{t["profile.gender"] || "Gender"}</span>
+                  <strong className="navbar-modal-info-value">{selectedUser.sex || t["profile.not_specified"] || "Not specified"}</strong>
                 </p>
-                <p style={{ margin: 0, fontSize: "14px" }}>
-                  <span style={{ color: "rgba(150,200,255,0.5)", marginRight: "8px" }}>{t.relationship || "Relationship"}</span>
-                  <strong style={{ color: "#e2f3ff" }}>{selectedUser.relationship || t.notSpecified || "Not specified"}</strong>
+                <p className="navbar-modal-info-row">
+                  <span className="navbar-modal-info-label">{t["profile.relationship"] || "Relationship"}</span>
+                  <strong className="navbar-modal-info-value">{selectedUser.relationship || t["profile.not_specified"] || "Not specified"}</strong>
                 </p>
               </div>
             </>
           ) : (
-            <div style={{ textAlign: "center", padding: "24px", color: "rgba(150,200,255,0.5)" }}>
-              {t.loadingProfile || "Loading profile…"}
+            <div className="navbar-modal-empty">
+              {t["profile.loading_profile"] || "Loading profile…"}
             </div>
           )}
         </Modal.Body>
 
-        <Modal.Footer style={{ background: "#0a1628", borderTop: "1px solid rgba(0,180,255,0.1)" }}>
+        <Modal.Footer className="navbar-modal-footer">
           <Button variant="outline-secondary" onClick={() => setShowProfileModal(false)}>
-            {t.close || "Close"}
+            {t["common.close"] || "Close"}
           </Button>
           <Button
-            style={{ background: "linear-gradient(135deg,#0ea5e9,#6366f1)", border: "none", fontWeight: 700, boxShadow: "0 4px 15px rgba(14,165,233,0.3)" }}
+            className="navbar-modal-add-btn"
             onClick={() => {
               const targetId = selectedUser?.user_id?._id || selectedUser?.user_id || selectedUser?._id;
               if (targetId) {
@@ -909,7 +558,7 @@ export default function Navbartemp({ title, myHome }) {
             }}
           >
             <i className="fas fa-user-plus me-2" />
-            {t.addFriend || "Add Friend"}
+            {t["profile.add_friend"] || "Add Friend"}
           </Button>
         </Modal.Footer>
       </Modal>

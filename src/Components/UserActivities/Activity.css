@@ -1,0 +1,188 @@
+/* ============================================================
+   Activity.css — Styles for Activity.jsx
+   All colours consume CSS custom properties set by ThemeContext.js
+   on <html>, so dark/light mode works automatically.
+   ============================================================ */
+
+/* ── Page wrapper ─────────────────────────────────────────── */
+.activity-page {
+  max-width: 880px;
+  margin: 0 auto;
+  padding: 24px 16px 48px;
+  font-family: 'DM Sans', sans-serif;
+  color: var(--text-primary);
+  min-height: 100vh;
+}
+
+/* ── Auth wall (unauthenticated state) ────────────────────── */
+.activity-auth-wall {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 60vh;
+  gap: 12px;
+}
+
+.activity-lock-icon {
+  font-size: 48px;
+}
+
+.activity-auth-msg {
+  color: var(--text-secondary);
+  font-size: 16px;
+}
+
+/* ── Header ───────────────────────────────────────────────── */
+.activity-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 28px;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.activity-title {
+  font-size: clamp(22px, 4vw, 32px);
+  font-weight: 800;
+  margin: 0;
+  color: var(--text-primary);
+}
+
+.activity-title-accent {
+  color: var(--accent-alt);
+}
+
+.activity-rewards-btn {
+  background: var(--accent-gradient);
+  color: #fff;
+  border: none;
+  border-radius: 10px;
+  padding: 10px 18px;
+  font-weight: 700;
+  cursor: pointer;
+  font-size: 14px;
+  white-space: nowrap;
+  box-shadow: 0 4px 15px rgba(99, 102, 241, 0.4);
+  transition: transform 0.15s, box-shadow 0.15s;
+}
+
+.activity-rewards-btn:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 20px rgba(99, 102, 241, 0.5);
+}
+
+/* ── Summary grid (commented-out section, kept for when re-enabled) ── */
+.activity-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 14px;
+  margin-bottom: 28px;
+}
+
+.activity-skeleton-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 14px;
+  margin-bottom: 28px;
+}
+
+.activity-skeleton {
+  height: 100px;
+  border-radius: 14px;
+  background-size: 200% 100%;
+  animation: activity-shimmer 1.5s infinite;
+}
+
+body.theme-dark  .activity-skeleton {
+  background: linear-gradient(90deg, #1e293b 25%, #334155 50%, #1e293b 75%);
+}
+
+body.theme-light .activity-skeleton {
+  background: linear-gradient(90deg, #e2e8f0 25%, #f1f5f9 50%, #e2e8f0 75%);
+}
+
+@keyframes activity-shimmer {
+  0%   { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+.activity-summary-card {
+  background: var(--bg-card);
+  border-radius: 14px;
+  padding: 20px 16px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  text-align: center;
+  box-shadow: var(--shadow-card);
+  transition: transform 0.2s;
+  cursor: default;
+}
+
+.activity-summary-card:hover {
+  transform: translateY(-2px);
+}
+
+.activity-summary-icon  { font-size: 28px; }
+.activity-summary-value { font-size: 26px; font-weight: 800; }
+
+.activity-summary-label {
+  font-size: 12px;
+  color: var(--text-secondary);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+
+/* ── Tab bar ──────────────────────────────────────────────── */
+.activity-tab-bar {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 20px;
+  border-bottom: 1px solid var(--border);
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.activity-tab {
+  background: none;
+  border: none;
+  border-bottom: 3px solid transparent;
+  color: var(--text-muted);
+  padding: 10px 20px;
+  font-weight: 700;
+  font-size: 14px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: color 0.2s, border-color 0.2s;
+  /* Active colour injected via --tab-color set inline per tab */
+}
+
+.activity-tab.active {
+  border-bottom-color: var(--tab-color);
+  color: var(--tab-color);
+}
+
+/* ── Content panel ────────────────────────────────────────── */
+.activity-panel {
+  background: var(--bg-card);
+  border-radius: 16px;
+  padding: clamp(16px, 4vw, 28px);
+  box-shadow: var(--shadow-card);
+}
+
+/* ── Responsive ───────────────────────────────────────────── */
+@media (max-width: 600px) {
+  .activity-summary-grid,
+  .activity-skeleton-row {
+    grid-template-columns: 1fr;
+  }
+
+  .activity-tab-bar {
+    flex-direction: column;
+    gap: 4px;
+  }
+}

@@ -1014,3 +1014,78 @@
   .chat-name { font-size: 14px; }
   .msg-group { max-width: 90%; }
 }
+
+/* ── Tab bar container ─────────────────Status─────────────────────────────────── */
+.messenger-tab-bar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 8px 12px 0;
+  border-bottom: 1px solid var(--border-color);
+  background: var(--bg-secondary);
+  flex-shrink: 0;
+}
+
+/* ── Individual tab button ──────────────────────────────────────────────── */
+.messenger-tab-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 16px;
+  border: none;
+  border-radius: 8px 8px 0 0;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: color 0.15s, background 0.15s;
+  position: relative;
+  /* Remove default focus outline — we provide our own */
+  outline: none;
+}
+
+.messenger-tab-btn:hover {
+  color: var(--text-primary);
+  background: var(--bg-hover, rgba(0,0,0,0.04));
+}
+
+/* Active state — WhatsApp green underline */
+.messenger-tab-btn.active {
+  color: #25D366;
+  font-weight: 600;
+}
+
+.messenger-tab-btn.active::after {
+  content: '';
+  position: absolute;
+  bottom: -1px;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: #25D366;
+  border-radius: 2px 2px 0 0;
+}
+
+/* Focus ring for accessibility */
+.messenger-tab-btn:focus-visible {
+  box-shadow: 0 0 0 2px #25D36650;
+}
+
+/* ── Status ring sizing tweak ────────────────────────────────────────────── */
+/* The chat-avatar wrapper in ChatList needs position:relative so the
+   online-dot (which we now place absolutely) stays pinned to the avatar. */
+.chat-avatar {
+  position: relative;
+  flex-shrink: 0;
+}
+
+/* ── Chat header avatar wrapper ─────────────────────────────────────────── */
+/* Ensure the header avatar wrapper matches the status ring size correctly */
+.chat-header-avatar {
+  position: relative;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}

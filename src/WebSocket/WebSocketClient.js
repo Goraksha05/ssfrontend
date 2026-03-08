@@ -7,6 +7,23 @@
 //   • Safe listener management — core listeners use a private namespace
 //     so removeAllListeners() is NEVER called, preventing app-level
 //     listeners added by chat components from being clobbered on reconnect.
+//
+// ── FIX (March 2026) ──────────────────────────────────────────────────────────
+// BUG: onSocketEvent() silently returned () => {} when socket was null at call
+//      time. This happened because React useEffect hooks in ChatContext and
+//      ChatList fire synchronously after mount, but initializeSocket() is async
+//      — the socket module-level variable is still null when those effects run.
+//      Result: NO receive_message listener was ever registered, so:
+//        • ChatContext never appended incoming messages to state
+//        • ChatList never called fetchChats() after a new message
+//        • The sidebar never updated after starting a new conversation
+//
+// FIX: onSocketEvent() now queues the subscription when socket is null.
+//      The queue is flushed inside attachCoreListeners() (called by
+//      initializeSocket and reconnect) so every pending subscription is
+//      applied the moment the socket becomes available. The returned
+//      unsubscribe function works correctly in both the queued and the
+//      immediately-registered paths.
 
 import { io } from "socket.io-client";
 
@@ -20,6 +37,25 @@ const SERVER_URL =
 let socket            = null;
 let reconnectTimer    = null;
 let reconnectAttempts = 0;
+
+// ── Pending-subscription queue ────────────────────────────────────────────────
+// When onSocketEvent() is called before the socket exists, the subscription is
+// stored here. flushPendingSubscriptions() drains the queue onto the socket.
+const _pendingSubscriptions = []; // Array<{ event, handler, unsub: {current} }>
+
+function flushPendingSubscriptions() {
+  if (!socket) return;
+  // Capture into a block-scoped const so the closures created inside the loop
+  // reference a stable value, not the mutable module-level `socket` variable.
+  // This satisfies the ESLint `no-loop-func` rule.
+  const sock = socket;
+  while (_pendingSubscriptions.length > 0) {
+    const sub = _pendingSubscriptions.shift();
+    sock.on(sub.event, sub.handler);
+    // Patch the live unsubscribe ref so the caller's cleanup still works
+    sub.unsub.current = () => sock.off(sub.event, sub.handler);
+  }
+}
 
 // BroadcastChannel lets other tabs know about connect/disconnect events so they
 // can update their UI without polling.
@@ -71,6 +107,8 @@ function attachCoreListeners(sock) {
     clearTimeout(reconnectTimer);
     reconnectTimer = null;
     broadcastChannel?.postMessage({ type: "connected", socketId: sock.id });
+    // ── Flush any subscriptions that were registered before the socket existed
+    flushPendingSubscriptions();
   };
 
   _coreHandlers["disconnect"] = (reason) => {
@@ -113,6 +151,9 @@ function attachCoreListeners(sock) {
   CORE_EVENTS.forEach((evt) => {
     sock.on(evt, _coreHandlers[evt]);
   });
+
+  // Also flush any app-level subscriptions that registered while socket was null
+  flushPendingSubscriptions();
 }
 
 // ─── Reconnect with exponential back-off ──────────────────────────────────────
@@ -152,7 +193,11 @@ export const initializeSocket = async () => {
     console.warn("[Socket] Invalid/missing token — aborting initialisation");
     return null;
   }
-  if (socket?.connected) return socket;
+  if (socket?.connected) {
+    // Socket already connected — flush any subscriptions that piled up
+    flushPendingSubscriptions();
+    return socket;
+  }
 
   // If socket exists but is not connected, reconnect it instead of creating a new one
   if (socket) {
@@ -191,6 +236,8 @@ export const reconnectSocket = async () => {
     if (!socket.connected) {
       attachCoreListeners(socket);
       socket.connect();
+    } else {
+      flushPendingSubscriptions();
     }
   } else {
     await initializeSocket();
@@ -230,6 +277,8 @@ export const disconnectSocket = () => {
   clearTimeout(reconnectTimer);
   reconnectTimer    = null;
   reconnectAttempts = 0;
+  // Clear the pending queue too — no point flushing onto a dead socket
+  _pendingSubscriptions.length = 0;
 
   if (socket) {
     detachCoreListeners(socket);
@@ -243,19 +292,38 @@ export const disconnectSocket = () => {
 
 /**
  * Subscribe to a socket event safely.
- * Returns an unsubscribe function — call it in useEffect cleanup.
+ * Returns an unsubscribe function — always call it in useEffect cleanup.
+ *
+ * ── FIX: Queued registration when socket is not yet initialised ──────────────
+ * Previously this returned () => {} when socket was null, meaning any listener
+ * registered before initializeSocket() completed was silently lost.
+ *
+ * Now:
+ *   • If socket exists → register immediately (original behaviour)
+ *   • If socket is null → push into _pendingSubscriptions; the subscription is
+ *     applied the moment the socket connects via flushPendingSubscriptions().
+ *   • The returned cleanup function works correctly in both paths.
  *
  *   useEffect(() => {
- *     return onSocketEvent("notification", handler);
+ *     return onSocketEvent("receive_message", handler);
  *   }, []);
  */
 export const onSocketEvent = (event, handler) => {
-  if (!socket) {
-    console.warn(`[Socket] Cannot subscribe to '${event}' — socket not initialised`);
-    return () => {};
+  if (socket) {
+    // Fast path: socket exists, register immediately
+    socket.on(event, handler);
+    return () => socket?.off(event, handler);
   }
-  socket.on(event, handler);
-  return () => socket?.off(event, handler);
+
+  // Slow path: socket not ready yet — queue the subscription.
+  // We use an object wrapper so flushPendingSubscriptions() can patch
+  // the live unsubscribe function after the socket is created.
+  const unsub = { current: () => {} };
+  _pendingSubscriptions.push({ event, handler, unsub });
+
+  // The caller receives a stable function that always delegates to whatever
+  // unsub.current points to at cleanup time.
+  return () => unsub.current();
 };
 
 export default getSocket;

@@ -1,0 +1,262 @@
+/* ============================================================
+   AllFriends.css
+   All neutral surface colours use CSS custom properties written
+   by ThemeContext.js so dark/light switching is automatic.
+   Brand colours (#3b4fd8 blue, #c62828 red) are intentional
+   identity colours and remain fixed in both themes.
+   ============================================================ */
+
+/* ── Theme variable defaults (light) ──────────────────────── */
+:root {
+  --bg-gradient: linear-gradient(135deg, #f0f4ff 0%, #fafaff 100%);
+  --skeleton-base: #dde0f5;
+}
+
+body.theme-dark {
+  --bg-gradient: linear-gradient(135deg, #0d1122 0%, #111827 100%);
+  --skeleton-base: #1e2a40;
+}
+
+/* ── Page wrapper ─────────────────────────────────────────── */
+.af-page {
+  min-height: 50vh;
+  background: var(--bg-gradient, linear-gradient(135deg, #f0f4ff 0%, #fafaff 100%));
+  padding: 12px;
+  box-sizing: border-box;
+}
+
+/* ── Card shell ───────────────────────────────────────────── */
+.af-card {
+  max-width: 600px;
+  margin: 0 auto;
+  background: var(--bg-card);
+  border-radius: 20px;
+  box-shadow: var(--shadow);
+  padding: 24px 20px;
+  position: relative;
+}
+
+/* ── Header ───────────────────────────────────────────────── */
+.af-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 20px;
+  border-bottom: 2px solid var(--border);
+  padding-bottom: 14px;
+}
+
+.af-title {
+  font-size: 20px;
+  font-weight: 700;
+  color: #3b4fd8;
+  /* brand accent — intentionally fixed */
+  margin: 0;
+}
+
+.af-badge {
+  background: #eef0ff;
+  color: #3b4fd8;
+  border-radius: 20px;
+  padding: 2px 10px;
+  font-size: 13px;
+  font-weight: 600;
+  margin-left: 10px;
+}
+
+/* Dark-mode badge uses a subtle tinted surface */
+body.theme-dark .af-badge {
+  background: rgba(59, 79, 216, 0.2);
+}
+
+.af-close-btn {
+  background: none;
+  border: 1.5px solid var(--border);
+  border-radius: 8px;
+  width: 32px;
+  height: 32px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 18px;
+  color: var(--text-muted);
+  transition: border-color 0.2s, color 0.2s;
+  flex-shrink: 0;
+}
+
+.af-close-btn:hover {
+  border-color: #3b4fd8;
+  color: #3b4fd8;
+}
+
+/* ── Search input ─────────────────────────────────────────── */
+.af-search {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1.5px solid var(--border);
+  border-radius: 10px;
+  padding: 9px 14px;
+  font-size: 14px;
+  outline: none;
+  margin-bottom: 16px;
+  background: var(--bg-card-alt);
+  color: var(--text-primary);
+  transition: border-color 0.2s;
+}
+
+.af-search:focus {
+  border-color: #3b4fd8;
+}
+
+/* ── Empty state ──────────────────────────────────────────── */
+.af-empty {
+  text-align: center;
+  padding: 40px 0;
+  color: var(--text-muted);
+  font-size: 15px;
+}
+
+.af-empty-icon {
+  font-size: 40px;
+  margin-bottom: 8px;
+  display: block;
+}
+
+/* ── Friend list ──────────────────────────────────────────── */
+.af-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.af-item {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  background: var(--bg-card-alt);
+  border-radius: 14px;
+  padding: 12px 14px;
+  transition: box-shadow 0.15s;
+  cursor: default;
+}
+
+/* .af-item:hover {
+  box-shadow: var(--shadow);
+} */
+.af-item:hover {
+  box-shadow:
+    0 0 5px rgba(255, 255, 255, 0.6),
+    0 0 10px rgba(255, 255, 255, 0.4),
+    0 0 20px rgba(255, 255, 255, 0.3);
+}
+
+/* ── Avatar ───────────────────────────────────────────────── */
+.af-avatar {
+  width: 52px;
+  height: 52px;
+  border-radius: 50%;
+  object-fit: cover;
+  flex-shrink: 0;
+  border: 2px solid var(--border);
+}
+
+/* ── User info ────────────────────────────────────────────── */
+.af-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.af-name {
+  font-weight: 700;
+  font-size: 15px;
+  color: var(--text-primary);
+  margin: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.af-location {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin: 2px 0 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ── Unfriend button ──────────────────────────────────────── */
+.af-unfriend-btn {
+  background: none;
+  border: 1.5px solid #ffcdd2;
+  /* red tint — intentionally fixed */
+  border-radius: 8px;
+  padding: 6px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #c62828;
+  /* brand danger — intentionally fixed */
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+.af-unfriend-btn:hover:not(:disabled) {
+  background: #ffcdd2;
+  color: #7f0000;
+}
+
+.af-unfriend-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* ── Unfriend Button (PNG background) ──────────────────────────────────── */
+.af-unfriend-btn {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 110px;
+  height: 38px;
+  padding: 0;
+  border: none;
+  background: center / 100% 100% no-repeat;
+  cursor: pointer;
+  outline: none;
+  transition: opacity 0.15s ease, transform 0.1s ease;
+}
+
+.af-unfriend-btn:hover:not(:disabled) {
+  opacity: 0.88;
+  transform: scale(1.04);
+}
+
+.af-unfriend-btn:active:not(:disabled) {
+  transform: scale(0.97);
+  opacity: 0.75;
+}
+
+.af-unfriend-btn:disabled,
+.af-unfriend-btn--removing {
+  opacity: 0.55;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.af-unfriend-btn-label {
+  position: relative;
+  z-index: 1;
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: #7a3d00;
+  letter-spacing: 0.03em;
+  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.35);
+  pointer-events: none;
+  user-select: none;
+}

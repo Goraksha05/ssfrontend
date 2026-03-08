@@ -7,6 +7,7 @@ import { toast } from "react-toastify";
 import usePlanSlabs from "../../hooks/usePlanSlabs";
 import { useStreak } from "../../Context/Activity/StreakContext";
 import BankDetailsModal from "../Common/BankDetailsModal";
+import "./Rewards.css";
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 
@@ -18,15 +19,14 @@ const toISO = (d) => {
 
 const DailyStreak = ({ onActivityRecorded }) => {
   const {
-    streakCount,       // unique calendar days (from backend deduplication)
-    streakDates,       // [{ date, count }]
-    totalUniqueDays,   // server-confirmed unique day count (most accurate)
+    streakCount,
+    streakDates,
+    totalUniqueDays,
     fetchStreakHistory,
     fetchStreakData,
-    claimedDays,       // ['30days', '60days', …]
+    claimedDays,
   } = useStreak();
 
-  // Use totalUniqueDays from API if available, fallback to streakCount
   const accurateStreak = totalUniqueDays ?? streakCount;
 
   const { slabs: rawSlabs } = usePlanSlabs("streak");
@@ -40,7 +40,7 @@ const DailyStreak = ({ onActivityRecorded }) => {
   const [selectedDay, setSelectedDay] = useState("");
   const [loading, setLoading] = useState(false);
 
-  // ── Derived progress ──────────────────────────────────────────────────────
+  // ── Derived progress ─────────────────────────────────────────────────────
   const nextMilestone = milestones.find((m) => accurateStreak < m) ?? null;
   const prevMilestone = [...milestones].reverse().find((m) => accurateStreak >= m) ?? 0;
   const progress = nextMilestone
@@ -87,76 +87,75 @@ const DailyStreak = ({ onActivityRecorded }) => {
     }
   };
 
-  // ── Render ────────────────────────────────────────────────────────────────
+  // ── Render ───────────────────────────────────────────────────────────────
   return (
-    <div style={styles.container}>
+    <div className="rewards-container">
 
       {/* ── Hero Counter ── */}
-      <div style={styles.heroCard}>
-        <span style={styles.flameBig}>🔥</span>
+      <div className="streak-hero-card">
+        <span className="streak-flame-big">🔥</span>
         <div>
-          <div style={styles.heroCount}>{accurateStreak}</div>
-          <div style={styles.heroLabel}>Day Streak</div>
+          <div className="streak-hero-count">{accurateStreak}</div>
+          <div className="streak-hero-label">Day Streak</div>
         </div>
         {nextMilestone && (
-          <div style={styles.heroNext}>
-            <span style={styles.nextLabel}>Next milestone</span>
-            <span style={styles.nextVal}>{nextMilestone} days</span>
+          <div className="streak-hero-next">
+            <span className="streak-next-label">Next milestone</span>
+            <span className="streak-next-val">{nextMilestone} days</span>
           </div>
         )}
       </div>
 
       {/* ── Progress bar ── */}
       {nextMilestone && (
-        <div style={styles.progressWrap}>
-          <div style={styles.progressRow}>
-            <span style={styles.progressText}>{accurateStreak} / {nextMilestone} days</span>
-            <span style={styles.progressPct}>{progress}%</span>
+        <div className="rewards-progress-wrap">
+          <div className="rewards-progress-row">
+            <span className="rewards-progress-text">{accurateStreak} / {nextMilestone} days</span>
+            <span className="rewards-progress-pct streak">{progress}%</span>
           </div>
-          <div style={styles.progressTrack}>
-            <div style={{ ...styles.progressBar, width: `${progress}%` }} />
+          <div className="rewards-progress-track">
+            <div
+              className="rewards-progress-bar streak"
+              style={{ width: `${progress}%` }}
+            />
           </div>
-          <span style={styles.progressHint}>
+          <span className="rewards-progress-hint">
             {nextMilestone - accurateStreak} more day{nextMilestone - accurateStreak !== 1 ? "s" : ""} to reach your next {nextMilestone}-day reward
           </span>
         </div>
       )}
 
       {/* ── Milestone chips ── */}
-      <div style={styles.milestonesGrid}>
+      <div className="streak-milestones-grid">
         {milestones.map((day) => {
           const slabKey = `${day}days`;
           const isClaimed = Array.isArray(claimedDays) && claimedDays.includes(slabKey);
           const isActive  = accurateStreak >= day;
+          const stateClass = isClaimed ? "claimed" : isActive ? "active" : "locked";
+
           return (
-            <div
-              key={day}
-              style={{
-                ...styles.milestoneChip,
-                ...(isClaimed ? styles.chipClaimed : isActive ? styles.chipActive : styles.chipLocked),
-              }}
-            >
-              <span style={styles.chipIcon}>
+            <div key={day} className={`streak-milestone-chip ${stateClass}`}>
+              <span className="streak-chip-icon">
                 {isClaimed ? "✅" : isActive ? "🏆" : "🔒"}
               </span>
-              <span style={styles.chipLabel}>{day}d</span>
-              {isClaimed && <span style={styles.chipBadge}>Claimed</span>}
+              <span>{day}d</span>
+              {isClaimed && <span className="streak-chip-badge">Claimed</span>}
             </div>
           );
         })}
       </div>
 
       {/* ── Claim selector ── */}
-      <div style={styles.claimSection}>
-        <label style={styles.claimLabel}>🎁 Claim a streak reward</label>
+      <div className="rewards-claim-section">
+        <label className="rewards-claim-label">🎁 Claim a streak reward</label>
         <select
           value={selectedDay}
           onChange={(e) => setSelectedDay(Number(e.target.value))}
-          style={styles.select}
+          className="rewards-select"
         >
           <option value="">Select a milestone…</option>
           {milestones.map((day) => {
-            const slabKey  = `${day}days`;
+            const slabKey   = `${day}days`;
             const isClaimed = Array.isArray(claimedDays) && claimedDays.includes(slabKey);
             const isActive  = accurateStreak >= day;
             return (
@@ -169,10 +168,7 @@ const DailyStreak = ({ onActivityRecorded }) => {
 
         <button
           type="button"
-          style={{
-            ...styles.claimBtn,
-            ...(loading || !selectedDay ? styles.claimBtnDisabled : {}),
-          }}
+          className="rewards-claim-btn streak"
           disabled={loading || !selectedDay}
           data-bs-toggle="modal"
           data-bs-target="#streakBankModal"
@@ -189,12 +185,12 @@ const DailyStreak = ({ onActivityRecorded }) => {
       />
 
       {/* ── Heatmap toggle ── */}
-      <button onClick={toggleHeatmap} style={styles.heatmapToggle}>
+      <button onClick={toggleHeatmap} className="rewards-toggle-btn">
         {showHeatmap ? "▲ Hide Calendar" : "▼ Show Streak Calendar"}
       </button>
 
       {showHeatmap && (
-        <div style={styles.heatmapBox}>
+        <div className="streak-heatmap-box">
           <CalendarHeatmap
             startDate={new Date(new Date().setMonth(new Date().getMonth() - 3))}
             endDate={new Date()}
@@ -217,97 +213,21 @@ const DailyStreak = ({ onActivityRecorded }) => {
           <Tooltip id="heatmap-tip" />
 
           {selectedDate && (
-            <div style={styles.dateCard}>
+            <div className="streak-date-card">
               <p>📅 <strong>{selectedDate.toDateString()}</strong></p>
               <p>🔥 Streak recorded on this day</p>
-              <button style={styles.closeBtn} onClick={() => setSelectedDate(null)}>Close</button>
+              <button
+                className="streak-date-close-btn"
+                onClick={() => setSelectedDate(null)}
+              >
+                Close
+              </button>
             </div>
           )}
         </div>
       )}
     </div>
   );
-};
-
-// ── Styles ────────────────────────────────────────────────────────────────────
-const styles = {
-  container: { display: "flex", flexDirection: "column", gap: 20 },
-
-  heroCard: {
-    display: "flex", alignItems: "center", gap: 20,
-    background: "linear-gradient(135deg, #431407 0%, #7c2d12 100%)",
-    borderRadius: 14, padding: "20px 24px", flexWrap: "wrap",
-  },
-  flameBig:  { fontSize: 48, lineHeight: 1 },
-  heroCount: { fontSize: 48, fontWeight: 900, color: "#ff6b35", lineHeight: 1 },
-  heroLabel: { color: "#fed7aa", fontSize: 14, fontWeight: 600, marginTop: 2 },
-  heroNext:  { marginLeft: "auto", textAlign: "right" },
-  nextLabel: { display: "block", color: "#94a3b8", fontSize: 12 },
-  nextVal:   { display: "block", color: "#fb923c", fontWeight: 700, fontSize: 16 },
-
-  progressWrap:  { display: "flex", flexDirection: "column", gap: 6 },
-  progressRow:   { display: "flex", justifyContent: "space-between" },
-  progressText:  { color: "#94a3b8", fontSize: 13 },
-  progressPct:   { color: "#ff6b35", fontWeight: 700, fontSize: 13 },
-  progressTrack: { height: 8, borderRadius: 99, background: "#334155", overflow: "hidden" },
-  progressBar: {
-    height: "100%", borderRadius: 99,
-    background: "linear-gradient(90deg, #ff6b35, #fb923c)",
-    transition: "width 0.6s ease",
-  },
-  progressHint: { color: "#64748b", fontSize: 12 },
-
-  milestonesGrid: { display: "flex", flexWrap: "wrap", gap: 8 },
-  milestoneChip: {
-    display: "flex", alignItems: "center", gap: 5,
-    padding: "6px 12px", borderRadius: 99, fontSize: 12, fontWeight: 700,
-    border: "1px solid #334155", position: "relative",
-  },
-  chipActive:  { background: "#292524", border: "1px solid #ff6b35", color: "#ff6b35" },
-  chipClaimed: { background: "#14532d", border: "1px solid #16a34a", color: "#86efac" },
-  chipLocked:  { background: "#1e293b", color: "#475569" },
-  chipIcon:    { fontSize: 14 },
-  chipLabel:   {},
-  chipBadge: {
-    fontSize: 10, background: "#16a34a", color: "#fff",
-    borderRadius: 99, padding: "1px 6px", marginLeft: 2,
-  },
-
-  claimSection: { display: "flex", flexDirection: "column", gap: 10 },
-  claimLabel: { color: "#94a3b8", fontWeight: 600, fontSize: 14 },
-  select: {
-    background: "#0f172a", border: "1px solid #334155", borderRadius: 10,
-    color: "#e2e8f0", padding: "10px 14px", fontSize: 14, width: "100%",
-    appearance: "auto",
-  },
-  claimBtn: {
-    background: "linear-gradient(135deg, #ff6b35, #fb923c)",
-    border: "none", borderRadius: 10, color: "#fff",
-    padding: "12px 0", fontWeight: 700, fontSize: 15,
-    cursor: "pointer", width: "100%",
-    boxShadow: "0 4px 15px rgba(255,107,53,0.4)",
-    transition: "opacity 0.2s",
-  },
-  claimBtnDisabled: { opacity: 0.45, cursor: "not-allowed" },
-
-  heatmapToggle: {
-    background: "none", border: "1px solid #334155", borderRadius: 8,
-    color: "#94a3b8", padding: "8px 14px", fontSize: 13,
-    cursor: "pointer", alignSelf: "flex-start",
-  },
-  heatmapBox: {
-    background: "#0f172a", borderRadius: 12, padding: 16,
-    border: "1px solid #1e293b",
-  },
-  dateCard: {
-    marginTop: 14, background: "#1e293b", borderRadius: 10,
-    padding: 14, fontSize: 14, color: "#e2e8f0",
-  },
-  closeBtn: {
-    background: "none", border: "1px solid #334155", borderRadius: 6,
-    color: "#94a3b8", padding: "4px 12px", cursor: "pointer",
-    marginTop: 8, fontSize: 13,
-  },
 };
 
 export default DailyStreak;

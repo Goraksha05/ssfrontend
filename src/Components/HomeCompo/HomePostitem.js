@@ -5,20 +5,7 @@ import VerifiedBadge from '../Common/VerifiedBadge';
 import apiRequest from '../../utils/apiRequest';
 import CommentsModal from '../Reels/CommentsModal';
 import ProfileModal from '../Profile/ProfileModal';
-
-/* ─── Design tokens (keep in sync with Home.js) ──────────────────────────── */
-const T = {
-  card:    '#1a2035',
-  surface: '#141929',
-  border:  '#252d45',
-  accent:  '#f59e0b',
-  blue:    '#3b82f6',
-  red:     '#ef4444',
-  green:   '#22c55e',
-  text:    '#e2e8f0',
-  muted:   '#64748b',
-  radius:  14,
-};
+import { useTheme } from '../../Context/ThemeUI/ThemeContext';
 
 /* ─── Utility ─────────────────────────────────────────────────────────────── */
 const baseUrl = process.env.REACT_APP_BACKEND_URL || 'https://api.sosholife.com';
@@ -38,6 +25,22 @@ const visLabel = { public: '🌍 Public', private: '🔒 Private', friends: '�
 /*  PostItem                                                                   */
 /* ═══════════════════════════════════════════════════════════════════════════ */
 function PostItem({ post, deletePost, toggleLikePost }) {
+    const { tokens, isDark } = useTheme();
+
+  /* ─── Design tokens resolved from theme ──────────────────────────────── */
+  const T = {
+    card:    tokens.bgCard,
+    surface: tokens.bgCardAlt,
+    border:  tokens.border,
+    accent:  '#f59e0b',
+    blue:    '#3b82f6',
+    red:     tokens.danger,
+    green:   tokens.success,
+    text:    tokens.textPrimary,
+    muted:   tokens.textMuted,
+    radius:  14,
+    avatarPlaceholderBg: isDark ? '#2a3550' : '#dde3f5',
+  };
   const token   = localStorage.getItem('token');
   const decoded = token ? jwtDecode(token) : null;
   const userId  = decoded?.user?.id;
