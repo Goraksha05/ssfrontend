@@ -115,6 +115,7 @@ const Profile = () => {
   const uploadFile = async (file, endpoint) => {
     const token = localStorage.getItem("token");
     const setUploading = endpoint === "avatar" ? setUploadingAvatar : setUploadingCover;
+    const label = endpoint === "avatar" ? "Avatar" : "Cover photo";
 
     if (!file || !file.type.startsWith("image/")) {
       toast.error("Please upload a valid image file.");
@@ -125,15 +126,38 @@ const Profile = () => {
     fd.append("media", file);
     setUploading(true);
 
+    // Show a persistent "uploading" toast — Cloudinary uploads can take 20-60s
+    // on a slow connection. Without this the UI looks frozen.
+    const uploadToastId = toast.loading(`Uploading ${label.toLowerCase()}... please wait.`);
+
     try {
       await apiRequest.put(`/api/profile/${endpoint}`, fd, {
-        headers: { Authorization: `Bearer ${token}` }
+        headers: { Authorization: `Bearer ${token}` },
+        // FIX: The default 15s timeout is too short for Cloudinary uploads.
+        // The file must be streamed browser -> server -> Cloudinary CDN.
+        // Allow 90s so slow connections and large files don't false-timeout.
+        timeout: 90_000,
       });
-      toast.success(`${endpoint === "avatar" ? "Avatar" : "Cover photo"} updated!`);
+
+      toast.update(uploadToastId, {
+        render:    `${label} updated successfully!`,
+        type:      "success",
+        isLoading: false,
+        autoClose: 3000,
+      });
+
       fetchProfile();
     } catch (error) {
+      const isTimeout = error?.code === "ECONNABORTED";
+      toast.update(uploadToastId, {
+        render:    isTimeout
+                     ? `Upload timed out — the image may be too large or your connection is slow. Please try again.`
+                     : `Failed to upload ${label.toLowerCase()}. Please try again.`,
+        type:      "error",
+        isLoading: false,
+        autoClose: 5000,
+      });
       handleAuthError(error);
-      toast.error(`Failed to upload ${endpoint}`);
     } finally {
       setUploading(false);
     }

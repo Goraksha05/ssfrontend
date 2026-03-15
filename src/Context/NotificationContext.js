@@ -1,12 +1,23 @@
 // src/Context/NotificationContext.js
 //
-// Owns all client-side notification state:
-//   • unreadCount — kept in sync with the server on socket events
-//   • Real-time socket listener for incoming notifications
-//   • Push subscription helpers
+// Single source of truth for ALL client-side notification state.
 //
-// NotificationsPanel reads from this context instead of maintaining its own
-// parallel state, so the badge and the panel are always consistent.
+// Exposes:
+//   unreadCount    — server-fetched on mount, incremented by socket events
+//   notifications  — live real-time arrivals (newest-first, capped at 50)
+//   markAllRead()  — optimistic update + PUT /api/notifications/mark-all-read
+//   markOneRead()  — optimistic update + PUT /api/notifications/:id/read
+//   refresh()      — re-fetches unread count from server (call after panel load)
+//   pushEnabled    — web-push subscription status
+//   enablePush()   — subscribe to web push
+//   disablePush()  — unsubscribe from web push
+//   pushError      — last push error message
+//
+// ── Consumer map ──────────────────────────────────────────────────────────────
+//   NotificationsPanel   → unreadCount, notifications, markAllRead, markOneRead, refresh
+//   NotificationPopup    → unreadCount, notifications, markAllRead, markOneRead
+//   NotificationSettings → pushEnabled, pushError, enablePush, disablePush
+//   Navbartemp / Header  → unreadCount  (bell badge ONLY — do not put other state here)
 
 import {
   createContext,
@@ -17,25 +28,40 @@ import {
   useRef,
 } from 'react';
 import { toast } from 'react-toastify';
+import apiRequest from '../utils/apiRequest';
 import { subscribeForPush, unsubscribeFromPush } from '../utils/pushClient';
 import { onSocketEvent, getSocket } from '../WebSocket/WebSocketClient';
 
 const NotificationContext = createContext(null);
 
 export const NotificationProvider = ({ children }) => {
-  const [unreadCount, setUnreadCount]       = useState(0);
-  const [notifications, setNotifications]   = useState([]); // live incoming, pre-fetch
-  const [pushEnabled, setPushEnabled]       = useState(false);
-  const [pushError,   setPushError]         = useState('');
+  const [unreadCount,   setUnreadCount]   = useState(0);
+  const [notifications, setNotifications] = useState([]);
+  const [pushEnabled,   setPushEnabled]   = useState(false);
+  const [pushError,     setPushError]     = useState('');
 
-  // Track seen notification IDs to prevent duplicates across reconnects
+  // Track seen IDs to deduplicate across reconnects
   const seenIdsRef = useRef(new Set());
+
+  // ── Fetch initial unread count from server ────────────────────────────────
+  const refresh = useCallback(async () => {
+    try {
+      if (!localStorage.getItem('token')) return;
+      const res = await apiRequest.get('/api/notifications/unread-count');
+      setUnreadCount(res?.data?.unreadCount ?? 0);
+    } catch (err) {
+      // Non-fatal — badge stays at 0 on failure
+      console.debug('[NotificationContext] refresh unread-count failed:', err?.message);
+    }
+  }, []);
+
+  // Fetch on mount when a token is present
+  useEffect(() => {
+    if (localStorage.getItem('token')) refresh();
+  }, [refresh]);
 
   // ── Real-time socket listener ─────────────────────────────────────────────
   useEffect(() => {
-    // Attach as soon as there's a socket; re-attach after reconnect.
-    // onSocketEvent returns a cleanup fn — if the socket doesn't exist yet,
-    // we poll briefly. In practice the SocketProvider mounts first.
     let offFn = () => {};
 
     const attach = () => {
@@ -47,19 +73,17 @@ export const NotificationProvider = ({ children }) => {
         if (payload._id && seenIdsRef.current.has(payload._id)) return;
         if (payload._id) seenIdsRef.current.add(payload._id);
 
-        // Add to live list (newest first)
-        setNotifications((prev) => [payload, ...prev].slice(0, 50)); // cap at 50
+        // Prepend to live list, cap at 50
+        setNotifications((prev) => [payload, ...prev].slice(0, 50));
 
         // Increment badge
         setUnreadCount((c) => c + 1);
 
-        // Toast — respect browser tab visibility
+        // Toast — only if the tab is visible
         if (document.visibilityState !== 'hidden') {
           toast.info(payload.message || 'New notification', {
             autoClose: 4_000,
-            onClick: () => {
-              if (payload.url) window.location.href = payload.url;
-            },
+            onClick: () => { if (payload.url) window.location.href = payload.url; },
           });
         }
       });
@@ -67,17 +91,15 @@ export const NotificationProvider = ({ children }) => {
       return true;
     };
 
-    // If socket exists synchronously, attach immediately
+    // Attach immediately if socket is ready, otherwise retry once after delay
     if (!attach()) {
-      // Retry once after a short delay (socket initialising)
       const t = setTimeout(attach, 1_500);
       return () => clearTimeout(t);
     }
-
     return () => offFn();
-  }, []); // single mount — onSocketEvent handles listener swap on reconnect
+  }, []); // single mount — listener swap on reconnect handled by onSocketEvent
 
-  // ── Reset seen IDs when the user logs out (token disappears) ─────────────
+  // ── Reset state on logout (storage event cross-tab + same-tab) ───────────
   useEffect(() => {
     const handler = () => {
       if (!localStorage.getItem('token')) {
@@ -89,6 +111,34 @@ export const NotificationProvider = ({ children }) => {
     window.addEventListener('storage', handler);
     return () => window.removeEventListener('storage', handler);
   }, []);
+
+  // ── Mark all notifications as read ───────────────────────────────────────
+  const markAllRead = useCallback(async () => {
+    // Optimistic
+    setUnreadCount(0);
+    setNotifications((prev) => prev.map((n) => ({ ...n, isRead: true })));
+    try {
+      await apiRequest.put('/api/notifications/mark-all-read');
+    } catch (err) {
+      console.error('[NotificationContext] markAllRead failed:', err?.message);
+      refresh(); // re-sync from server on failure
+    }
+  }, [refresh]);
+
+  // ── Mark one notification as read ─────────────────────────────────────────
+  const markOneRead = useCallback(async (id) => {
+    // Optimistic
+    setNotifications((prev) =>
+      prev.map((n) => (n._id === id ? { ...n, isRead: true } : n))
+    );
+    setUnreadCount((c) => Math.max(0, c - 1));
+    try {
+      await apiRequest.put(`/api/notifications/${id}/read`);
+    } catch (err) {
+      console.error('[NotificationContext] markOneRead failed:', err?.message);
+      refresh();
+    }
+  }, [refresh]);
 
   // ── Push helpers ──────────────────────────────────────────────────────────
   const enablePush = useCallback(async () => {
@@ -121,12 +171,15 @@ export const NotificationProvider = ({ children }) => {
       value={{
         unreadCount,
         setUnreadCount,
-        notifications,        // live real-time arrivals
+        notifications,
         setNotifications,
         pushEnabled,
         pushError,
         enablePush,
         disablePush,
+        markAllRead,
+        markOneRead,
+        refresh,
       }}
     >
       {children}

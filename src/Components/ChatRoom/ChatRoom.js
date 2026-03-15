@@ -9,29 +9,28 @@
 
 import React, { useState, useEffect } from 'react';
 import { useNavigate }   from 'react-router-dom';
-import { Sun, Moon, X, MessageCircle, Circle } from 'lucide-react';
+import { X, MessageCircle, Circle } from 'lucide-react';
 import ChatList     from './Chat/ChatList';
 import ChatWindow   from './Chat/ChatWindow';
 import MessageInput from './Chat/MessageInput';
 import StatusTab    from '../Status/StatusTab';
 import { useAuth }  from '../../Context/Authorisation/AuthContext';
+import { useTheme } from '../../Context/ThemeUI/ThemeContext';
 import './ChatRoom.css';
 
 const ChatRoom = () => {
   const navigate = useNavigate();
   const { user } = useAuth();
+  const { theme, toggleTheme, isDark } = useTheme();
 
-  const [theme, setTheme] = useState(
-    () => localStorage.getItem('messenger-theme') || 'dark'
-  );
   const [isMobileChatOpen, setIsMobileChatOpen] = useState(false);
   const [replyTo,          setReplyTo]          = useState(null);
   // 'chats' | 'status'
   const [activeTab,        setActiveTab]        = useState('chats');
 
+  // Keep the messenger's data-theme attribute in sync with the global theme
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme);
-    localStorage.setItem('messenger-theme', theme);
   }, [theme]);
 
   const handleTabSwitch = (tab) => {
@@ -52,10 +51,10 @@ const ChatRoom = () => {
         <div className="messenger-header-right">
           <button
             className="theme-toggle-btn"
-            onClick={() => setTheme((t) => (t === 'light' ? 'dark' : 'light'))}
+            onClick={toggleTheme}
             aria-label="Toggle theme"
           >
-            {theme === 'light' ? <Moon size={17} /> : <Sun size={17} />}
+            {isDark ? '☀️' : '🌙'}
           </button>
           <button
             className="close-btn"
@@ -69,6 +68,7 @@ const ChatRoom = () => {
 
       {/* Main */}
       <div className="messenger-main">
+        <div className="chat-wallpaper-vignette" />
         {/* Sidebar */}
         <div className="messenger-sidebar">
           {/* ── Tab bar ────────────────────────────────────────────── */}

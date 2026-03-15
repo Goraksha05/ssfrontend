@@ -818,3 +818,240 @@
     padding: 16px;
   }
 }
+/* ═══════════════════════════════════════════════════════════════
+   DELETE ACCOUNT / DANGER ZONE
+   ═══════════════════════════════════════════════════════════════ */
+
+.delete-account-root {
+  padding: 1.5rem;
+  max-width: 640px;
+  margin: 0 auto;
+}
+
+.delete-account-loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1rem;
+  padding: 3rem 0;
+  color: var(--text-muted, #9ca3af);
+}
+
+/* Section header */
+.delete-account-header {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin-bottom: 1.5rem;
+  padding-bottom: 0.75rem;
+  border-bottom: 1px solid rgba(239, 68, 68, 0.25);
+}
+
+.delete-account-header h3 {
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: #ef4444;
+  margin: 0;
+}
+
+.delete-account-header-icon {
+  color: #ef4444;
+}
+
+/* ── Idle card ────────────────────────────────────────────────── */
+.delete-account-card {
+  background: rgba(239, 68, 68, 0.05);
+  border: 1px solid rgba(239, 68, 68, 0.2);
+  border-radius: 12px;
+  padding: 1.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+}
+
+.delete-account-title {
+  font-size: 1rem;
+  font-weight: 700;
+  color: #ef4444;
+  margin: 0 0 0.5rem;
+}
+
+.delete-account-desc {
+  font-size: 0.875rem;
+  color: var(--text-secondary, #6b7280);
+  line-height: 1.6;
+  margin: 0 0 0.75rem;
+}
+
+.delete-account-consequences {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.delete-account-consequences li {
+  font-size: 0.8rem;
+  color: var(--text-muted, #9ca3af);
+  padding-left: 0.25rem;
+}
+
+.delete-account-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 0.7rem 1.4rem;
+  background: transparent;
+  border: 2px solid #ef4444;
+  border-radius: 8px;
+  color: #ef4444;
+  font-size: 0.875rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.2s, color 0.2s;
+  width: 100%;
+}
+
+.delete-account-btn:hover {
+  background: #ef4444;
+  color: #fff;
+}
+
+/* ── Pending-deletion card ────────────────────────────────────── */
+.deletion-pending-card {
+  background: rgba(234, 179, 8, 0.07);
+  border: 1px solid rgba(234, 179, 8, 0.35);
+  border-radius: 12px;
+  padding: 1.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.deletion-pending-top {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.deletion-pending-label {
+  font-weight: 700;
+  font-size: 1rem;
+  color: #d97706;
+}
+
+.deletion-warning-icon {
+  color: #d97706;
+  flex-shrink: 0;
+}
+
+.deletion-pending-desc {
+  font-size: 0.875rem;
+  color: var(--text-secondary, #6b7280);
+  line-height: 1.6;
+  margin: 0;
+}
+
+/* Countdown */
+.deletion-countdown {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.9rem;
+  color: var(--text-primary, #374151);
+}
+
+.deletion-countdown-text strong {
+  color: #ef4444;
+  font-size: 1rem;
+}
+
+/* Progress bar */
+.deletion-progress-track {
+  height: 6px;
+  background: rgba(0, 0, 0, 0.1);
+  border-radius: 99px;
+  overflow: hidden;
+}
+
+.deletion-progress-bar {
+  height: 100%;
+  background: linear-gradient(90deg, #22c55e, #eab308);
+  border-radius: 99px;
+  transition: width 1s linear;
+}
+
+.deletion-progress-legend {
+  font-size: 0.75rem;
+  color: var(--text-muted, #9ca3af);
+  text-align: right;
+  margin: 0;
+}
+
+/* Cancel button */
+.deletion-cancel-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 0.75rem 1.5rem;
+  background: #22c55e;
+  border: none;
+  border-radius: 8px;
+  color: #fff;
+  font-size: 0.875rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.2s, opacity 0.2s;
+}
+
+.deletion-cancel-btn:hover:not(:disabled) {
+  background: #16a34a;
+}
+
+.deletion-cancel-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* Small spinner inside button */
+.btn-spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid rgba(255,255,255,0.4);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+/* Dark-theme overrides */
+body.theme-dark .delete-account-card {
+  background: rgba(239, 68, 68, 0.08);
+  border-color: rgba(239, 68, 68, 0.25);
+}
+
+body.theme-dark .deletion-pending-card {
+  background: rgba(234, 179, 8, 0.09);
+  border-color: rgba(234, 179, 8, 0.3);
+}
+
+body.theme-dark .deletion-progress-track {
+  background: rgba(255,255,255,0.1);
+}
+
+/* Danger Zone tab button styling */
+.profile-tab-btn:last-child {
+  color: #ef4444;
+}
+
+.profile-tab-btn:last-child.active {
+  border-bottom-color: #ef4444;
+  color: #ef4444;
+}

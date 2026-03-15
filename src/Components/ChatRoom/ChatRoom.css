@@ -355,23 +355,193 @@
 }
 
 /* ================================================================
-   CHAT WINDOW
+   CHAT WINDOW — DOPAMINE WALLPAPER SYSTEM
+   Light: warm frosted glass with bokeh orbs + geometric lattice
+   Dark:  deep space aurora with animated plasma + neural grid
    ================================================================ */
+
+/* ── Keyframes (scoped to chat) ─────────────────────────────────── */
+@keyframes chatOrb1 {
+  0%,100%{ transform:translate(0,0)    scale(1);    opacity:0.55; }
+  33%    { transform:translate(4%,6%)  scale(1.12); opacity:0.75; }
+  66%    { transform:translate(-3%,3%) scale(0.92); opacity:0.5;  }
+}
+@keyframes chatOrb2 {
+  0%,100%{ transform:translate(0,0)     scale(1);    opacity:0.4; }
+  50%    { transform:translate(-5%,-4%) scale(1.18); opacity:0.7; }
+}
+@keyframes chatOrb3 {
+  0%,100%{ transform:translate(0,0)  scale(1);    }
+  40%    { transform:translate(5%,3%) scale(1.1); }
+  80%    { transform:translate(-2%,5%) scale(0.95); }
+}
+@keyframes chatAurora1 {
+  0%   { transform:translate(0,0)   rotate(0deg)   scale(1);   }
+  25%  { transform:translate(3%,5%) rotate(8deg)   scale(1.08);}
+  75%  { transform:translate(-4%,2%) rotate(-5deg) scale(0.94);}
+  100% { transform:translate(0,0)   rotate(0deg)   scale(1);   }
+}
+@keyframes chatAurora2 {
+  0%,100%{ transform:translate(0,0)    scale(1);    }
+  50%    { transform:translate(-4%,-5%) scale(1.15); }
+}
+@keyframes chatShimmer {
+  0%,100%{ opacity:0.18; }
+  50%    { opacity:0.32;  }
+}
+@keyframes chatFloat {
+  0%   { transform:translateY(0)   scale(1);   }
+  50%  { transform:translateY(-3%) scale(1.03); }
+  100% { transform:translateY(0)   scale(1);   }
+}
+@keyframes chatGridPulse {
+  0%,100%{ opacity:0.06; }
+  50%    { opacity:0.11; }
+}
+@keyframes chatParticle {
+  0%   { transform:translateY(100%) translateX(0);   opacity:0;   }
+  10%  { opacity:0.6; }
+  90%  { opacity:0.3; }
+  100% { transform:translateY(-20%) translateX(5%);  opacity:0;   }
+}
+@keyframes chatNeuralPulse {
+  0%,100%{ opacity:0.04; }
+  50%    { opacity:0.09; }
+}
+
+/* ─────────────────────────────────────────────────────────────── */
+/*  BASE WRAPPER                                                    */
+/* ─────────────────────────────────────────────────────────────── */
 .messenger-chat {
   flex: 1;
   display: flex;
   flex-direction: column;
-  background: var(--bg-chat);
   overflow: hidden;
   position: relative;
-  /* Subtle chat wallpaper pattern */
+
+  /* ── LIGHT WALLPAPER — "Frosted Sakura Bokeh" ─────────────────
+     Soft warm cream base with layered coral + lavender orbs,
+     subtle hexagonal lattice, and a gentle bokeh depth field.
+  ────────────────────────────────────────────────────────────── */
+  background-color: #fdf6f0;
   background-image:
-    radial-gradient(circle at 1px 1px, rgba(0,0,0,0.03) 1px, transparent 0);
-  background-size: 24px 24px;
+    /* Geometric hexagonal lattice */
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='56' height='100'%3E%3Cpath d='M28 66L0 50V18L28 2l28 16v32L28 66zm0-4l24-14V20L28 6 4 20v28l24 14z' fill='none' stroke='rgba(180,100,120,0.09)' stroke-width='0.8'/%3E%3C/svg%3E"),
+    /* Fine dot texture */
+    radial-gradient(circle at 1px 1px, rgba(160,80,100,0.07) 1px, transparent 0),
+    /* Large warm bokeh blobs */
+    radial-gradient(ellipse 55% 40% at 15% 20%,  rgba(255,180,160,0.35) 0%, transparent 65%),
+    radial-gradient(ellipse 45% 35% at 85% 75%,  rgba(200,160,220,0.28) 0%, transparent 65%),
+    radial-gradient(ellipse 40% 30% at 70% 15%,  rgba(255,200,180,0.25) 0%, transparent 60%),
+    radial-gradient(ellipse 50% 40% at 25% 85%,  rgba(180,200,255,0.2)  0%, transparent 65%),
+    /* Base gradient — warm parchment */
+    linear-gradient(160deg, #fef3ed 0%, #fdeee8 35%, #faf0f5 65%, #f6eef8 100%);
+  background-size:
+    56px 100px,
+    28px 28px,
+    auto, auto, auto, auto, auto;
 }
+
+/* ── Light mode animated bokeh orbs (via pseudo-elements + children) */
+.messenger-chat::before {
+  content:'';
+  position:absolute; inset:0; pointer-events:none; z-index:0;
+  background:
+    radial-gradient(circle 120px at 20% 30%, rgba(255,140,100,0.22) 0%, transparent 70%),
+    radial-gradient(circle 90px  at 75% 20%, rgba(200,100,220,0.18) 0%, transparent 70%),
+    radial-gradient(circle 150px at 60% 70%, rgba(255,200,160,0.2)  0%, transparent 70%),
+    radial-gradient(circle 80px  at 90% 80%, rgba(140,180,255,0.2)  0%, transparent 70%),
+    radial-gradient(circle 110px at 10% 85%, rgba(255,160,180,0.18) 0%, transparent 70%);
+  animation: chatOrb1 18s ease-in-out infinite;
+}
+.messenger-chat::after {
+  content:'';
+  position:absolute; inset:0; pointer-events:none; z-index:0;
+  background:
+    radial-gradient(circle 100px at 50% 10%, rgba(255,220,180,0.2) 0%, transparent 70%),
+    radial-gradient(circle 130px at 5%  50%, rgba(180,150,255,0.18) 0%, transparent 70%),
+    radial-gradient(circle 80px  at 95% 45%, rgba(255,180,200,0.2)  0%, transparent 70%);
+  animation: chatOrb2 22s ease-in-out infinite;
+}
+
+/* ── Vignette overlay */
+.messenger-chat > .chat-wallpaper-vignette {
+  position:absolute; inset:0; pointer-events:none; z-index:1;
+  background:radial-gradient(ellipse 110% 100% at 50% 50%, transparent 45%, rgba(150,80,100,0.08) 100%);
+}
+
+/* ─────────────────────────────────────────────────────────────── */
+/*  DARK WALLPAPER — "Deep Space Aurora"                           */
+/*  Inky deep blue base, animated teal+violet aurora bands,        */
+/*  neural-mesh grid, floating ember particles                     */
+/* ─────────────────────────────────────────────────────────────── */
 [data-theme="dark"] .messenger-chat {
+  background-color: #07080f;
   background-image:
-    radial-gradient(circle at 1px 1px, rgba(255,255,255,0.015) 1px, transparent 0);
+    /* Neural grid */
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='60' height='60'%3E%3Cpath d='M30 0v60M0 30h60' stroke='rgba(100,200,255,0.06)' stroke-width='0.6'/%3E%3Ccircle cx='30' cy='30' r='1.5' fill='rgba(100,200,255,0.1)'/%3E%3Ccircle cx='0'  cy='0'  r='1'   fill='rgba(100,200,255,0.07)'/%3E%3Ccircle cx='60' cy='0'  r='1'   fill='rgba(100,200,255,0.07)'/%3E%3Ccircle cx='0'  cy='60' r='1'   fill='rgba(100,200,255,0.07)'/%3E%3Ccircle cx='60' cy='60' r='1'   fill='rgba(100,200,255,0.07)'/%3E%3C/svg%3E"),
+    /* Aurora bands */
+    radial-gradient(ellipse 85% 45% at 10%  0%,  rgba(0,220,200,0.22)  0%, transparent 65%),
+    radial-gradient(ellipse 70% 40% at 90% 20%,  rgba(100,0,255,0.28)  0%, transparent 65%),
+    radial-gradient(ellipse 65% 35% at 50% 90%,  rgba(0,160,255,0.2)   0%, transparent 60%),
+    radial-gradient(ellipse 55% 30% at 80% 60%,  rgba(255,0,180,0.14)  0%, transparent 60%),
+    /* Deep base */
+    linear-gradient(170deg, #050812 0%, #080c18 40%, #060a14 70%, #040810 100%);
+  background-size:
+    60px 60px,
+    auto, auto, auto, auto, auto;
+}
+
+[data-theme="dark"] .messenger-chat::before {
+  background:
+    radial-gradient(circle 200px at 15% 25%,  rgba(0,255,200,0.2)  0%, transparent 70%),
+    radial-gradient(circle 160px at 80% 15%,  rgba(120,0,255,0.25) 0%, transparent 70%),
+    radial-gradient(circle 180px at 55% 75%,  rgba(0,180,255,0.18) 0%, transparent 70%),
+    radial-gradient(circle 120px at 90% 70%,  rgba(255,0,160,0.18) 0%, transparent 70%),
+    radial-gradient(circle 140px at 5%  80%,  rgba(0,220,180,0.15) 0%, transparent 70%);
+  animation: chatAurora1 20s ease-in-out infinite;
+  mix-blend-mode: screen;
+}
+
+[data-theme="dark"] .messenger-chat::after {
+  background:
+    radial-gradient(circle 220px at 50%  5%,  rgba(60,0,200,0.2)   0%, transparent 70%),
+    radial-gradient(circle 170px at 5%  50%,  rgba(0,220,255,0.18) 0%, transparent 70%),
+    radial-gradient(circle 150px at 95% 50%,  rgba(255,60,200,0.15) 0%, transparent 70%);
+  animation: chatAurora2 26s ease-in-out infinite;
+  mix-blend-mode: screen;
+}
+
+/* ── Dark mode scan-line shimmer */
+[data-theme="dark"] .messenger-chat > .chat-wallpaper-vignette {
+  background:
+    radial-gradient(ellipse 120% 100% at 50% 50%, transparent 40%, rgba(0,0,20,0.7) 100%),
+    repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(0,200,255,0.008) 2px, rgba(0,200,255,0.008) 3px);
+  animation: chatGridPulse 6s ease-in-out infinite;
+}
+
+/* ── Neural grid pulse in dark */
+[data-theme="dark"] .messenger-chat {
+  animation: chatNeuralPulse 8s ease-in-out infinite;
+}
+
+/* ─────────────────────────────────────────────────────────────── */
+/*  CHAT MESSAGES AREA — glass effect over wallpaper               */
+/* ─────────────────────────────────────────────────────────────── */
+.chat-messages {
+  position: relative;
+  z-index: 2;
+}
+
+/* Date separator gets nicer glass pill over wallpaper */
+.date-separator-label {
+  backdrop-filter: blur(12px) saturate(1.4);
+  -webkit-backdrop-filter: blur(12px) saturate(1.4);
+}
+[data-theme="dark"] .date-separator-label {
+  background: rgba(20,25,45,0.75);
+  color: rgba(160,210,255,0.9);
+  box-shadow: 0 0 0 1px rgba(100,200,255,0.1), 0 2px 8px rgba(0,0,0,0.4);
 }
 
 /* ── Chat Header ──────────────────────────────────────────────── */

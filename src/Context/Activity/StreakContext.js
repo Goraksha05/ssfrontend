@@ -15,7 +15,8 @@ export const StreakProvider = ({ children }) => {
   const [rewardMilestones] = useState([30, 60, 90, 120, 150, 180, 210, 240, 270, 300, 330, 360]);
   const [message, setMessage] = useState('');
 
-  const token = localStorage.getItem('token');
+  // Read token inside each callback to avoid stale closure when token changes
+  const getToken = () => localStorage.getItem('token');
 
   const safeJson = async (res) => {
     try {
@@ -28,6 +29,7 @@ export const StreakProvider = ({ children }) => {
   };
 
   const apiRequest = useCallback(async (method, path, options = {}) => {
+    const token = getToken();
     const headers = {
       'Content-Type': 'application/json',
       Authorization: `Bearer ${token}`,
@@ -40,11 +42,11 @@ export const StreakProvider = ({ children }) => {
       ...options
     });
     return res;
-  }, [token]);
+  }, []); // no token dep — reads fresh from localStorage each call
 
   // Fetch streak history
   const fetchStreakHistory = useCallback(async () => {
-    if (!token) return;
+    if (!getToken()) return;
     try {
       const res = await apiRequest('GET', '/api/activity/streak-history');
       const data = await safeJson(res);
@@ -56,11 +58,11 @@ export const StreakProvider = ({ children }) => {
     } catch (err) {
       console.error('Failed to fetch streak history:', err);
     }
-  }, [token, apiRequest]);
+  }, [apiRequest]);
 
   // Fetch claimed streak slabs
   const fetchClaimedStreakSlabs = useCallback(async () => {
-    if (!token) return;
+    if (!getToken()) return;
     try {
       const res = await apiRequest('GET', '/api/activity/user');
       const data = await safeJson(res);
@@ -73,11 +75,11 @@ export const StreakProvider = ({ children }) => {
     } catch (err) {
       console.error('Failed to fetch claimed streaks:', err);
     }
-  }, [token, apiRequest]);
+  }, [apiRequest]);
 
   // Claim streak reward
   const claimStreakReward = async (streakDay) => {
-    if (!token || !streakDay) return;
+    if (!getToken() || !streakDay) return;
     try {
       const res = await apiRequest('POST', '/api/activity/streak-reward', {
         body: JSON.stringify({ streakslab: `${streakDay}days` })

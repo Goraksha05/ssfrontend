@@ -15,7 +15,7 @@ import NotificationsPanel from '../Components/NotificationsPanel';
 import apiRequest from "../utils/apiRequest";
 import SubscribeIcon from '../Assets/PrimeMembers.png';
 import LogoutIcon from '../Assets/LogoutButton.png';
-import ThemeToggle from '../Components/ThemeToggle';
+// import ThemeToggle from '../Components/Theme/ThemeToggle';
 
 // ─── NOTE on i18n.js ──────────────────────────────────────────────────────────
 // The old `i18n.js` (i18next/react-i18next) is no longer imported here.
@@ -330,9 +330,9 @@ export default function Navbartemp({ title, myHome }) {
                   />
                 </button>
 
-                {/* Bell */}
+                {/* Bell — always opens; onClose in the panel sets it false */}
                 <button
-                  onClick={() => setShowNotifications(p => !p)}
+                  onClick={() => setShowNotifications(true)}
                   title={t["nav.notifications"] || "Notifications"}
                   className="navbar-icon-btn"
                 >
@@ -390,7 +390,7 @@ export default function Navbartemp({ title, myHome }) {
               </>
             )}
 
-            <ThemeToggle />
+            {/* <ThemeToggle /> */}
 
             {/* Mobile hamburger */}
             <button

@@ -112,7 +112,14 @@ function attachCoreListeners(sock) {
   };
 
   _coreHandlers["disconnect"] = (reason) => {
-    console.warn("[Socket] Disconnected:", reason);
+    // "transport close" is normal (network blip, tab throttle, server restart).
+    // Only log as a warning for unexpected reasons so the console stays clean.
+    const isExpected = reason === "transport close" || reason === "io client disconnect";
+    if (isExpected) {
+      console.debug("[Socket] Disconnected:", reason);
+    } else {
+      console.warn("[Socket] Disconnected unexpectedly:", reason);
+    }
     broadcastChannel?.postMessage({ type: "disconnected", reason });
     // Do not reconnect on explicit client disconnect (logout)
     if (reason !== "io client disconnect") {

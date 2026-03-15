@@ -1,24 +1,30 @@
+// src/Context/Posts/PostState.js
+//
+// FIX 1: fetchPosts now safely extracts the posts array whether the backend
+//         returns a flat array  (original route)  OR  { posts, pagination }
+//         (new paginated route). Either way statePosts is always an array.
+//
+// FIX 2: token is read inside fetchPosts (not at module level) so it is
+//         always fresh after login.
+
 import React, { useState, useEffect, useCallback } from "react";
 import PostContext from "./PostContext";
 import { toast } from "react-toastify";
 import "react-toastify/dist/ReactToastify.css";
-import { useAuth } from '../Authorisation/AuthContext'
+import { useAuth } from '../Authorisation/AuthContext';
 import apiRequest from "../../utils/apiRequest";
 
 const BACKEND_URL = process.env.REACT_APP_SERVER_URL ?? process.env.REACT_APP_BACKEND_URL;
-
-// FIX: Separate timeouts for regular requests vs. media uploads.
-// The default apiRequest timeout (15s) is far too short for file uploads
-// that go through multer → disk → compression → DB save on the server.
-const MEDIA_UPLOAD_TIMEOUT_MS = 120_000; // 2 minutes for files
+const MEDIA_UPLOAD_TIMEOUT_MS = 120_000; // 2 minutes for file uploads
 
 const PostState = ({ children }) => {
   const [statePosts, setStatePosts] = useState([]);
-  const [loading, setLoading] = useState(false);
-  const { isAuthenticated } = useAuth();
-  const token = localStorage.getItem('token');
+  const [loading, setLoading]       = useState(false);
+  const { isAuthenticated }         = useAuth();
 
   const fetchPosts = useCallback(async () => {
+    // Always read token fresh — avoids stale closure after login
+    const token = localStorage.getItem('token');
     if (!token) {
       toast.error("Authentication token missing!");
       return;
@@ -28,17 +34,32 @@ const PostState = ({ children }) => {
       const res = await apiRequest.get(`${BACKEND_URL}/api/posts/fetchallposts`, {
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        }
+          'Authorization': `Bearer ${token}`,
+        },
       });
-      setStatePosts(res.data);
+
+      // ── FIX: Handle both response shapes robustly ──────────────────────────
+      // Original backend  → res.data is a plain array
+      // Paginated backend  → res.data is { posts: [...], pagination: {...} }
+      let posts;
+      if (Array.isArray(res.data)) {
+        posts = res.data;
+      } else if (Array.isArray(res.data?.posts)) {
+        posts = res.data.posts;
+      } else {
+        // Unexpected shape — log it and set empty array to avoid crash
+        console.warn('[PostState] Unexpected fetchallposts response shape:', res.data);
+        posts = [];
+      }
+
+      setStatePosts(posts);
     } catch (err) {
-      console.error(err);
+      console.error('[PostState] fetchPosts error:', err);
       toast.error("Failed to fetch posts!");
     } finally {
       setLoading(false);
     }
-  }, [token]);
+  }, []); // no deps — reads token fresh on each call
 
   useEffect(() => {
     if (isAuthenticated) {
@@ -48,45 +69,31 @@ const PostState = ({ children }) => {
 
   const addPost = async (postContent, visibility = "public", selectedFiles = []) => {
     const token = localStorage.getItem('token');
+    if (!token) { toast.error("Authentication token missing!"); return; }
+
+    if (!postContent && (!selectedFiles || selectedFiles.length === 0)) {
+      toast.error("Please enter some text or upload media.");
+      return;
+    }
+
+    const formData = new FormData();
+    formData.append("post", postContent);
+    formData.append("visibility", visibility);
+
+    const hasFiles = selectedFiles && selectedFiles.length > 0;
+    selectedFiles.forEach(file => {
+      if (file instanceof File) formData.append("media", file);
+    });
+
+    setLoading(true);
     try {
-      if (!token) {
-        toast.error("Authentication token missing!");
-        return;
-      }
-
-      if (!postContent && (!selectedFiles || selectedFiles.length === 0)) {
-        toast.error("Please enter some text or upload media.");
-        return;
-      }
-
-      const formData = new FormData();
-      formData.append("post", postContent);
-      formData.append("visibility", visibility);
-
-      const hasFiles = selectedFiles && selectedFiles.length > 0;
-      selectedFiles.forEach(file => {
-        if (file instanceof File) {
-          formData.append("media", file);
-        }
-      });
-
-      setLoading(true);
-
       const res = await apiRequest.post(`${BACKEND_URL}/api/posts/addnewposts`, formData, {
-        headers: {
-          "Authorization": `Bearer ${token}`,
-          // FIX: Do NOT manually set Content-Type for FormData — the browser
-          // must set it with the correct multipart boundary automatically.
-          // Setting it manually causes the server to reject the upload.
-        },
-        // FIX: Use a much longer timeout for media uploads. Compression and
-        // DB operations on the server can take well over the default 15 s.
+        headers: { "Authorization": `Bearer ${token}` },
+        // Do NOT set Content-Type manually for FormData
         timeout: hasFiles ? MEDIA_UPLOAD_TIMEOUT_MS : 15_000,
       });
 
-      // Dismiss any "uploading" toast shown by Home.js
       toast.dismiss('post-loading');
-
       setStatePosts(prev => [res.data.post, ...prev]);
       toast.success(
         hasFiles
@@ -95,16 +102,13 @@ const PostState = ({ children }) => {
       );
     } catch (err) {
       toast.dismiss('post-loading');
-
       if (err.code === 'ECONNABORTED') {
-        // Still show the post if it was saved — the server responds quickly now.
-        // A timeout here means the network itself is extremely slow.
         toast.error("Upload timed out. Check your connection and try again.");
       } else {
         const serverMsg = err.response?.data?.message || err.response?.data?.errors?.[0]?.msg;
         toast.error(serverMsg || "Failed to create post. Please try again.");
       }
-      console.error("Post upload error:", err.response?.data || err.message);
+      console.error('[PostState] addPost error:', err.response?.data || err.message);
     } finally {
       setLoading(false);
     }
@@ -112,18 +116,15 @@ const PostState = ({ children }) => {
 
   const deletePost = async (id) => {
     const token = localStorage.getItem('token');
+    if (!token) { toast.error("Authentication token missing!"); return; }
     try {
-      if (!token) {
-        toast.error("Authentication token missing!");
-        return;
-      }
       await apiRequest.delete(
         `${BACKEND_URL}/api/posts/deleteposts/${id}`,
         { headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` } }
       );
       setStatePosts(prev => prev.filter(post => post._id !== id));
       toast.success("Post deleted!");
-    } catch (err) {
+    } catch {
       toast.error("Failed to delete post!");
     }
   };
@@ -134,18 +135,12 @@ const PostState = ({ children }) => {
       const res = await apiRequest.put(
         `${BACKEND_URL}/api/posts/like/${postId}`,
         {},
-        {
-          headers: {
-            'Authorization': `Bearer ${token}`,
-          },
-        }
+        { headers: { 'Authorization': `Bearer ${token}` } }
       );
-      setStatePosts((prev) =>
-        prev.map((post) =>
-          post._id === postId ? { ...post, likes: res.data.likes } : post
-        )
+      setStatePosts(prev =>
+        prev.map(post => post._id === postId ? { ...post, likes: res.data.likes } : post)
       );
-    } catch (err) {
+    } catch {
       toast.error("Failed to like/unlike post!");
     }
   };

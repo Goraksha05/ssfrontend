@@ -14,10 +14,12 @@
     "contact_us": "Contact Us",
     "search_placeholder": "Search friends...",
     "no_users_found": "No users found",
+    "view_profile": "View →",
     "become_prime": "Become a Prime Member",
     "notifications": "Notifications",
     "language": "Language",
-    "hi_greeting": "Hi"
+    "hi_greeting": "Hi",
+    "terms": "Terms & Conditions"
   },
 
   "auth": {

@@ -1,113 +1,106 @@
-// src/utils/apiRequest.js
+/**
+ * src/utils/apiRequest.js — Axios Instance (Production-Ready)
+ *
+ * Changes from original:
+ *  ✅ Removed stale/spoofable `user-id` header from localStorage
+ *     (req.user.id set by fetchUser middleware is the authoritative source)
+ *  ✅ Timeout reduced from 15s to 10s with per-request override capability
+ *  ✅ 401 auto-logout: dispatches a custom event so AuthContext can react
+ *     without a circular dependency (apiRequest → AuthContext → apiRequest)
+ *  ✅ Token reading limited to a single key ('token') for clarity
+ */
+
 import axios from 'axios';
 import { toast } from 'react-toastify';
 
-// Base URL (falls back to localhost if env not present)
-const BASE_URL = process.env.REACT_APP_SERVER_URL || process.env.REACT_APP_BACKEND_URL || 'http://127.0.0.1:5000';
+const BASE_URL =
+  process.env.REACT_APP_SERVER_URL ||
+  process.env.REACT_APP_BACKEND_URL ||
+  'http://127.0.0.1:5000';
 
-// Create axios instance
 const apiRequest = axios.create({
   baseURL: BASE_URL,
-  timeout: 15000,
+  timeout: 10_000, // 10 seconds (was 15s)
 });
 
-// Helper: read token from common localStorage keys or cookie
+// ── Token reader ──────────────────────────────────────────────────────────────
 function readToken() {
   if (typeof window === 'undefined') return null;
-
-  const keys = ['token', 'authtoken', 'authToken', 'accessToken'];
-  for (const k of keys) {
-    const t = localStorage.getItem(k);
-    if (t && t !== 'null' && t !== 'undefined') return t;
-  }
-
-  try {
-    const match = document.cookie.match('(^|;)\\s*token\\s*=\\s*([^;]+)');
-    if (match) return match.pop();
-  } catch (err) {
-    // ignore cookie parsing errors
-  }
-
-  return null;
+  // FIX: Only read from the canonical 'token' key.
+  // The original checked 4 keys + cookies — fragile and confusing.
+  const t = localStorage.getItem('token');
+  return t && t !== 'null' && t !== 'undefined' ? t : null;
 }
 
-// Request interceptor: attach token, user-id, and sensible defaults
+// ── Request interceptor ───────────────────────────────────────────────────────
 apiRequest.interceptors.request.use(
   (config) => {
-    try {
-      config.headers = config.headers || {};
+    config.headers = config.headers ?? {};
 
-      const token = readToken();
-      if (token && !config.headers.Authorization) {
-        config.headers.Authorization = `Bearer ${token}`;
-      }
-
-      if (!config.headers.Accept) {
-        config.headers.Accept = 'application/json';
-      }
-
-      const method = (config.method || 'get').toLowerCase();
-      const isFormData = typeof FormData !== 'undefined' && config.data instanceof FormData;
-      if (!isFormData && method !== 'get' && !config.headers['Content-Type']) {
-        config.headers['Content-Type'] = 'application/json';
-      }
-
-      try {
-        const rawUser = localStorage.getItem('User');
-        if (rawUser) {
-          const user = JSON.parse(rawUser);
-          if (user && (user._id || user.id)) {
-            config.headers['user-id'] = user._id || user.id;
-          }
-        }
-      } catch (err) {
-        console.warn('apiRequest: failed to parse User from localStorage', err);
-      }
-    } catch (err) {
-      console.error('apiRequest request-interceptor error', err);
+    const token = readToken();
+    if (token && !config.headers.Authorization) {
+      config.headers.Authorization = `Bearer ${token}`;
     }
+
+    if (!config.headers.Accept) {
+      config.headers.Accept = 'application/json';
+    }
+
+    const isFormData =
+      typeof FormData !== 'undefined' && config.data instanceof FormData;
+    const method = (config.method ?? 'get').toLowerCase();
+
+    if (!isFormData && method !== 'get' && !config.headers['Content-Type']) {
+      config.headers['Content-Type'] = 'application/json';
+    }
+
+    // NOTE: We intentionally do NOT send a 'user-id' header derived from
+    // localStorage. Routes that need the user ID should use req.user.id
+    // set by the fetchUser auth middleware — it's the only trustworthy source.
 
     return config;
   },
   (error) => {
-    console.error('❌ Request Error:', error);
+    console.error('[apiRequest] Request setup error:', error);
     return Promise.reject(error);
   }
 );
 
-// Response interceptor: handle global errors
-// Respects `config._silenceToast = true` to suppress toasts for known/handled errors
+// ── Response interceptor ──────────────────────────────────────────────────────
 apiRequest.interceptors.response.use(
   (response) => response,
   (error) => {
-    // If the caller has opted out of the global toast, skip it entirely.
-    // This is used e.g. for profile fetch where 404 is an expected new-user state.
     const silenced = error?.config?._silenceToast === true;
 
-    if (!silenced && error?.response) {
+    if (error?.response) {
       const { status, data } = error.response;
-      console.error('❌ Response Error:', status, data);
 
-      if (status === 401) {
-        toast.error(data?.message || 'Unauthorized. Please login again.');
-        // Intentionally do NOT auto-clear tokens here; let the app decide.
-      } else if (status === 403) {
-        toast.error(data?.message || 'Forbidden. You do not have access.');
-      } else if (status === 404) {
-        // 404s are often handled locally (e.g. profile not found for new users).
-        // Only show a generic toast if the caller hasn't silenced it.
-        // Silenced 404s (like profile fetch) are handled in the calling function.
-        console.warn('❌ 404 Not Found:', error.config?.url);
-      } else if (status >= 500) {
-        toast.error('Server error. Please try again later.');
-      } else {
-        toast.error(data?.message || 'Request failed');
+      if (!silenced) {
+        if (status === 401) {
+          // Dispatch a global event so AuthContext can log the user out
+          // without a circular import dependency.
+          window.dispatchEvent(new CustomEvent('auth:unauthorized'));
+          toast.error(data?.message || 'Session expired. Please log in again.');
+        } else if (status === 403) {
+          toast.error(data?.message || 'You do not have permission to do that.');
+        } else if (status === 404) {
+          console.warn('[apiRequest] 404:', error.config?.url);
+        } else if (status === 429) {
+          toast.warn('Too many requests. Please slow down.');
+        } else if (status >= 500) {
+          toast.error('Server error. Please try again later.');
+        } else {
+          toast.error(data?.message || 'Request failed.');
+        }
       }
-    } else if (!silenced && error?.request) {
-      console.error('❌ No response received:', error.request);
-      toast.error('No response from server. Check your connection.');
+
+      console.error(`[apiRequest] ${status}:`, error.config?.url, data);
     } else if (!silenced) {
-      console.error('❌ Request Setup Error:', error?.message);
+      if (error?.code === 'ECONNABORTED') {
+        toast.error('Request timed out. Please check your connection.');
+      } else {
+        toast.error('No response from server. Check your connection.');
+      }
     }
 
     return Promise.reject(error);
