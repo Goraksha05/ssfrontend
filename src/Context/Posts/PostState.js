@@ -13,14 +13,15 @@ import { toast } from "react-toastify";
 import "react-toastify/dist/ReactToastify.css";
 import { useAuth } from '../Authorisation/AuthContext';
 import apiRequest from "../../utils/apiRequest";
+import { emitSignal } from "../../utils/behaviorSDK";
 
 const BACKEND_URL = process.env.REACT_APP_SERVER_URL ?? process.env.REACT_APP_BACKEND_URL;
 const MEDIA_UPLOAD_TIMEOUT_MS = 120_000; // 2 minutes for file uploads
 
 const PostState = ({ children }) => {
   const [statePosts, setStatePosts] = useState([]);
-  const [loading, setLoading]       = useState(false);
-  const { isAuthenticated }         = useAuth();
+  const [loading, setLoading] = useState(false);
+  const { isAuthenticated } = useAuth();
 
   const fetchPosts = useCallback(async () => {
     // Always read token fresh — avoids stale closure after login
@@ -95,6 +96,30 @@ const PostState = ({ children }) => {
 
       toast.dismiss('post-loading');
       setStatePosts(prev => [res.data.post, ...prev]);
+
+      //-------- // ✅ Behavior tracking (SAFE + COMPLETE)
+      try {
+        const sdkSession = window.__sdkSession;
+
+        const now = Date.now();
+        const lastPostTime = localStorage.getItem('last_post_time');
+
+        const timeSinceLastPost = lastPostTime
+          ? now - Number(lastPostTime)
+          : null;
+
+        localStorage.setItem('last_post_time', now);
+
+        if (sdkSession) {
+          emitSignal(sdkSession, 'post_created', {
+            interval_ms_since_last_post: timeSinceLastPost
+          });
+        }
+      } catch (e) {
+        console.warn('[BehaviorSDK] emit failed', e);
+      }
+      //-------- ✅ Behavior tracking end here ----------
+
       toast.success(
         hasFiles
           ? "Post created! Media is being processed in the background."

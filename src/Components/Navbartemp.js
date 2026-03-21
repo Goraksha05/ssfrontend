@@ -8,7 +8,17 @@ import { useI18n } from "../i18n/i18nContext";           // ← i18nContext hook
 import '@fortawesome/fontawesome-free/css/all.min.css';
 import './Navbar.css';
 import Logo from "./XLogo/logoImage";
-import { BadgeCheck, Search, Bell, Home, Activity, User, ChevronDown, Globe, X } from 'lucide-react';
+import {
+  BadgeCheck,
+  Search,
+  Bell,
+  Home,
+  Activity,
+  User, 
+  ChevronDown,
+  Globe,
+  X
+} from 'lucide-react';
 import { useFriend } from "../Context/Friend/FriendContext";
 import { Modal, Button } from "react-bootstrap";
 import NotificationsPanel from '../Components/NotificationsPanel';
@@ -16,6 +26,7 @@ import apiRequest from "../utils/apiRequest";
 import SubscribeIcon from '../Assets/PrimeMembers.png';
 import LogoutIcon from '../Assets/LogoutButton.png';
 // import ThemeToggle from '../Components/Theme/ThemeToggle';
+// import KycVerification from './KYC/KycVerification';
 
 // ─── NOTE on i18n.js ──────────────────────────────────────────────────────────
 // The old `i18n.js` (i18next/react-i18next) is no longer imported here.
@@ -195,6 +206,11 @@ export default function Navbartemp({ title, myHome }) {
     setShowLangMenu(false);
   };
 
+  /* ── Go to profile ── */
+  const handleGoToProfile = () => {
+    navigate("/profile");
+  };
+
   return (
     <>
       {/* ══════════════════════════════════════════════════════════ NAV */}
@@ -268,9 +284,9 @@ export default function Navbartemp({ title, myHome }) {
             <NavLinkItem to="/activity" icon={Activity} onClick={handleNavItemClick}>
               {t["nav.activity"] || "Activity"}
             </NavLinkItem>
-            <NavLinkItem to="/profile" icon={User} onClick={handleNavItemClick}>
+            {/* <NavLinkItem to="/profile" icon={User} onClick={handleNavItemClick}>
               {t["nav.profile"] || "Profile"}
-            </NavLinkItem>
+            </NavLinkItem> */}
 
             {/* Policies dropdown */}
             <div ref={policiesRef} className="navbar-policies-dropdown">
@@ -284,10 +300,10 @@ export default function Navbartemp({ title, myHome }) {
               {showPoliciesMenu && (
                 <div className="navbar-policies-menu">
                   {[
-                    { to: "/aboutus",         labelKey: "nav.about_us",       fallback: "About Us" },
-                    { to: "/privacypolicy",   labelKey: "nav.privacy_policy",       fallback: "Privacy Policy" },
-                    { to: "/refcanclepolicy", labelKey: "nav.refund_cancel",        fallback: "Refund & Cancel" },
-                    { to: "/contactus",       labelKey: "nav.contact_us",       fallback: "Contact Us" },
+                    { to: "/aboutus", labelKey: "nav.about_us", fallback: "About Us" },
+                    { to: "/privacypolicy", labelKey: "nav.privacy_policy", fallback: "Privacy Policy" },
+                    { to: "/refcanclepolicy", labelKey: "nav.refund_cancel", fallback: "Refund & Cancel" },
+                    { to: "/contactus", labelKey: "nav.contact_us", fallback: "Contact Us" },
                   ].map(item => (
                     <Link
                       key={item.to}
@@ -308,7 +324,12 @@ export default function Navbartemp({ title, myHome }) {
             {isAuthenticated && (
               <>
                 {/* User greeting pill */}
-                <div className="navbar-greeting-pill d-none d-md-flex">
+                <div
+                  className="navbar-greeting-pill d-none d-md-flex"
+                  onClick={handleGoToProfile}
+                  style={{ cursor: "pointer" }}
+                  title="Go to Profile"
+                >
                   <span className="navbar-greet-text">
                     {isPrime && (
                       <BadgeCheck size={21} style={{ color: "#38bdf8", marginRight: "4px", verticalAlign: "middle" }} fill="currentColor" stroke="white" />
@@ -410,9 +431,9 @@ export default function Navbartemp({ title, myHome }) {
           <div ref={navbarRef} className="navbar-mobile-drawer">
             {/* Nav links */}
             {[
-              { to: "/",         icon: Home,     label: myHome || t["nav.home"] || "Home"     },
+              { to: "/", icon: Home, label: myHome || t["nav.home"] || "Home" },
               { to: "/activity", icon: Activity, label: t["nav.activity"] || "Activity" },
-              { to: "/profile",  icon: User,     label: t["nav.profile"] || "Profile"  },
+              { to: "/profile", icon: User, label: t["nav.profile"] || "Profile" },
             ].map(item => (
               <Link
                 key={item.to}
@@ -431,10 +452,10 @@ export default function Navbartemp({ title, myHome }) {
                 {t["nav.policies"] || "Policies"}
               </div>
               {[
-                { to: "/aboutus",         labelKey: "nav.about_us",  fallback: "About Us"       },
-                { to: "/privacypolicy",   labelKey: "nav.privacy_policy",  fallback: "Privacy Policy" },
-                { to: "/refcanclepolicy", labelKey: "nav.refund_cancel",   fallback: "Refund & Cancel"},
-                { to: "/contactus",       labelKey: "nav.contact_us",  fallback: "Contact Us"     },
+                { to: "/aboutus", labelKey: "nav.about_us", fallback: "About Us" },
+                { to: "/privacypolicy", labelKey: "nav.privacy_policy", fallback: "Privacy Policy" },
+                { to: "/refcanclepolicy", labelKey: "nav.refund_cancel", fallback: "Refund & Cancel" },
+                { to: "/contactus", labelKey: "nav.contact_us", fallback: "Contact Us" },
               ].map(item => (
                 <Link
                   key={item.to}
@@ -490,6 +511,45 @@ export default function Navbartemp({ title, myHome }) {
 
       {/* Spacer so content doesn't hide under fixed nav */}
       <div className="navbar-spacer" />
+
+      {/* ── KYC Required Banner ── */}
+      {isAuthenticated && storedUser?.kyc?.status === 'required' && (
+        <div style={{
+          position: 'fixed',
+          top: 62,
+          left: 0,
+          right: 0,
+          zIndex: 1020,
+          background: 'linear-gradient(90deg, #f59e0b, #d97706)',
+          color: '#fff',
+          fontSize: 13,
+          fontWeight: 700,
+          padding: '8px 20px',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          gap: 10,
+          boxShadow: '0 2px 8px rgba(217,119,6,0.3)',
+        }}>
+          <span>⚠️ KYC verification required to claim rewards.</span>
+          <Link
+            to="/profile"
+            onClick={() => {/* navigate to profile, user can click KYC tab */ }}
+            style={{
+              background: 'rgba(255,255,255,0.2)',
+              border: '1px solid rgba(255,255,255,0.4)',
+              borderRadius: 20,
+              padding: '4px 14px',
+              color: '#fff',
+              textDecoration: 'none',
+              fontSize: 12,
+              fontWeight: 800,
+            }}
+          >
+            Verify Now →
+          </Link>
+        </div>
+      )}
 
       {/* ── Notifications Panel ── */}
       <NotificationsPanel

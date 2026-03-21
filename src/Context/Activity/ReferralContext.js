@@ -2,6 +2,7 @@
 import React, { createContext, useState, useEffect, useContext, useCallback } from 'react';
 // import axios from 'axios';
 import { jwtDecode } from 'jwt-decode';
+import { emitSignal } from '../../utils/behaviorSDK';
 
 const ReferralContext = createContext();
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
@@ -72,6 +73,29 @@ export const ReferralProvider = ({ children }) => {
   useEffect(() => {
     fetchReferralData();
   }, [fetchReferralData]);
+
+  // emitSignal(sdkSession, 'referral_sent', { interval_ms_since_last_referral: timeSinceLast });
+  //----------- Safe behavior tracking (no crash if SDK not ready)-----------------
+  try {
+    const session = window.__sdkSession;
+
+    if (session) {
+      const now = Date.now();
+
+      const last = window.__lastReferralTs || now;
+      const timeSinceLast = now - last;
+
+      emitSignal(session, 'referral_sent', {
+        interval_ms_since_last_referral: timeSinceLast,
+      });
+
+      // persist for next calculation
+      window.__lastReferralTs = now;
+    }
+  } catch (err) {
+    console.warn('[AuthService] referral signal failed:', err);
+  }
+  //---------------- End of behavior tracking ----------------
 
   return (
     <ReferralContext.Provider

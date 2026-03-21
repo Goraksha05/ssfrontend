@@ -7,9 +7,9 @@ import Swal from "sweetalert2";
 import confetti from "canvas-confetti";
 import handleAuthError from "../../utils/handleAuthError";
 import "react-toastify/dist/ReactToastify.css";
-import PrivacySettings from "./PrivacySettings";
-import NotificationSettings from "./NotificationSettings";
-import FollowersModal from "./FollowersModal";
+import PrivacySettings from "../Profile/PrivacySettings";
+import NotificationSettings from "../Profile/NotificationSettings";
+import FollowersModal from "../Profile/FollowersModal";
 import { useFriend } from "../../Context/Friend/FriendContext";
 import getSocket from "../../WebSocket/WebSocketClient";
 import { 

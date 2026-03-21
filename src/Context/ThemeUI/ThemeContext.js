@@ -22,7 +22,7 @@
  */
 
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
-import { PALETTES } from './ThemeStructure/Palettes';
+import { PALETTES } from '../../Components/Theme/ThemeStructure/Palettes';
 // ─── Context ──────────────────────────────────────────────────────────────────
 
 const ThemeContext = createContext(null);

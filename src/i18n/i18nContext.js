@@ -1,4 +1,5 @@
 // src/i18n/i18nContext.js
+// UPDATED: Added all missing locale imports and expanded language support
 
 import React, { createContext, useContext, useState, useEffect, useMemo } from "react";
 
@@ -8,11 +9,11 @@ import hi from './locales/hi.json';
 import ta from './locales/ta.json';
 import bn from './locales/bn.json';
 import mr from './locales/mr.json';
-import pa from './locales/pa.json'; // Punjabi
-import gu from './locales/gu.json'; // Gujarati
-import te from './locales/te.json'; // Telugu
-import kn from './locales/kn.json'; // Kannada
-import ml from './locales/ml.json'; // Malayalam
+import pa from './locales/pa.json';
+import gu from './locales/gu.json';
+import te from './locales/te.json';
+import kn from './locales/kn.json';
+import ml from './locales/ml.json';
 
 // Language metadata
 export const LANGUAGES = [
@@ -72,6 +73,8 @@ export const I18nProvider = ({ children }) => {
     useEffect(() => {
         const current = LANGUAGES.find(l => l.code === lang);
         document.documentElement.dir = current?.rtl ? "rtl" : "ltr";
+        // Also set lang attribute for accessibility
+        document.documentElement.lang = lang;
     }, [lang]);
 
     const t = useMemo(() => {

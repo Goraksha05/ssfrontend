@@ -12,8 +12,8 @@
 import { reconnectSocket, disconnectSocket } from '../WebSocket/WebSocketClient';
 
 const BASE =
-  process.env.REACT_APP_BACKEND_URL  ||
-  process.env.REACT_APP_SERVER_URL   ||
+  process.env.REACT_APP_BACKEND_URL ||
+  process.env.REACT_APP_SERVER_URL ||
   '';
 
 const API_URL = `${BASE}/api/auth`;
@@ -27,10 +27,10 @@ const AuthService = {
   /** Log in with identifier (username | email | phone) + password */
   login: async ({ identifier, password }) => {
     try {
-      const res  = await fetch(`${API_URL}/login`, {
-        method:  'POST',
+      const res = await fetch(`${API_URL}/login`, {
+        method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ identifier, password }),
+        body: JSON.stringify({ identifier, password }),
       });
       const data = await res.json();
 
@@ -55,10 +55,10 @@ const AuthService = {
   /** Create a new account */
   signup: async ({ name, username, email, phone, password, referralno, role }) => {
     try {
-      const res  = await fetch(`${API_URL}/createuser`, {
-        method:  'POST',
+      const res = await fetch(`${API_URL}/createuser`, {
+        method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ name, username, email, phone, password, referralno, role }),
+        body: JSON.stringify({ name, username, email, phone, password, referralno, role }),
       });
       const data = await res.json();
 
@@ -85,20 +85,20 @@ const AuthService = {
    * Falls back to null (not throws) so callers can decide what to do.
    */
   getUser: async () => {
-    const rawToken    = localStorage.getItem('token');
-    const storedUser  = localStorage.getItem('User');
+    const rawToken = localStorage.getItem('token');
+    const storedUser = localStorage.getItem('User');
 
     if (!rawToken || !storedUser) return null;
 
     try {
-      const user   = JSON.parse(storedUser);
+      const user = JSON.parse(storedUser);
       const userId = user?.id || user?._id;
       if (!userId) { console.warn('[AuthService] getUser: no user ID'); return null; }
 
-      const res  = await fetch(`${API_URL}/getloggeduser/${userId}`, {
+      const res = await fetch(`${API_URL}/getloggeduser/${userId}`, {
         headers: {
           'Content-Type': 'application/json',
-          Authorization:  `Bearer ${cleanToken(rawToken)}`,
+          Authorization: `Bearer ${cleanToken(rawToken)}`,
         },
       });
       const data = await res.json();
@@ -122,10 +122,10 @@ const AuthService = {
   /** Admin login — validates isAdmin flag before accepting */
   loginAdmin: async ({ identifier, password }) => {
     try {
-      const res  = await fetch(`${API_URL}/login`, {
-        method:  'POST',
+      const res = await fetch(`${API_URL}/login`, {
+        method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ identifier, password }),
+        body: JSON.stringify({ identifier, password }),
       });
       const data = await res.json();
 

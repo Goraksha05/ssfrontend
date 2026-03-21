@@ -40,12 +40,19 @@ import { FriendProvider } from './Context/Friend/FriendContext';
 import { ReferralProvider } from './Context/Activity/ReferralContext';
 import PostState from './Context/Posts/PostState';
 import ProfileState from './Context/Profile/ProfileState';
+import { KycProvider } from './Context/KYC/KycContext';
+
+// ── User Behavior Tracking ────────────────────────────────────────────────────
+import { startBehaviorSDK, stopBehaviorSDK } from './utils/behaviorSDK';
+import { initializeSocket, getSocket } from './WebSocket/WebSocketClient';
 
 // ── Components ────────────────────────────────────────────────────────────────
 import ErrorBoundary from './Components/ErrorBoundary';
 import Navbartemp from './Components/Navbartemp';
 import Subscription from './Components/Subscription/Subscription';
 import TermsPopup from './Components/TermsAndConditions/TermsPopup';
+// ── KYC Status Banner ─────────────────────────────────────────────────────────
+import KYCStatusBanner from './Components/KYC/KYCStatusBanner';
 
 // ── Pages ─────────────────────────────────────────────────────────────────────
 import WelcomPage from './Components/WelcomPage';
@@ -55,7 +62,8 @@ import Activity from './Components/UserActivities/Activity';
 import Friend from './Components/Friendship/AllFriends';
 import FriendReq from './Components/Friendship/FriendRequest';
 import Suggestions from './Components/Friendship/Suggestion';
-import Profile from './Components/Profile/Profile';
+// import Profile from './Components/Profile/Profile';
+import Profile from './Components/Profile/ProfileWithKYC';
 import FullscreenReels from './Components/Reels/FullscreenReels';
 import InviteCard from './Components/InviteCard';
 import ChatRoom from './Components/ChatRoom/ChatRoom';
@@ -63,6 +71,7 @@ import AboutUs from './Components/AboutUs/AboutUs';
 import ContactUs from './Components/AboutUs/ContactUs';
 import PrivacyPolicy from './Components/AboutUs/PrivacyPolicy';
 import RefCancelPolicy from './Components/AboutUs/RefCancelPolicy';
+
 
 // ── Admin Pages ───────────────────────────────────────────────────────────────
 import AdminRoute from './Components/Admin/AdminRoute/AdminRoute';
@@ -77,97 +86,125 @@ import AdminUserReport from './Components/Admin/UserReport';
 function AppContent() {
   const { isAuthenticated, user } = useAuth();
   const isAdmin = isAuthenticated && user?.isAdmin;
+  const userId = user?._id;
 
   useEffect(() => {
     AOS.init({ duration: 700, once: true });
   }, []);
+
+  // ------- browser SDK for user behavior tracking (only for authenticated non-admin users) -------
+  useEffect(() => {
+    let session = null;
+
+    const init = async () => {
+      if (userId && !isAdmin && !window.__sdkSession) {
+        await initializeSocket(); // ensure socket is ready
+        const wsClient = getSocket();
+
+        if (wsClient) {
+          session = startBehaviorSDK(wsClient);
+          window.__sdkSession = session;
+        }
+      }
+    };
+
+    init();
+
+    return () => {
+      if (session) stopBehaviorSDK(session);
+      window.__sdkSession = null; // ✅ prevent stale usage
+    };
+  }, [userId, isAdmin]);
 
   return (
     <ErrorBoundary>
       <NotificationProvider>
         <PostState>
           <ProfileState>
-            <StreakProvider>
-              <FriendProvider>
-                <ReferralProvider>
-                  <SocketProvider>
-                    <SubscriptionProvider>
-                      <StatusProvider>
+            <KycProvider>
+              <StreakProvider>
+                <FriendProvider>
+                  <ReferralProvider>
+                    <SocketProvider>
+                      <SubscriptionProvider>
+                        <StatusProvider>
 
-                        {/* Navbar + Subscription only for non-admin authenticated users */}
-                        {isAuthenticated && !isAdmin && (
-                          <>
-                            <Navbartemp title={<b>SoShoLife</b>} myHome="Home" />
-                            <Subscription />
-                          </>
-                        )}
-
-                        <Routes>
-                          {/* ── Admin ─────────────────────────────────────────── */}
-                          {isAdmin && (
+                          {/* Navbar + Subscription only for non-admin authenticated users */}
+                          {isAuthenticated && !isAdmin && (
                             <>
-                              <Route path="/admin" element={<Navigate to="/admin/dashboard" replace />} />
-                              {/*
+                              <Navbartemp title={<b>SoShoLife</b>} myHome="Home" />
+                              <Subscription />
+                              <KYCStatusBanner />
+                            </>
+                          )}
+
+                          <Routes>
+                            {/* ── Admin ─────────────────────────────────────────── */}
+                            {isAdmin && (
+                              <>
+                                <Route path="/admin" element={<Navigate to="/admin/dashboard" replace />} />
+                                {/*
                                 FIX: Original rendered AdminLayout, AdminDashboard, AdminUserReport
                                 all as siblings inside one Route, which meant they all mounted at once.
                                 Use AdminLayout as the shell with child routes inside it.
                               */}
-                              <Route
-                                path="/admin/*"
-                                element={
-                                  <AdminRoute>
-                                    <AdminLayout />
-                                  </AdminRoute>
-                                }
-                              >
-                                <Route path="dashboard" element={<AdminDashboard />} />
-                                <Route path="users" element={<AdminUserReport />} />
+                                <Route
+                                  path="/admin/*"
+                                  element={
+                                    <AdminRoute>
+                                      <AdminLayout />
+                                    </AdminRoute>
+                                  }
+                                >
+                                  <Route path="dashboard" element={<AdminDashboard />} />
+                                  <Route path="users" element={<AdminUserReport />} />
+                                  <Route path="*" element={<Navigate to="/admin/dashboard" replace />} />
+                                </Route>
                                 <Route path="*" element={<Navigate to="/admin/dashboard" replace />} />
-                              </Route>
-                              <Route path="*" element={<Navigate to="/admin/dashboard" replace />} />
-                            </>
-                          )}
+                              </>
+                            )}
 
-                          {/* ── Public (unauthenticated) ──────────────────────── */}
-                          {!isAuthenticated && (
-                            <>
-                              <Route path="/" element={<WelcomPage />} />
-                              <Route path="/login" element={<LogSignNewModel />} />
-                              <Route path="/terms-popup" element={<TermsPopup />} />
-                              <Route path="*" element={<Navigate to="/" replace />} />
-                            </>
-                          )}
+                            {/* ── Public (unauthenticated) ──────────────────────── */}
+                            {!isAuthenticated && (
+                              <>
+                                <Route path="/" element={<WelcomPage />} />
+                                <Route path="/login" element={<LogSignNewModel />} />
+                                <Route path="/terms-popup" element={<TermsPopup />} />
+                                <Route path="*" element={<Navigate to="/" replace />} />
+                              </>
+                            )}
 
-                          {/* ── Authenticated User ───────────────────────────── */}
-                          {isAuthenticated && !isAdmin && (
-                            <>
-                              <Route path="/" element={<Home />} />
-                              <Route path="/activity" element={<Activity />} />
-                              <Route path="/invitaion" element={<InviteCard />} />
-                              <Route path="/allfriends" element={<Friend />} />
-                              <Route path="/friendrequest" element={<FriendReq />} />
-                              <Route path="/suggestions" element={<Suggestions />} />
-                              <Route path="/profile" element={<Profile />} />
-                              <Route path="/reels/fullscreen" element={<FullscreenReels />} />
-                              <Route path="/chat" element={<ChatRoom />} />
-                              <Route path="/aboutus" element={<AboutUs />} />
-                              <Route path="/contactus" element={<ContactUs />} />
-                              <Route path="/privacypolicy" element={<PrivacyPolicy />} />
-                              <Route path="/refcanclepolicy" element={<RefCancelPolicy />} />
-                              <Route path="/login" element={<Navigate to="/" replace />} />
-                              <Route path="*" element={<Navigate to="/" replace />} />
-                            </>
-                          )}
-                        </Routes>
+                            {/* ── Authenticated User ───────────────────────────── */}
+                            {isAuthenticated && !isAdmin && (
+                              <>
+                                <Route path="/"           element={<Home />} />
+                                <Route path="/activity"   element={<Activity />} />
+                                <Route path="/invitaion"  element={<InviteCard />} />
+                                <Route path="/allfriends" element={<Friend />} />
+                                <Route path="/friendrequest" element={<FriendReq />} />
+                                <Route path="/suggestions" element={<Suggestions />} />
+                                <Route path="/profile"    element={<Profile />} />
+                                <Route path="/reels/fullscreen" element={<FullscreenReels />} />
+                                <Route path="/chat"       element={<ChatRoom />} />
+                                <Route path="/aboutus"    element={<AboutUs />} />
+                                <Route path="/contactus"  element={<ContactUs />} />
+                                <Route path="/privacypolicy" element={<PrivacyPolicy />} />
+                                <Route path="/refcanclepolicy" element={<RefCancelPolicy />} />
+                                <Route path="/login"      element={<Navigate to="/" replace />} />
+                                <Route path="*"           element={<Navigate to="/" replace />} />
+                              </>
+                            )}
+                          </Routes>
 
-                        <ToastContainer position="top-right" autoClose={5000} />
+                          <ToastContainer position="top-left" autoClose={5000} />
 
-                      </StatusProvider>
-                    </SubscriptionProvider>
-                  </SocketProvider>
-                </ReferralProvider>
-              </FriendProvider>
-            </StreakProvider>
+                        </StatusProvider>
+                      </SubscriptionProvider>
+                    </SocketProvider>
+                  </ReferralProvider>
+                </FriendProvider>
+              </StreakProvider>
+            </KycProvider>
           </ProfileState>
         </PostState>
       </NotificationProvider>

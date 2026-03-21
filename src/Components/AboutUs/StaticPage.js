@@ -1,27 +1,89 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 
 const StaticPage = ({ title, content }) => {
-  React.useEffect(() => {
+  useEffect(() => {
     if (title) {
       document.title = `${title} - SoShoLife`;
-      const metaDescription = document.querySelector('meta[name="description"]');
-      if (metaDescription) {
-        metaDescription.setAttribute('content', content.slice(0, 160));
-      } else {
-        const meta = document.createElement('meta');
-        meta.name = 'description';
-        meta.content = content.slice(0, 160);
-        document.head.appendChild(meta);
+      let metaDescription = document.querySelector('meta[name="description"]');
+      if (!metaDescription) {
+        metaDescription = document.createElement('meta');
+        metaDescription.name = 'description';
+        document.head.appendChild(metaDescription);
       }
+      metaDescription.setAttribute('content', (content || '').slice(0, 160));
     }
   }, [title, content]);
 
-  if (!title) return <div className="p-4">Page not found.</div>;
+  if (!title) {
+    return (
+      <div
+        style={{
+          padding: 24,
+          color: 'var(--text-muted)',
+          background: 'var(--bg-page)',
+          minHeight: '100vh',
+          fontFamily: "'Nunito', sans-serif",
+        }}
+      >
+        Page not found.
+      </div>
+    );
+  }
 
   return (
-    <div className="p-4 sm:p-6 bg-white rounded-2xl shadow-lg max-w-4xl mx-auto mt-4">
-      <h1 className="text-2xl sm:text-3xl font-bold mb-4 text-center">{title}</h1>
-      <p className="text-gray-700 text-base sm:text-lg leading-relaxed whitespace-pre-line">{content}</p>
+    <div
+      style={{
+        minHeight: '100vh',
+        background: 'var(--bg-page)',
+        color: 'var(--text-primary)',
+        padding: '40px 16px 60px',
+        fontFamily: "'Nunito', sans-serif",
+        transition: 'var(--theme-transition, background 0.3s, color 0.3s)',
+      }}
+    >
+      <div
+        style={{
+          maxWidth: 860,
+          margin: '0 auto',
+          background: 'var(--bg-card)',
+          border: '1px solid var(--border)',
+          borderRadius: 20,
+          padding: '40px 44px',
+          boxShadow: 'var(--shadow-card)',
+        }}
+      >
+        <h1
+          style={{
+            fontSize: 28,
+            fontWeight: 800,
+            marginBottom: 8,
+            color: 'var(--text-heading)',
+            textAlign: 'center',
+            letterSpacing: '-0.3px',
+          }}
+        >
+          {title}
+        </h1>
+        <div
+          style={{
+            width: 48,
+            height: 4,
+            borderRadius: 4,
+            background: 'var(--accent-gradient)',
+            margin: '0 auto 28px',
+          }}
+        />
+        <p
+          style={{
+            color: 'var(--text-secondary)',
+            fontSize: 15,
+            lineHeight: 1.8,
+            whiteSpace: 'pre-line',
+          }}
+        >
+          {content}
+        </p>
+      </div>
     </div>
   );
 };

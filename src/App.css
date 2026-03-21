@@ -643,7 +643,7 @@ ul li button:hover {
     font-size: 2rem;
     font-weight: 800;
     line-height: 1.2;
-    text-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+    text-shadow: 0 2px 8px rgba(0, 0, 0, 0.658);
     margin: 1rem 0 0.4rem;
 }
 

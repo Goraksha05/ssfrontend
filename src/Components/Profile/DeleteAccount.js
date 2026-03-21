@@ -11,6 +11,7 @@
  */
 
 import React, { useState, useEffect, useCallback } from 'react';
+import { useNavigate } from "react-router-dom";
 import Swal from 'sweetalert2';
 import { toast } from 'react-toastify';
 import { Trash2, ShieldOff, RefreshCcw, Clock, AlertTriangle } from 'lucide-react';
@@ -62,6 +63,9 @@ const DeleteAccount = () => {
         const interval = setInterval(() => setTick(t => t + 1), 60_000);
         return () => clearInterval(interval);
     }, [status?.requested, setTick]);
+    
+    // ── Navigation to Login ───────────────────────────────────────────────────────
+    const navigate = useNavigate();
 
     // ── Request deletion ──────────────────────────────────────────────────────────
     const handleDeleteRequest = async () => {
@@ -111,8 +115,10 @@ const DeleteAccount = () => {
                 autoClose: 6000,
             });
             // Log the user out — their session is no longer valid for a pending-deletion account
+
             setTimeout(() => {
                 logout();
+                navigate("/login");
             }, 3000);
         } catch (err) {
             const msg = err.response?.data?.message || 'Failed to schedule deletion. Please try again.';
