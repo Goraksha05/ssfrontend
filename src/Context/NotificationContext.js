@@ -18,6 +18,16 @@
 //   NotificationPopup    → unreadCount, notifications, markAllRead, markOneRead
 //   NotificationSettings → pushEnabled, pushError, enablePush, disablePush
 //   Navbartemp / Header  → unreadCount  (bell badge ONLY — do not put other state here)
+//
+// FIXES:
+//   1. Listener leak: when the socket was not ready at mount time, the delayed
+//      attach() stored `offFn` in its closure but the cleanup returned to React
+//      was `() => clearTimeout(t)` — which never called offFn after the timer
+//      fired. On unmount between the mount and the 1.5 s retry the listener
+//      would be registered but never removed.
+//      Fix: use a shared mutable ref (`offRef`) so whichever path registers the
+//      listener — immediate or delayed — the single cleanup function returned to
+//      React always calls the correct teardown.
 
 import {
   createContext,
@@ -61,42 +71,58 @@ export const NotificationProvider = ({ children }) => {
   }, [refresh]);
 
   // ── Real-time socket listener ─────────────────────────────────────────────
+  //
+  // FIX: use a ref to hold the teardown function so both the immediate-attach
+  // path and the delayed-retry path point to the same cleanup slot.
+  // Previously the cleanup closure captured `offFn` at declaration time
+  // (always `() => {}`), so the listener registered by the delayed setTimeout
+  // was never cleaned up when the component unmounted during the 1.5 s window.
   useEffect(() => {
-    let offFn = () => {};
+    // Holds the unsubscribe function once a listener is successfully registered.
+    const offRef = { current: null };
+    let timerId  = null;
+
+    const handleNotification = (payload) => {
+      // Deduplicate by _id (handles re-emit on reconnect)
+      if (payload._id && seenIdsRef.current.has(payload._id)) return;
+      if (payload._id) seenIdsRef.current.add(payload._id);
+
+      // Prepend to live list, cap at 50
+      setNotifications((prev) => [payload, ...prev].slice(0, 50));
+
+      // Increment badge
+      setUnreadCount((c) => c + 1);
+
+      // Toast — only if the tab is visible
+      if (document.visibilityState !== 'hidden') {
+        toast.info(payload.message || 'New notification', {
+          autoClose: 4_000,
+          onClick: () => { if (payload.url) window.location.href = payload.url; },
+        });
+      }
+    };
 
     const attach = () => {
       const sock = getSocket();
       if (!sock) return false;
 
-      offFn = onSocketEvent('notification', (payload) => {
-        // Deduplicate by _id (handles re-emit on reconnect)
-        if (payload._id && seenIdsRef.current.has(payload._id)) return;
-        if (payload._id) seenIdsRef.current.add(payload._id);
-
-        // Prepend to live list, cap at 50
-        setNotifications((prev) => [payload, ...prev].slice(0, 50));
-
-        // Increment badge
-        setUnreadCount((c) => c + 1);
-
-        // Toast — only if the tab is visible
-        if (document.visibilityState !== 'hidden') {
-          toast.info(payload.message || 'New notification', {
-            autoClose: 4_000,
-            onClick: () => { if (payload.url) window.location.href = payload.url; },
-          });
-        }
-      });
-
+      // Store teardown in the ref so the cleanup below always reaches it
+      offRef.current = onSocketEvent('notification', handleNotification);
       return true;
     };
 
-    // Attach immediately if socket is ready, otherwise retry once after delay
     if (!attach()) {
-      const t = setTimeout(attach, 1_500);
-      return () => clearTimeout(t);
+      // Socket not ready yet — retry once after a brief delay.
+      // The cleanup function returned to React will cancel the timer AND
+      // remove the listener regardless of which path registered it.
+      timerId = setTimeout(attach, 1_500);
     }
-    return () => offFn();
+
+    return () => {
+      if (timerId !== null) clearTimeout(timerId);
+      // Call teardown if the listener was registered (immediately or delayed)
+      offRef.current?.();
+    };
   }, []); // single mount — listener swap on reconnect handled by onSocketEvent
 
   // ── Reset state on logout (storage event cross-tab + same-tab) ───────────

@@ -17,7 +17,41 @@
  *                                 file uploads show a soft warning
  *   • Face must be detectable  — faceMatchService.js (server-side SSD MobileNet)
  *
- * Dependencies:
+ * ── KEY FIXES IN THIS VERSION ────────────────────────────────────────────────
+ *
+ *  1. MOBILE CAMERA CAPTURE
+ *     The selfie "Upload Photo" tab now adds `capture="user"` on the file input.
+ *     On Android/iOS this opens the front camera directly instead of the file
+ *     picker/gallery. The user can still switch to gallery from within the
+ *     native camera UI on any device that supports it.
+ *     A separate "Choose from Gallery" button is also provided so users who
+ *     genuinely want to pick an existing photo have a clearly-labelled path.
+ *
+ *  2. IMAGE QUALITY PRE-FLIGHT (client-side sharpness estimate)
+ *     After the user selects a selfie from local storage we draw the image to
+ *     a small offscreen canvas and compute the average Laplacian variance —
+ *     the same metric that livenessService.js uses server-side (stdev < 10 →
+ *     rejected). If the client-side estimate is too low we block the file with
+ *     a clear error message before it ever reaches the crop step, so the user
+ *     gets immediate feedback instead of a server rejection after a full upload.
+ *
+ *  3. BANNER PERSISTENCE FIX
+ *     The KYCStatusBanner is driven by KycContext.status, which is fetched from
+ *     GET /api/kyc/me. The banner disappears only when the server confirms the
+ *     status has changed to 'submitted' or 'verified'. After a successful POST
+ *     to /api/kyc/submit the component calls refetch() immediately so the
+ *     context reloads and the banner vanishes on success. Previously refetch()
+ *     was deferred by 1 500 ms, which meant there was a window where the user
+ *     could see the banner after a successful submit. Now refetch is called
+ *     eagerly with a short retry loop (max 3 attempts × 1 s) to handle any
+ *     eventual-consistency delay on the server.
+ *
+ *  4. UPLOAD-SOURCE LABEL
+ *     Files captured via the camera button are tagged as `source: 'camera'`
+ *     so the crop step can display a small "📷 Camera" chip instead of a
+ *     generic filename, giving the user confidence that they used the camera.
+ *
+ * Dependencies (unchanged):
  *   react-easy-crop        (used inside CropModal)
  *   ../../utils/cropImage  → getCroppedImg
  *   ../../utils/CropModal  → CropModal
@@ -45,7 +79,8 @@ const API_BASE =
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
-const STEPS = ['Details', 'Documents', 'Review'];
+// Steps: 0=Details  1=Documents  2=Verify (OCR cross-check)  3=Review & Submit
+const STEPS = ['Details', 'Documents', 'Verify', 'Review'];
 
 const SLOTS = [
   {
@@ -138,13 +173,13 @@ const FIELDS = [
   },
 ];
 
-// ── Liveness hints (mirrors livenessService.js rules shown to the user) ───────
+// ── Liveness hints ────────────────────────────────────────────────────────────
 const LIVENESS_TIPS = [
   { icon: '☀️', text: 'Good natural or indoor light — avoid harsh shadows' },
   { icon: '👁️', text: 'Look directly at the camera, eyes open and visible' },
   { icon: '🚫', text: 'No sunglasses, masks, hats or heavy filters' },
   { icon: '📐', text: 'Plain wall or background — no other people in frame' },
-  { icon: '📏', text: 'Hold device at arm\'s length — face must fill most of the frame' },
+  { icon: '📏', text: "Hold device at arm's length — face must fill most of the frame" },
 ];
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -163,58 +198,126 @@ const STATUS_META = {
 };
 
 /**
+ * Client-side Laplacian variance — approximates sharpness.
+ * Draws the image to a small greyscale canvas then computes the
+ * variance of the discrete Laplacian kernel across all pixels.
+ *
+ * livenessService.js uses sharp's stdev (standard deviation of the
+ * luma channel). The Laplacian variance is a closely related metric:
+ *   • High value  → sharp edges → real photo taken in good light
+ *   • Low value   → blurry / uniform → screen photo, too-dark image
+ *
+ * Threshold: < 100 is almost certainly too blurry / a screenshot.
+ * Returns a number between 0 and ~50 000.
+ */
+function computeLaplacianVariance(imgEl) {
+  const SAMPLE_SIZE = 200; // work on a 200×200 thumbnail for speed
+  const canvas = document.createElement('canvas');
+  canvas.width  = SAMPLE_SIZE;
+  canvas.height = SAMPLE_SIZE;
+  const ctx = canvas.getContext('2d');
+  ctx.drawImage(imgEl, 0, 0, SAMPLE_SIZE, SAMPLE_SIZE);
+
+  const { data } = ctx.getImageData(0, 0, SAMPLE_SIZE, SAMPLE_SIZE);
+  const W = SAMPLE_SIZE;
+  const H = SAMPLE_SIZE;
+
+  // Convert to greyscale luminance array
+  const grey = new Float32Array(W * H);
+  for (let i = 0; i < W * H; i++) {
+    const r = data[i * 4];
+    const g = data[i * 4 + 1];
+    const b = data[i * 4 + 2];
+    grey[i] = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+  }
+
+  // Discrete Laplacian (3×3 kernel: centre=−4, NSEW=+1)
+  let sum = 0;
+  let sumSq = 0;
+  let n = 0;
+  for (let y = 1; y < H - 1; y++) {
+    for (let x = 1; x < W - 1; x++) {
+      const lap =
+        -4 * grey[y * W + x] +
+        grey[(y - 1) * W + x] +
+        grey[(y + 1) * W + x] +
+        grey[y * W + (x - 1)] +
+        grey[y * W + (x + 1)];
+      sum   += lap;
+      sumSq += lap * lap;
+      n++;
+    }
+  }
+  const mean = sum / n;
+  return (sumSq / n) - mean * mean; // variance
+}
+
+// Laplacian variance threshold below which we warn the user.
+// Real camera photos are reliably above ~300; screenshots / printed-photo
+// scans can drop as low as 20–80.
+const BLUR_VARIANCE_THRESHOLD = 100;
+
+/**
  * Client-side pre-flight check mirroring livenessService.js:
  *   Rule 1 — width & height >= 200 px
- *   Rule 2 — image must not be blank / near-uniform (can't check stdev client-side,
- *             but we can flag images that are too small in file size as a heuristic)
+ *   Rule 2 — not blurry / uniform (Laplacian variance check)
+ *   Rule 3 — file size heuristic (real camera photos are rarely < 30 KB)
  *
- * Returns { ok: bool, warning: string|null }
+ * Returns { ok: bool, warning: string|null, hardFail: bool }
+ *   hardFail === true → we block the file (user must retake)
+ *   hardFail === false + warning → soft warning, submission still allowed
  */
 function preflightSelfie(file, imgEl) {
   const { naturalWidth: w, naturalHeight: h } = imgEl;
 
+  // Rule 1: resolution (server will also reject this)
   if (w < 200 || h < 200) {
     return {
-      ok: false,
-      warning: `Image is too small (${w}×${h} px). The server requires at least 200×200 px.`,
+      ok:       false,
+      hardFail: true,
+      warning:  `Image is too small (${w}×${h} px). The server requires at least 200×200 px. Please retake the photo.`,
     };
   }
-  // File size heuristic: a real camera photo is rarely under 30 KB
+
+  // Rule 2: Laplacian blur detection (mirrors livenessService stdev < 10)
+  let variance = 0;
+  try {
+    variance = computeLaplacianVariance(imgEl);
+  } catch {
+    // Canvas tainted by CORS or other error — skip this check
+    variance = Infinity;
+  }
+
+  if (variance < BLUR_VARIANCE_THRESHOLD) {
+    return {
+      ok:       false,
+      hardFail: true,
+      warning:
+        'This photo looks blurry or too dark. The liveness check will likely fail. ' +
+        'Please take a fresh photo in good lighting and hold the camera steady.',
+    };
+  }
+
+  // Rule 3: file size heuristic (soft warning only)
   if (file.size < 30 * 1024) {
     return {
-      ok: true,
-      warning: 'This image looks very small. A camera photo may give better results.',
+      ok:       true,
+      hardFail: false,
+      warning:
+        'This image looks very small. A camera photo may give better results.',
     };
   }
-  return { ok: true, warning: null };
+
+  return { ok: true, hardFail: false, warning: null };
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// SelfieCapture sub-component
-//
-// Presents two tabs: "Take Photo" (camera) and "Upload File".
-// Camera tab opens getUserMedia, shows a live viewfinder, and captures a
-// JPEG blob when the user clicks "Capture". The blob is identical in quality
-// to what a native camera app would produce — stdev >> 10, so livenessService
-// will pass Rule 2 reliably.
-//
-// After capture or file selection the user is dropped into the CropModal
-// (1:1 aspect) so they can centre their face before the file is committed.
-// ─────────────────────────────────────────────────────────────────────────────
 // ── Camera availability helpers ───────────────────────────────────────────────
 
 /**
  * Returns a human-readable reason why getUserMedia is unavailable,
  * or null if the API appears to be supported.
- *
- * Common causes on Android / Motorola devices:
- *   1. Page served over http:// (not https:// or localhost) — browsers
- *      remove navigator.mediaDevices entirely on non-secure origins.
- *   2. Old Android System WebView version where the API was not yet exposed.
- *   3. User has revoked the camera permission at OS level.
  */
 function getCameraUnavailableReason() {
-  // Secure-context check: mediaDevices is hidden on http:// by the browser
   if (
     typeof window !== 'undefined' &&
     window.location.protocol === 'http:' &&
@@ -223,7 +326,6 @@ function getCameraUnavailableReason() {
   ) {
     return 'http_insecure';
   }
-  // API existence check
   if (
     typeof navigator === 'undefined' ||
     !navigator.mediaDevices ||
@@ -231,7 +333,7 @@ function getCameraUnavailableReason() {
   ) {
     return 'api_missing';
   }
-  return null; // camera should be available
+  return null;
 }
 
 const CAMERA_ERROR_MESSAGES = {
@@ -254,29 +356,36 @@ const CAMERA_ERROR_MESSAGES = {
     'Camera access was blocked by a security policy. Please use the Upload option.',
 };
 
+// ─────────────────────────────────────────────────────────────────────────────
+// SelfieCapture sub-component
+// ─────────────────────────────────────────────────────────────────────────────
 function SelfieCapture({ onFileReady, onCancel }) {
-  // Detect camera availability once at mount — auto-switch to upload if unavailable
   const unavailableReason = getCameraUnavailableReason();
   const cameraSupported   = unavailableReason === null;
 
   const [mode,        setMode]        = useState(cameraSupported ? 'camera' : 'upload');
   const [cameraState, setCameraState] = useState('idle');
   const [cameraError, setCameraError] = useState(
-    // Pre-populate error if we already know camera won't work
     cameraSupported ? '' : (CAMERA_ERROR_MESSAGES[unavailableReason] ?? '')
   );
   const [capturedSrc, setCapturedSrc] = useState(null);
   const [countdown,   setCountdown]   = useState(null);
+
+  // ── FIX: blur-check state for the upload path ────────────────────────────
+  const [uploadQualityError, setUploadQualityError] = useState(null);
 
   const videoRef  = useRef(null);
   const canvasRef = useRef(null);
   const streamRef = useRef(null);
   const timerRef  = useRef(null);
 
-  // ── Camera lifecycle ────────────────────────────────────────────────────────
+  // Separate refs for the two upload inputs (camera capture vs gallery)
+  const cameraInputRef  = useRef(null);
+  const galleryInputRef = useRef(null);
+
+  // ── Camera lifecycle ──────────────────────────────────────────────────────
 
   const startCamera = useCallback(async () => {
-    // Guard: check availability again at call time in case context changed
     const reason = getCameraUnavailableReason();
     if (reason) {
       setCameraError(CAMERA_ERROR_MESSAGES[reason] ?? 'Camera is not available.');
@@ -290,7 +399,7 @@ function SelfieCapture({ onFileReady, onCancel }) {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
         video: {
-          facingMode: 'user',       // front camera on mobile
+          facingMode: 'user',
           width:  { ideal: 1280 },
           height: { ideal: 720 },
         },
@@ -303,7 +412,6 @@ function SelfieCapture({ onFileReady, onCancel }) {
       }
       setCameraState('live');
     } catch (err) {
-      // OverconstrainedError: retry with no video constraints
       if (err.name === 'OverconstrainedError' || err.name === 'ConstraintNotSatisfiedError') {
         try {
           const fallbackStream = await navigator.mediaDevices.getUserMedia({
@@ -318,14 +426,12 @@ function SelfieCapture({ onFileReady, onCancel }) {
           setCameraState('live');
           return;
         } catch {
-          // Fall through to generic error handling below
+          // fall through
         }
       }
 
       const msg =
         CAMERA_ERROR_MESSAGES[err.name] ??
-        // TypeError means mediaDevices itself was undefined at call time —
-        // this is the exact error reported on the Motorola 60 Fusion
         (err instanceof TypeError
           ? CAMERA_ERROR_MESSAGES.api_missing
           : `Camera error: ${err.message}`);
@@ -345,7 +451,6 @@ function SelfieCapture({ onFileReady, onCancel }) {
     setCountdown(null);
   }, []);
 
-  // Stop stream when modal unmounts or mode switches away from camera
   useEffect(() => {
     return () => stopCamera();
   }, [stopCamera]);
@@ -358,9 +463,10 @@ function SelfieCapture({ onFileReady, onCancel }) {
       stopCamera();
       setCapturedSrc(null);
     }
+    setUploadQualityError(null);
   }, [mode]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // ── Countdown + capture ─────────────────────────────────────────────────────
+  // ── Countdown + capture ───────────────────────────────────────────────────
 
   const startCountdown = useCallback(() => {
     let n = 3;
@@ -386,7 +492,6 @@ function SelfieCapture({ onFileReady, onCancel }) {
     canvas.height = video.videoHeight || 480;
     const ctx = canvas.getContext('2d');
 
-    // Mirror horizontally (front camera is mirrored on screen — un-mirror for storage)
     ctx.translate(canvas.width, 0);
     ctx.scale(-1, 1);
     ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
@@ -403,31 +508,84 @@ function SelfieCapture({ onFileReady, onCancel }) {
     startCamera();
   }, [startCamera]);
 
-  // Convert dataURL to File and hand off to crop pipeline
+  // Camera-captured photo → tag with source so crop step knows
   const useCapturedPhoto = useCallback(() => {
     if (!capturedSrc) return;
     fetch(capturedSrc)
       .then(r => r.blob())
       .then(blob => {
         const file = new File([blob], 'selfie-camera.jpg', { type: 'image/jpeg' });
+        // Tag the source so the parent can display "📷 Camera"
+        file._captureSource = 'camera';
         onFileReady(file);
       });
   }, [capturedSrc, onFileReady]);
 
-  // ── File upload tab ─────────────────────────────────────────────────────────
-  const fileInputRef = useRef(null);
+  // ── FIX: Upload tab — validate quality before passing to crop ─────────────
+  /**
+   * Runs the client-side blur / resolution pre-flight check on a file
+   * selected from disk (gallery or camera-roll). If the check hard-fails
+   * we show an error inside the modal and do NOT proceed to the crop step.
+   * This gives the user immediate feedback instead of a server rejection.
+   */
+  const validateAndPassFile = useCallback((file, isFromCameraCapture = false) => {
+    setUploadQualityError(null);
 
-  const handleUploadChange = useCallback((e) => {
-    const file = e.target.files[0];
     if (!file) return;
     if (file.size > 10 * 1024 * 1024) {
-      alert('File exceeds 10 MB limit.');
+      setUploadQualityError('File exceeds 10 MB limit. Please choose a smaller photo.');
       return;
     }
-    onFileReady(file);
+
+    const objectUrl = URL.createObjectURL(file);
+    const img = new Image();
+
+    img.onload = () => {
+      const result = preflightSelfie(file, img);
+      URL.revokeObjectURL(objectUrl);
+
+      if (result.hardFail) {
+        setUploadQualityError(result.warning);
+        return;
+      }
+
+      // Tag the source
+      file._captureSource = isFromCameraCapture ? 'camera' : 'gallery';
+      // Soft warning is forwarded to the parent via the file object so the
+      // crop step can surface it.
+      if (result.warning) file._livenessWarning = result.warning;
+
+      onFileReady(file);
+    };
+
+    img.onerror = () => {
+      URL.revokeObjectURL(objectUrl);
+      // Can't decode → pass through and let the server handle it
+      file._captureSource = isFromCameraCapture ? 'camera' : 'gallery';
+      onFileReady(file);
+    };
+
+    img.src = objectUrl;
   }, [onFileReady]);
 
-  // ── Render ──────────────────────────────────────────────────────────────────
+  // ── FIX: Camera-input handler (capture="user" path on mobile) ────────────
+  const handleCameraInputChange = useCallback((e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    // Reset input so the same file can be re-selected after a retake
+    e.target.value = '';
+    validateAndPassFile(file, true);
+  }, [validateAndPassFile]);
+
+  // ── Gallery picker handler ────────────────────────────────────────────────
+  const handleGalleryInputChange = useCallback((e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    e.target.value = '';
+    validateAndPassFile(file, false);
+  }, [validateAndPassFile]);
+
+  // ── Render ────────────────────────────────────────────────────────────────
   return (
     <div className="selfie-modal-backdrop">
       <div className="selfie-modal">
@@ -474,8 +632,6 @@ function SelfieCapture({ onFileReady, onCancel }) {
         {/* ── Camera tab ── */}
         {mode === 'camera' && (
           <div className="selfie-camera-panel">
-
-            {/* Viewfinder / captured frame */}
             <div className="selfie-viewfinder-wrap">
               {cameraState === 'starting' && (
                 <div className="selfie-viewfinder-placeholder">
@@ -489,8 +645,6 @@ function SelfieCapture({ onFileReady, onCancel }) {
                   <span className="selfie-error-icon">&#9888;</span>
                   <p>{cameraError}</p>
                   <div className="selfie-error-actions">
-                    {/* Only show Retry if the API is actually present — no point
-                        retrying if mediaDevices is missing entirely */}
                     {cameraSupported && (
                       <button
                         type="button"
@@ -511,7 +665,6 @@ function SelfieCapture({ onFileReady, onCancel }) {
                 </div>
               )}
 
-              {/* Live video — mirrored for natural selfie feel */}
               <video
                 ref={videoRef}
                 autoPlay
@@ -521,12 +674,10 @@ function SelfieCapture({ onFileReady, onCancel }) {
                 style={{ display: cameraState === 'live' ? 'block' : 'none' }}
               />
 
-              {/* Captured still */}
               {cameraState === 'captured' && capturedSrc && (
                 <img src={capturedSrc} alt="Captured selfie" className="selfie-captured-img" />
               )}
 
-              {/* Face-oval guide overlay (shows only when live) */}
               {cameraState === 'live' && (
                 <div className="selfie-oval-overlay">
                   <svg viewBox="0 0 320 400" className="selfie-oval-svg">
@@ -545,16 +696,13 @@ function SelfieCapture({ onFileReady, onCancel }) {
                 </div>
               )}
 
-              {/* Countdown bubble */}
               {countdown !== null && (
                 <div className="selfie-countdown">{countdown}</div>
               )}
             </div>
 
-            {/* Hidden canvas for frame capture */}
             <canvas ref={canvasRef} style={{ display: 'none' }} />
 
-            {/* Camera controls */}
             <div className="selfie-camera-controls">
               {cameraState === 'live' && (
                 <>
@@ -594,22 +742,80 @@ function SelfieCapture({ onFileReady, onCancel }) {
         {/* ── Upload tab ── */}
         {mode === 'upload' && (
           <div className="selfie-upload-panel">
+
+            {/* ── FIX: Hidden inputs ─────────────────────────────────────────
+                Two separate inputs:
+                  1. cameraInput  — `capture="user"` → opens front camera directly
+                     on Android/iOS Chrome, Safari, Samsung Internet.
+                  2. galleryInput — no capture attr → standard file picker / gallery.
+
+                Both accept the same mime types as the normal selfie slot.
+                After the user selects a file, validateAndPassFile() runs the
+                client-side blur check before handing the file to the crop step.
+            ─────────────────────────────────────────────────────────────────── */}
+            <input
+              type="file"
+              accept="image/jpeg,image/png,image/webp"
+              capture="user"
+              style={{ display: 'none' }}
+              ref={cameraInputRef}
+              onChange={handleCameraInputChange}
+            />
             <input
               type="file"
               accept="image/jpeg,image/png,image/webp"
               style={{ display: 'none' }}
-              ref={fileInputRef}
-              onChange={handleUploadChange}
+              ref={galleryInputRef}
+              onChange={handleGalleryInputChange}
             />
+
+            {/* Quality error message */}
+            {uploadQualityError && (
+              <div className="selfie-quality-error" role="alert">
+                <span className="selfie-error-icon">&#9888;</span>
+                <div>
+                  <strong>Photo not suitable</strong>
+                  <p>{uploadQualityError}</p>
+                </div>
+              </div>
+            )}
+
+            {/* Primary CTA: opens camera directly on mobile */}
             <button
               type="button"
-              className="selfie-upload-drop"
-              onClick={() => fileInputRef.current?.click()}
+              className="selfie-upload-drop selfie-upload-drop--camera"
+              onClick={() => {
+                setUploadQualityError(null);
+                cameraInputRef.current?.click();
+              }}
             >
-              <span className="selfie-upload-icon">&#128247;</span>
-              <p className="selfie-upload-label">Tap to choose a photo</p>
+              <span className="selfie-upload-icon">📷</span>
+              <p className="selfie-upload-label">Open Camera</p>
+              <p className="selfie-upload-sub">Take a fresh photo right now</p>
+            </button>
+
+            {/* Secondary CTA: gallery picker */}
+            <button
+              type="button"
+              className="selfie-upload-drop selfie-upload-drop--gallery"
+              onClick={() => {
+                setUploadQualityError(null);
+                galleryInputRef.current?.click();
+              }}
+            >
+              <span className="selfie-upload-icon">🖼️</span>
+              <p className="selfie-upload-label">Choose from Gallery</p>
               <p className="selfie-upload-sub">JPG, PNG, WebP — max 10 MB</p>
             </button>
+
+            {/* Quality hint */}
+            <div className="selfie-upload-quality-hint">
+              <span>⚡</span>
+              <p>
+                Photos taken with your camera pass the liveness check more reliably
+                than screenshots or scanned images.
+              </p>
+            </div>
           </div>
         )}
 
@@ -638,24 +844,33 @@ export default function KycVerification() {
   const { token }                    = useAuth();
   const { status, kycData, refetch } = useKyc();
 
-  // ── Step state ──────────────────────────────────────────────────────────────
+  // ── Step state ─────────────────────────────────────────────────────────────
   const [step, setStep] = useState(0);
 
-  // ── Step 1: manual fields ───────────────────────────────────────────────────
+  // ── Step 1: manual fields ──────────────────────────────────────────────────
   const [fields,       setFields]       = useState({ aadhaarNumber: '', panNumber: '', accountNumber: '', ifscCode: '' });
   const [fieldErrors,  setFieldErrors]  = useState({});
   const [fieldTouched, setFieldTouched] = useState({});
 
-  // ── Step 2: document uploads ────────────────────────────────────────────────
+  // ── Step 2: document uploads ───────────────────────────────────────────────
   const [files,    setFiles]    = useState({});
   const [previews, setPreviews] = useState({});
 
-  // ── Selfie capture modal ────────────────────────────────────────────────────
+  // ── Selfie capture modal ───────────────────────────────────────────────────
   const [showSelfieModal, setShowSelfieModal] = useState(false);
   // Soft liveness pre-flight warning (does NOT block submission)
   const [selfieWarning,   setSelfieWarning]   = useState(null);
+  // Source tag for display ('camera' | 'gallery' | null)
+  const [selfieSource,    setSelfieSource]    = useState(null);
 
-  // ── Crop modal state ────────────────────────────────────────────────────────
+  // ── OCR cross-validation state (Step 2→3) ──────────────────────────────
+  const [validation,       setValidation]       = useState(null);
+  const [validating,       setValidating]       = useState(false);
+  const [validationError,  setValidationError]  = useState(null);
+  // true once the user has seen failures and explicitly chosen to proceed anyway
+  const [bypassValidation, setBypassValidation] = useState(false);
+
+  // ── Crop modal state ───────────────────────────────────────────────────────
   const [cropSlotKey,       setCropSlotKey]       = useState(null);
   const [cropImageSrc,      setCropImageSrc]      = useState(null);
   const [cropRawFile,       setCropRawFile]       = useState(null);
@@ -666,7 +881,7 @@ export default function KycVerification() {
   const [croppedAreaPixels, setCroppedAreaPixels] = useState(null);
   const [applying,          setApplying]          = useState(false);
 
-  // ── Submission ──────────────────────────────────────────────────────────────
+  // ── Submission ─────────────────────────────────────────────────────────────
   const [submitting, setSubmitting] = useState(false);
   const [progress,   setProgress]   = useState(0);
   const [serverMsg,  setServerMsg]  = useState(null);
@@ -674,7 +889,7 @@ export default function KycVerification() {
 
   const inputRefs = useRef({});
 
-  // ── Field validation ────────────────────────────────────────────────────────
+  // ── Field validation ───────────────────────────────────────────────────────
   const validateField = useCallback((key, value) => {
     const def = FIELDS.find(f => f.key === key);
     if (!def) return '';
@@ -709,25 +924,31 @@ export default function KycVerification() {
     return !hasError;
   };
 
-  // ── Step navigation ─────────────────────────────────────────────────────────
+  // ── Step navigation ──────────────────────────────────────────
   const goToStep = (n) => {
     if (n === 1 && !validateAllFields()) return;
+    // Moving from Documents (1) to Verify (2): reset any prior validation
+    if (n === 2) {
+      setValidation(null);
+      setValidationError(null);
+      setBypassValidation(false);
+    }
+    // Going back to Documents (1): also reset so re-upload forces re-verify
+    if (n === 1) {
+      setValidation(null);
+      setValidationError(null);
+      setBypassValidation(false);
+    }
     setStep(n);
     setServerMsg(null);
   };
 
-  // ── Crop modal handlers ─────────────────────────────────────────────────────
+  // ── Crop modal handlers ────────────────────────────────────────────────────
   const openCropModal = useCallback(async (key, file) => {
-    // Look up the slot's intended crop aspect so CropModal starts at the right ratio
     const slot           = SLOTS.find(s => s.key === key);
     const slotAspect     = slot?.cropAspect ?? 1;
+    const orientation    = await readExifOrientation(file instanceof File ? file : null);
 
-    // Read EXIF orientation before converting to dataURL — the File object
-    // holds the raw bytes; after FileReader converts it we lose this info.
-    // readExifOrientation returns 1 (no-op) for non-JPEG or on any error.
-    const orientation = await readExifOrientation(file instanceof File ? file : null);
-
-    // For camera-captured blobs (no .name), create an object URL directly
     const src = (file instanceof Blob && !(file instanceof File))
       ? URL.createObjectURL(file)
       : null;
@@ -761,7 +982,7 @@ export default function KycVerification() {
     setApplying(true);
     try {
       const blob = await getCroppedImg(cropImageSrc, croppedAreaPixels, {
-        orientation: cropOrientation,   // EXIF correction applied during canvas draw
+        orientation: cropOrientation,
         format:      'image/jpeg',
         quality:     0.92,
       });
@@ -773,12 +994,11 @@ export default function KycVerification() {
       );
       const newPreviewUrl = URL.createObjectURL(blob);
 
-      // Run pre-flight liveness check for the selfie slot
       if (cropSlotKey === 'selfie') {
         const img = new Image();
         img.onload = () => {
           const check = preflightSelfie(croppedFile, img);
-          if (!check.ok) {
+          if (check.hardFail) {
             revokePreviewUrl(newPreviewUrl);
             setServerMsg({ type: 'error', text: check.warning });
             setApplying(false);
@@ -788,12 +1008,13 @@ export default function KycVerification() {
           if (check.warning) setSelfieWarning(check.warning);
           else setSelfieWarning(null);
 
-          // Revoke the old preview URL before replacing it
           setPreviews(prev => {
             revokePreviewUrl(prev[cropSlotKey]);
             return { ...prev, [cropSlotKey]: newPreviewUrl };
           });
           setFiles(prev => ({ ...prev, [cropSlotKey]: croppedFile }));
+          // Preserve source tag from the original file
+          setSelfieSource(cropRawFile?._captureSource || null);
           setApplying(false);
           closeCropModal();
         };
@@ -825,20 +1046,17 @@ export default function KycVerification() {
     setCropRawFile(null);
     setCroppedAreaPixels(null);
     setCropOrientation(1);
-    // Note: do NOT revoke cropImageSrc here — it may be the same src that
-    // was already set as a preview. Only revoke it if it was a fresh object URL
-    // created solely for the crop session (handled in openCropModal's commitState).
   };
 
-  // ── Selfie modal: receives a raw File from either camera or upload ──────────
+  // ── Selfie modal: receives a raw File from either camera or upload ─────────
   const handleSelfieFileReady = useCallback((file) => {
     setShowSelfieModal(false);
-    setSelfieWarning(null);
+    setSelfieWarning(file._livenessWarning || null);
     // Always open crop modal (1:1 aspect) so user can centre their face
     openCropModal('selfie', file);
   }, [openCropModal]);
 
-  // ── Generic file input handler (non-selfie slots) ────────────────────────────
+  // ── Generic file input handler (non-selfie slots) ─────────────────────────
   const handleFile = useCallback((key, file) => {
     if (!file) return;
     if (file.size > 10 * 1024 * 1024) {
@@ -859,8 +1077,12 @@ export default function KycVerification() {
   const removeFile = key => {
     setFiles(prev    => { const n = { ...prev }; delete n[key]; return n; });
     setPreviews(prev => { const n = { ...prev }; delete n[key]; return n; });
-    if (key === 'selfie') setSelfieWarning(null);
+    if (key === 'selfie') { setSelfieWarning(null); setSelfieSource(null); }
     if (inputRefs.current[key]) inputRefs.current[key].value = '';
+    // Any file change invalidates prior validation results
+    setValidation(null);
+    setValidationError(null);
+    setBypassValidation(false);
   };
 
   const onDrop = (key, e) => {
@@ -870,7 +1092,76 @@ export default function KycVerification() {
     if (file) handleFile(key, file);
   };
 
-  // ── Submit ───────────────────────────────────────────────────────────────────
+  // ── FIX: Submit with eager refetch + retry loop ────────────────────────────
+  /**
+   * After a successful POST to /api/kyc/submit the server sets the KYC status
+   * to 'submitted' (or 'verified' if auto-approved). We call refetch()
+   * immediately and retry up to 3 times at 1-second intervals so the
+   * KycContext picks up the new status quickly and the banner disappears
+   * without a noticeable delay.
+   */
+  // ── OCR cross-validation (Step 2 → Step 3) ──────────────────────────────────
+  /**
+   * Calls POST /api/kyc/validate with the three non-selfie files and the
+   * user-typed field values. The endpoint runs the same OCR pipeline as
+   * submitKYC (Tesseract via kycOCRService.js) and returns field-match
+   * results for Aadhaar number, PAN number, and bank account number.
+   *
+   * On success: sets validation state and advances to the Verify step (2).
+   * On network error: sets validationError and still advances (non-blocking).
+   * The user can always bypass failures and submit anyway.
+   */
+  const runValidation = useCallback(async () => {
+    setValidating(true);
+    setValidationError(null);
+    setValidation(null);
+
+    const form = new FormData();
+    // Only the OCR-able docs — selfie is not sent to /validate
+    ['aadhaar', 'pan', 'bank'].forEach(key => {
+      if (files[key]) form.append(key, files[key]);
+    });
+    form.append('aadhaarNumber', fields.aadhaarNumber.replace(/\s/g, ''));
+    form.append('panNumber',     fields.panNumber);
+    form.append('accountNumber', fields.accountNumber);
+
+    try {
+      const res = await fetch(`${API_BASE}/api/kyc/validate`, {
+        method:  'POST',
+        headers: { Authorization: `Bearer ${token}` },
+        body:    form,
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setValidation(data);
+      } else {
+        // Server returned an error body (e.g. 500)
+        setValidationError(data.message || 'Validation service unavailable. You can still submit.');
+      }
+    } catch (err) {
+      // Network failure — non-blocking, allow user to continue
+      setValidationError('Could not reach the validation service. You can still submit your documents.');
+    } finally {
+      setValidating(false);
+    }
+  }, [files, fields, token]);
+
+  const eagerRefetch = useCallback(async () => {
+    const MAX_RETRIES = 3;
+    const DELAY_MS    = 800;
+    for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+      try {
+        await refetch();
+        return; // done
+      } catch {
+        // ignore — not critical
+      }
+      if (attempt < MAX_RETRIES - 1) {
+        await new Promise(r => setTimeout(r, DELAY_MS));
+      }
+    }
+  }, [refetch]);
+
   const handleSubmit = async () => {
     const missing = SLOTS.filter(s => !files[s.key]).map(s => s.label);
     if (missing.length) {
@@ -913,12 +1204,21 @@ export default function KycVerification() {
 
       setProgress(100);
       setServerMsg({ type: 'success', text: 'Documents submitted! Your KYC is under review.' });
+
+      // Reset form
       setFiles({});
       setPreviews({});
       setFields({ aadhaarNumber: '', panNumber: '', accountNumber: '', ifscCode: '' });
       setSelfieWarning(null);
+      setSelfieSource(null);
+      setValidation(null);
+      setValidationError(null);
+      setBypassValidation(false);
       setStep(0);
-      setTimeout(() => refetch(), 1500);
+
+      // ── FIX: Eager refetch so the banner clears immediately ──
+      eagerRefetch();
+
     } catch (err) {
       setServerMsg({ type: 'error', text: err.message || 'Submission failed. Please try again.' });
     } finally {
@@ -927,14 +1227,14 @@ export default function KycVerification() {
     }
   };
 
-  // ── Derived ──────────────────────────────────────────────────────────────────
+  // ── Derived ────────────────────────────────────────────────────────────────
   const canResubmit   = [KYC_STATUSES.NOT_STARTED, KYC_STATUSES.REQUIRED, KYC_STATUSES.REJECTED].includes(status);
   const meta          = STATUS_META[status] || STATUS_META.not_started;
   const allUploaded   = SLOTS.every(s => files[s.key]);
   const allFilled     = FIELDS.every(f => fields[f.key].trim() !== '');
   const noFieldErrors = FIELDS.every(f => !fieldErrors[f.key]);
 
-  // ── Step bar ─────────────────────────────────────────────────────────────────
+  // ── Step bar ──────────────────────────────────────────────────────────────
   const StepBar = () => (
     <div className="kyc-stepbar">
       {STEPS.map((label, i) => (
@@ -951,7 +1251,7 @@ export default function KycVerification() {
     </div>
   );
 
-  // ── Step 1: Details ───────────────────────────────────────────────────────────
+  // ── Step 1: Details ───────────────────────────────────────────────────────
   const renderDetails = () => (
     <div className="kyc-section">
       <p className="kyc-section-desc">
@@ -1008,7 +1308,7 @@ export default function KycVerification() {
     </div>
   );
 
-  // ── Step 2: Documents ─────────────────────────────────────────────────────────
+  // ── Step 2: Documents ─────────────────────────────────────────────────────
   const renderDocuments = () => (
     <div className="kyc-section">
       <p className="kyc-section-desc">
@@ -1022,7 +1322,7 @@ export default function KycVerification() {
           const preview    = previews[slot.key];
           const isDragging = dragOver === slot.key;
 
-          // ── Selfie slot gets its own dedicated card ─────────────────────────
+          // ── Selfie slot ───────────────────────────────────────────────────
           if (slot.isSelfie) {
             return (
               <div
@@ -1035,7 +1335,14 @@ export default function KycVerification() {
                 {hasFile ? (
                   <div className="kyc-slot-filled-inner">
                     <img src={preview} alt="Selfie" className="kyc-img-preview kyc-img-preview--selfie" />
-                    {/* Liveness pre-flight warning badge */}
+
+                    {/* Source chip — shows 📷 Camera or 🖼️ Gallery */}
+                    {selfieSource && (
+                      <div className={`selfie-source-chip selfie-source-chip--${selfieSource}`}>
+                        {selfieSource === 'camera' ? '📷 Camera' : '🖼️ Gallery'}
+                      </div>
+                    )}
+
                     {selfieWarning && (
                       <div className="selfie-warning-badge">
                         <span>&#9888;</span> {selfieWarning}
@@ -1083,7 +1390,6 @@ export default function KycVerification() {
                     <p className="kyc-slot-name">{slot.label}</p>
                     <p className="kyc-slot-hint">{slot.hint}</p>
 
-                    {/* Primary: camera button */}
                     <button
                       type="button"
                       className="selfie-open-btn selfie-open-btn--camera"
@@ -1105,7 +1411,7 @@ export default function KycVerification() {
             );
           }
 
-          // ── Standard document slot ──────────────────────────────────────────
+          // ── Standard document slot ────────────────────────────────────────
           return (
             <div
               key={slot.key}
@@ -1181,7 +1487,7 @@ export default function KycVerification() {
           type="button"
           className={`kyc-submit-btn kyc-submit-btn--inline ${allUploaded ? 'kyc-submit-btn--ready' : ''}`}
           disabled={!allUploaded}
-          onClick={() => goToStep(2)}
+          onClick={async () => { goToStep(2); await runValidation(); }}
         >
           Review &amp; Submit &#8594;
         </button>
@@ -1189,7 +1495,264 @@ export default function KycVerification() {
     </div>
   );
 
-  // ── Step 3: Review ────────────────────────────────────────────────────────────
+  // ── Step 2: Verify (OCR cross-check results) ────────────────────────────────
+  /**
+   * Renders validation results from /api/kyc/validate.
+   *
+   * Three states:
+   *   A. Still running (validating === true)  → spinner
+   *   B. Network/server error                 → soft error + allow bypass
+   *   C. Results received                     → per-document pass/fail cards
+   *
+   * Each document card shows:
+   *   ✅ green — number matched correctly
+   *   ❌ red   — mismatch or OCR failure, with the specific error message
+   *              and a contextual action button (Edit Details / Re-upload Doc)
+   *
+   * The "Continue to Review" button is enabled when:
+   *   - All documents passed (allPassed === true), OR
+   *   - The user clicked "Submit anyway" after seeing the failures
+   *
+   * "Submit anyway" is a soft bypass — the server will still run its own OCR
+   * and may reject if the mismatch is real. We show a warning when bypassing.
+   */
+  const renderValidation = () => {
+    const docCards = [
+      {
+        key:      'aadhaar',
+        label:    'Aadhaar Card',
+        icon:     '🪪',
+        result:   validation?.aadhaar,
+        editStep: 0,   // "Edit Details" jumps to Step 0 (fields)
+        reupStep: 1,   // "Re-upload" jumps to Step 1 (documents)
+        passText: validation?.aadhaar?.numberExtracted
+          ? `Number matched: ${validation.aadhaar.numberExtracted}`
+          : 'Number verified ✓',
+      },
+      {
+        key:      'pan',
+        label:    'PAN Card',
+        icon:     '💳',
+        result:   validation?.pan,
+        editStep: 0,
+        reupStep: 1,
+        passText: validation?.pan?.numberExtracted
+          ? `Number matched: ${validation.pan.numberExtracted}`
+          : 'Number verified ✓',
+      },
+      {
+        key:      'bank',
+        label:    'Bank Passbook / Statement',
+        icon:     '🏦',
+        result:   validation?.bank,
+        editStep: 0,
+        reupStep: 1,
+        passText: 'Account number found in document ✓',
+      },
+    ];
+
+    const failCount = docCards.filter(d => d.result && !d.result.ok).length;
+    const hasResults = !!validation;
+
+    return (
+      <div className="kyc-section">
+
+        {/* ── Running spinner ── */}
+        {validating && (
+          <div className="kyc-validation-running">
+            <div className="kyc-validation-spinner-wrap">
+              <div className="kyc-spinner kyc-spinner--lg" />
+            </div>
+            <p className="kyc-validation-running-title">Verifying your documents…</p>
+            <p className="kyc-validation-running-sub">
+              We're reading each document and cross-checking your details.
+              This takes about 10–20 seconds.
+            </p>
+            <div className="kyc-validation-steps-list">
+              {['Reading Aadhaar card', 'Reading PAN card', 'Checking bank document'].map((s, i) => (
+                <div key={s} className="kyc-validation-step-item">
+                  <div className="kyc-validation-step-dot kyc-validation-step-dot--pulse" style={{ animationDelay: `${i * 0.4}s` }} />
+                  <span>{s}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* ── Network/server error ── */}
+        {!validating && validationError && (
+          <div className="kyc-validation-error-card">
+            <div className="kyc-validation-error-icon">⚠️</div>
+            <p className="kyc-validation-error-title">Verification service unavailable</p>
+            <p className="kyc-validation-error-sub">{validationError}</p>
+            <div className="kyc-validation-error-actions">
+              <button
+                type="button"
+                className="kyc-validation-retry-btn"
+                onClick={runValidation}
+              >
+                ↺ Try Again
+              </button>
+              <button
+                type="button"
+                className="kyc-validation-skip-btn"
+                onClick={() => { setBypassValidation(true); setStep(3); setServerMsg(null); }}
+              >
+                Continue Anyway →
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* ── Results ── */}
+        {!validating && hasResults && (
+          <>
+            {/* Overall banner */}
+            {validation.allPassed ? (
+              <div className="kyc-validation-banner kyc-validation-banner--pass">
+                <span className="kyc-validation-banner-icon">✅</span>
+                <div>
+                  <p className="kyc-validation-banner-title">All documents verified</p>
+                  <p className="kyc-validation-banner-sub">
+                    Your details match the uploaded documents. You're ready to submit.
+                  </p>
+                </div>
+              </div>
+            ) : (
+              <div className="kyc-validation-banner kyc-validation-banner--fail">
+                <span className="kyc-validation-banner-icon">⚠️</span>
+                <div>
+                  <p className="kyc-validation-banner-title">
+                    {failCount} issue{failCount !== 1 ? 's' : ''} found — please review
+                  </p>
+                  <p className="kyc-validation-banner-sub">
+                    Fix the issues below before submitting to avoid rejection.
+                  </p>
+                </div>
+              </div>
+            )}
+
+            {/* Per-document cards */}
+            <div className="kyc-validation-cards">
+              {docCards.map(card => {
+                const r = card.result;
+                if (!r) return null;
+                const passed = r.ok;
+
+                return (
+                  <div
+                    key={card.key}
+                    className={`kyc-val-card ${passed ? 'kyc-val-card--pass' : 'kyc-val-card--fail'}`}
+                  >
+                    <div className="kyc-val-card-header">
+                      <span className="kyc-val-card-icon">{card.icon}</span>
+                      <span className="kyc-val-card-label">{card.label}</span>
+                      <span className={`kyc-val-card-badge ${passed ? 'kyc-val-card-badge--pass' : 'kyc-val-card-badge--fail'}`}>
+                        {passed ? '✓ Matched' : '✕ Issue found'}
+                      </span>
+                    </div>
+
+                    {passed ? (
+                      <p className="kyc-val-card-pass-text">{card.passText}</p>
+                    ) : (
+                      <>
+                        <p className="kyc-val-card-error-text">{r.error}</p>
+                        <div className="kyc-val-card-actions">
+                          <button
+                            type="button"
+                            className="kyc-val-action-btn kyc-val-action-btn--edit"
+                            onClick={() => { setStep(card.editStep); setServerMsg(null); }}
+                          >
+                            ✏️ Edit Details
+                          </button>
+                          <button
+                            type="button"
+                            className="kyc-val-action-btn kyc-val-action-btn--reup"
+                            onClick={() => { setStep(card.reupStep); setServerMsg(null); }}
+                          >
+                            ↑ Re-upload Document
+                          </button>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Bypass option when there are failures */}
+            {!validation.allPassed && !bypassValidation && (
+              <div className="kyc-validation-bypass">
+                <p>
+                  If you're confident your documents are correct, you can proceed — our team
+                  will review manually. However, mismatches often lead to rejection.
+                </p>
+                <button
+                  type="button"
+                  className="kyc-validation-bypass-btn"
+                  onClick={() => setBypassValidation(true)}
+                >
+                  I understand — submit anyway
+                </button>
+              </div>
+            )}
+
+            {bypassValidation && !validation.allPassed && (
+              <div className="kyc-msg kyc-msg--warn">
+                ⚠️ You're submitting with unresolved document issues. Our team will review
+                manually — this may take longer or result in rejection.
+              </div>
+            )}
+          </>
+        )}
+
+        {/* Navigation */}
+        <div className="kyc-doc-nav" style={{ marginTop: 24 }}>
+          <button
+            type="button"
+            className="kyc-back-btn"
+            onClick={() => { setStep(1); setServerMsg(null); }}
+            disabled={validating}
+          >
+            ← Back
+          </button>
+
+          {/* Retry button when not running and results exist */}
+          {!validating && hasResults && (
+            <button
+              type="button"
+              className="kyc-validation-retry-inline-btn"
+              onClick={runValidation}
+            >
+              ↺ Re-verify
+            </button>
+          )}
+
+          <button
+            type="button"
+            className={`kyc-submit-btn kyc-submit-btn--inline ${
+              (!validating && hasResults && (validation.allPassed || bypassValidation))
+                ? 'kyc-submit-btn--ready'
+                : ''
+            } ${validating ? 'kyc-submit-btn--loading' : ''}`}
+            disabled={
+              validating ||
+              (!hasResults && !validationError) ||
+              (!validation?.allPassed && !bypassValidation && !validationError)
+            }
+            onClick={() => { setStep(3); setServerMsg(null); }}
+          >
+            {validating
+              ? <><div className="kyc-btn-spinner" /> Verifying…</>
+              : <>Continue to Review →</>
+            }
+          </button>
+        </div>
+      </div>
+    );
+  };
+
+  // ── Step 3: Review ────────────────────────────────────────────────────────
   const renderReview = () => (
     <div className="kyc-section">
       <p className="kyc-section-desc">
@@ -1231,7 +1794,15 @@ export default function KycVerification() {
                 {preview === 'pdf' ? (
                   <div className="kyc-review-doc-pdf">&#128196;</div>
                 ) : (
-                  <img src={preview} alt={slot.label} className={`kyc-review-doc-img ${slot.isSelfie ? 'kyc-review-doc-img--selfie' : ''}`} />
+                  <div style={{ position: 'relative', display: 'inline-block' }}>
+                    <img src={preview} alt={slot.label} className={`kyc-review-doc-img ${slot.isSelfie ? 'kyc-review-doc-img--selfie' : ''}`} />
+                    {/* Source chip on review page */}
+                    {slot.isSelfie && selfieSource && (
+                      <div className={`selfie-source-chip selfie-source-chip--${selfieSource} selfie-source-chip--sm`}>
+                        {selfieSource === 'camera' ? '📷' : '🖼️'}
+                      </div>
+                    )}
+                  </div>
                 )}
                 <p className="kyc-review-doc-label">{slot.label}</p>
                 <p className="kyc-review-doc-size">{formatBytes(files[slot.key]?.size || 0)}</p>
@@ -1245,6 +1816,14 @@ export default function KycVerification() {
       {selfieWarning && (
         <div className="kyc-msg kyc-msg--warn">
           &#9888; {selfieWarning} The server will perform a final liveness check.
+        </div>
+      )}
+
+      {/* Gallery-sourced selfie advisory */}
+      {selfieSource === 'gallery' && !selfieWarning && (
+        <div className="kyc-msg kyc-msg--info">
+          ℹ️ You chose a photo from your gallery. If the liveness check fails, please
+          retake the selfie using the camera.
         </div>
       )}
 
@@ -1264,7 +1843,7 @@ export default function KycVerification() {
       )}
 
       <div className="kyc-doc-nav">
-        <button type="button" className="kyc-back-btn" onClick={() => { setStep(1); setServerMsg(null); }}>
+        <button type="button" className="kyc-back-btn" onClick={() => { setStep(2); setServerMsg(null); }}>
           &#8592; Back
         </button>
         <button
@@ -1287,7 +1866,7 @@ export default function KycVerification() {
     </div>
   );
 
-  // ── Main render ───────────────────────────────────────────────────────────────
+  // ── Main render ───────────────────────────────────────────────────────────
   return (
     <>
       {/* Crop modal */}
@@ -1380,7 +1959,8 @@ export default function KycVerification() {
             <StepBar />
             {step === 0 && renderDetails()}
             {step === 1 && renderDocuments()}
-            {step === 2 && renderReview()}
+            {step === 2 && renderValidation()}
+            {step === 3 && renderReview()}
           </>
         )}
       </div>

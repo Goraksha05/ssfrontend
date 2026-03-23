@@ -1,17 +1,11 @@
-// UserReferrals.jsx — Full referral reward UI with two-tier milestone structure
-//
-// Referral JSON structure (plan-aware):
-//   Big milestones  (3, 6, 10): groceryCoupons + shares + referralToken
-//   Token milestones (11–30):   referralToken only (200/280/360 per plan)
-//
-// Progress bar tracks toward the next BIG milestone (3→6→10) first,
-// then surfaces token milestones individually after 10.
-
+// UserReferrals.jsx — Redesigned with KYC + subscription eligibility enforcement
 import React, { useContext, useEffect, useState, useMemo } from "react";
+import { useNavigate } from "react-router-dom";
 import { StreakContext } from "../../Context/Activity/StreakContext";
 import { useReferral } from "../../Context/Activity/ReferralContext";
 import { useAuth } from "../../Context/Authorisation/AuthContext";
 import usePlanSlabs from "../../hooks/usePlanSlabs";
+import { useRewardEligibility } from "../../hooks/useRewardEligibility";
 import ShareModal from "./ShareModal";
 import { toast } from "react-toastify";
 import apiRequest from "../../utils/apiRequest";
@@ -20,25 +14,84 @@ import "./Rewards.css";
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 
-/* ── Milestone classifier ── */
 const isBigMilestone   = (s) => s.groceryCoupons > 0 || s.shares > 0;
 const isTokenMilestone = (s) => s.groceryCoupons === 0 && s.shares === 0 && s.referralToken > 0;
 
+/* ── Eligibility banner ──────────────────────────────────────────────────────── */
+function ReferralEligibilityBanner({ kycGate, subscriptionGate, blockerCode }) {
+  const navigate = useNavigate();
+
+  const BannerRow = ({ icon, label, sub, ctaLabel, ctaPath, variant }) => (
+    <div className={`referral-eligibility-row referral-eligibility-row--${variant}`}>
+      <span className="referral-eligibility-row__icon">{icon}</span>
+      <div className="referral-eligibility-row__body">
+        <p className="referral-eligibility-row__label">{label}</p>
+        {sub && <p className="referral-eligibility-row__sub">{sub}</p>}
+      </div>
+      {ctaLabel && (
+        <button
+          className="referral-eligibility-row__cta"
+          onClick={() => navigate(ctaPath)}
+        >
+          {ctaLabel} →
+        </button>
+      )}
+    </div>
+  );
+
+  return (
+    <div className="referral-eligibility-card">
+      <p className="referral-eligibility-card__title">🔒 Referral rewards locked</p>
+      {(!kycGate.passed) && (
+        <BannerRow
+          icon={kycGate.status === "submitted" ? "⏳" : "🛡️"}
+          label={kycGate.status === "submitted" ? "KYC under review" : "KYC verification required"}
+          sub={kycGate.message}
+          ctaLabel={kycGate.status !== "submitted" ? kycGate.ctaLabel : null}
+          ctaPath={kycGate.ctaPath}
+          variant={kycGate.status === "submitted" ? "info" : "error"}
+        />
+      )}
+      {(!subscriptionGate.passed) && (
+        <BannerRow
+          icon="💳"
+          label={subscriptionGate.label}
+          sub={subscriptionGate.message}
+          ctaLabel={subscriptionGate.ctaLabel}
+          ctaPath={subscriptionGate.ctaPath}
+          variant="warn"
+        />
+      )}
+    </div>
+  );
+}
+
+/* ── Main component ──────────────────────────────────────────────────────────── */
 const UserReferrals = ({ onActivityRecorded }) => {
-  const { user } = useAuth();
+  const { user }    = useAuth();
+  const navigate    = useNavigate();
   const { activities } = useContext(StreakContext);
   const { referralCount = 0, fetchReferralData, referredUsers = [] } = useReferral();
 
   const { slabs: rawSlabs } = usePlanSlabs("referral");
 
-  const sortedSlabs = useMemo(() =>
+  const {
+    eligible,
+    checking,
+    kycGate,
+    subscriptionGate,
+    blockerCode,
+    parseClaimError,
+  } = useRewardEligibility();
+
+  const sortedSlabs  = useMemo(() =>
     [...rawSlabs]
       .filter(s => typeof s.referralCount === "number")
       .sort((a, b) => a.referralCount - b.referralCount),
     [rawSlabs]
   );
-  const bigSlabs   = useMemo(() => sortedSlabs.filter(isBigMilestone),   [sortedSlabs]);
-  const tokenSlabs = useMemo(() => sortedSlabs.filter(isTokenMilestone), [sortedSlabs]);
+  const bigSlabs    = useMemo(() => sortedSlabs.filter(isBigMilestone),   [sortedSlabs]);
+  const tokenSlabs  = useMemo(() => sortedSlabs.filter(isTokenMilestone), [sortedSlabs]);
 
   const [selectedSlab,     setSelectedSlab]     = useState(null);
   const [claimedSlabs,     setClaimedSlabs]     = useState([]);
@@ -47,21 +100,18 @@ const UserReferrals = ({ onActivityRecorded }) => {
   const [showReferredList, setShowReferredList] = useState(false);
   const [showTokenSlabs,   setShowTokenSlabs]   = useState(false);
 
-  const token = localStorage.getItem("token");
-
+  const token      = localStorage.getItem("token");
   const referralId = user?.referralId;
   const inviteLink = referralId
     ? `${window.location.origin}/invite/${referralId}`
     : `${window.location.origin}/invite`;
 
-  const isUserSubscribed  = !!user?.subscription?.active;
   const activeReferrals   = referredUsers.filter(u => u.subscription?.active);
   const inactiveReferrals = referredUsers.filter(u => !u.subscription?.active);
   const activeCount       = activeReferrals.length;
 
-  // ── Claimed slabs ─────────────────────────────────────────────────────────
   useEffect(() => {
-    const fromUser = (user?.redeemedReferralSlabs ?? []).map(Number).filter(Boolean);
+    const fromUser     = (user?.redeemedReferralSlabs ?? []).map(Number).filter(Boolean);
     const fromActivity = Array.isArray(activities)
       ? activities
           .filter(a => a?.type === "referral_reward" && a.slabAwarded != null)
@@ -70,7 +120,6 @@ const UserReferrals = ({ onActivityRecorded }) => {
     setClaimedSlabs([...new Set([...fromUser, ...fromActivity])]);
   }, [activities, user]);
 
-  // ── Progress toward next BIG milestone ───────────────────────────────────
   const nextBig = bigSlabs.find(s => activeCount < s.referralCount);
   const prevBig = [...bigSlabs].reverse().find(s => activeCount >= s.referralCount);
   const bigProgress = nextBig
@@ -81,8 +130,11 @@ const UserReferrals = ({ onActivityRecorded }) => {
     s => activeCount >= s.referralCount && !claimedSlabs.includes(s.referralCount)
   );
 
-  // ── Claim handler ─────────────────────────────────────────────────────────
   const handleClaim = async (bankDetails, closeModal) => {
+    if (!eligible) {
+      toast.warn("Complete KYC and subscribe to claim rewards.");
+      return;
+    }
     setLoading(true);
     try {
       const res = await apiRequest.post(
@@ -96,23 +148,24 @@ const UserReferrals = ({ onActivityRecorded }) => {
       setSelectedSlab(null);
       closeModal();
     } catch (err) {
-      toast.error(err?.response?.data?.message || "❌ Failed to claim reward.");
+      toast.error(parseClaimError(err) || "❌ Failed to claim reward.");
     } finally {
       setLoading(false);
     }
   };
 
-  // ── Claim gate ────────────────────────────────────────────────────────────
-  const canClaim = isUserSubscribed &&
+  const canClaim =
+    eligible &&
     selectedSlab != null &&
     !claimedSlabs.includes(selectedSlab) &&
     activeCount >= selectedSlab;
 
   let disabledReason = "";
-  if (!isUserSubscribed)                        disabledReason = "Active subscription required";
-  else if (!selectedSlab)                       disabledReason = "Select a milestone first";
-  else if (claimedSlabs.includes(selectedSlab)) disabledReason = "Already claimed";
-  else if (activeCount < selectedSlab)          disabledReason = `Need ${selectedSlab} active referrals (you have ${activeCount})`;
+  if (eligible) {
+    if (!selectedSlab)                       disabledReason = "Select a milestone first";
+    else if (claimedSlabs.includes(selectedSlab)) disabledReason = "Already claimed";
+    else if (activeCount < selectedSlab)     disabledReason = `Need ${selectedSlab} active referrals (you have ${activeCount})`;
+  }
 
   const copyLink = () => {
     navigator.clipboard.writeText(inviteLink);
@@ -121,6 +174,15 @@ const UserReferrals = ({ onActivityRecorded }) => {
 
   return (
     <div className="rewards-container-sm">
+
+      {/* ── Eligibility banner ── */}
+      {!checking && !eligible && (
+        <ReferralEligibilityBanner
+          kycGate={kycGate}
+          subscriptionGate={subscriptionGate}
+          blockerCode={blockerCode}
+        />
+      )}
 
       {/* ── Stats hero ── */}
       <div className="referral-hero-row">
@@ -138,7 +200,6 @@ const UserReferrals = ({ onActivityRecorded }) => {
         </div>
       </div>
 
-      {/* Inactive warning */}
       {inactiveReferrals.length > 0 && (
         <div className="referral-info-box">
           ⚠️ {inactiveReferrals.length} referred member{inactiveReferrals.length !== 1 ? "s" : ""} do not have an active
@@ -156,10 +217,7 @@ const UserReferrals = ({ onActivityRecorded }) => {
             <span className="rewards-progress-pct referral">{bigProgress}%</span>
           </div>
           <div className="rewards-progress-track">
-            <div
-              className="rewards-progress-bar referral"
-              style={{ width: `${bigProgress}%` }}
-            />
+            <div className="rewards-progress-bar referral" style={{ width: `${bigProgress}%` }} />
           </div>
           <span className="rewards-progress-hint">
             {nextBig.referralCount - activeCount} more active referral{nextBig.referralCount - activeCount !== 1 ? "s" : ""} to unlock next big reward
@@ -169,8 +227,8 @@ const UserReferrals = ({ onActivityRecorded }) => {
 
       <div className="referral-chips-row">
         {bigSlabs.map(s => {
-          const isClaimed = claimedSlabs.includes(s.referralCount);
-          const isActive  = activeCount >= s.referralCount;
+          const isClaimed  = claimedSlabs.includes(s.referralCount);
+          const isActive   = activeCount >= s.referralCount;
           const stateClass = isClaimed ? "claimed" : isActive ? "active" : "locked";
           return (
             <div key={s.referralCount} className={`referral-big-chip ${stateClass}`}>
@@ -191,21 +249,17 @@ const UserReferrals = ({ onActivityRecorded }) => {
       {/* ── Token milestones ── */}
       {tokenSlabs.length > 0 && (
         <div>
-          <button
-            className="rewards-toggle-btn"
-            onClick={() => setShowTokenSlabs(v => !v)}
-          >
+          <button className="rewards-toggle-btn" onClick={() => setShowTokenSlabs(v => !v)}>
             {showTokenSlabs ? "▲ Hide" : "▼ Show"} Per-Referral Token Rewards (11–{tokenSlabs[tokenSlabs.length - 1]?.referralCount})
             {claimableTokens.length > 0 && (
               <span className="referral-claimable-badge">{claimableTokens.length} claimable</span>
             )}
           </button>
-
           {showTokenSlabs && (
             <div className="referral-token-grid">
               {tokenSlabs.map(s => {
-                const isClaimed = claimedSlabs.includes(s.referralCount);
-                const isActive  = activeCount >= s.referralCount;
+                const isClaimed  = claimedSlabs.includes(s.referralCount);
+                const isActive   = activeCount >= s.referralCount;
                 const stateClass = isClaimed ? "claimed" : isActive ? "active" : "";
                 return (
                   <div key={s.referralCount} className={`referral-token-chip ${stateClass}`}>
@@ -232,13 +286,9 @@ const UserReferrals = ({ onActivityRecorded }) => {
       {/* ── Referred users list ── */}
       {referredUsers.length > 0 && (
         <div>
-          <button
-            className="rewards-toggle-btn"
-            onClick={() => setShowReferredList(v => !v)}
-          >
+          <button className="rewards-toggle-btn" onClick={() => setShowReferredList(v => !v)}>
             {showReferredList ? "▲ Hide" : "▼ Show"} referred users ({referredUsers.length})
           </button>
-
           {showReferredList && (
             <div className="referral-user-list">
               {referredUsers.map((u, i) => (
@@ -265,6 +315,7 @@ const UserReferrals = ({ onActivityRecorded }) => {
           value={selectedSlab ?? ""}
           onChange={(e) => setSelectedSlab(Number(e.target.value))}
           className="rewards-select"
+          disabled={!eligible && !checking}
         >
           <option value="">Select a milestone…</option>
           {bigSlabs.length > 0 && (
@@ -297,26 +348,35 @@ const UserReferrals = ({ onActivityRecorded }) => {
           )}
         </select>
 
-        {disabledReason && (
+        {eligible && disabledReason && (
           <div className="referral-warning-banner">⚠️ {disabledReason}</div>
         )}
 
-        <button
-          type="button"
-          className="rewards-claim-btn referral"
-          disabled={!canClaim || loading}
-          data-bs-toggle="modal"
-          data-bs-target="#referralBankModal"
-        >
-          {loading ? "⏳ Claiming…" : "Claim Reward"}
-        </button>
+        {/* Eligibility-aware button */}
+        {checking ? (
+          <button className="rewards-claim-btn referral" disabled>Checking…</button>
+        ) : !eligible ? (
+          <button
+            type="button"
+            className="rewards-claim-btn referral rewards-claim-btn--locked"
+            onClick={() => navigate(kycGate.passed ? subscriptionGate.ctaPath : kycGate.ctaPath)}
+          >
+            🔒 Unlock Rewards
+          </button>
+        ) : (
+          <button
+            type="button"
+            className="rewards-claim-btn referral"
+            disabled={!canClaim || loading}
+            data-bs-toggle="modal"
+            data-bs-target="#referralBankModal"
+          >
+            {loading ? "⏳ Claiming…" : "Claim Reward"}
+          </button>
+        )}
       </div>
 
-      <BankDetailsModal
-        modalId="referralBankModal"
-        loading={loading}
-        onSubmit={handleClaim}
-      />
+      <BankDetailsModal modalId="referralBankModal" loading={loading} onSubmit={handleClaim} />
 
       {showShareModal && (
         <ShareModal inviteLink={inviteLink} onClose={() => setShowShareModal(false)} />

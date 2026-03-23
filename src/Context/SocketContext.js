@@ -10,6 +10,25 @@
 //   • Notification state  → NotificationContext
 //   • Online-users list   → OnlineUsersContext
 //   • Auth state          → AuthContext
+//
+// FIX — duplicate initializeSocket() calls with AuthContext:
+//   Both SocketContext and AuthContext previously called initializeSocket()
+//   independently on mount. Because Socket.IO clients are singletons managed
+//   inside WebSocketClient.js, the second call is a no-op as long as
+//   WebSocketClient guards against re-initialization (returns the existing
+//   socket if already connected). However, the duplicate calls race during
+//   app startup: whichever resolves second may overwrite connect/disconnect
+//   handlers registered by the first.
+//
+//   Resolution strategy (applied here):
+//     • SocketContext remains the single place that calls initializeSocket()
+//       and owns the socket state exposed to the tree.
+//     • AuthContext.setupSocket() should be changed to call getSocket() (not
+//       initializeSocket()) and attach its own connect handler on top of the
+//       already-initialized socket — see AuthContext.js for that change.
+//     • If WebSocketClient.initializeSocket() is idempotent (returns existing
+//       socket without re-connecting), having both call it is safe but
+//       redundant. The comment is kept here to explain the intended ownership.
 
 import React, {
   createContext,
@@ -43,6 +62,7 @@ export const SocketProvider = ({ children }) => {
       if (!token) return null;
       const decoded = jwtDecode(token);
       return {
+        // JWT payload produced by authController uses `user.id` (string ObjectId)
         id:          decoded.user?.id,
         name:        decoded.user?.name,
         hometown:    decoded.user?.hometown,
@@ -59,45 +79,46 @@ export const SocketProvider = ({ children }) => {
     if (!sock?.connected || !user?.id) return;
     sock.emit('user-online', {
       userId:      user.id,
-      name:        user.name,
+      name:        user.name        ?? '',
       hometown:    user.hometown    ?? '',
       currentcity: user.currentcity ?? '',
     });
   }, []);
 
-  // ── Bootstrap (runs once on mount, and whenever the token changes) ───────
+  // ── Bootstrap (runs once on mount) ───────────────────────────────────────
   useEffect(() => {
     const token = localStorage.getItem('token');
     if (!token) return;
 
     userRef.current = decodeUser();
 
-    let cleanup = () => {};
+    // Cleanup holder — populated asynchronously once the socket is available
+    let offConnect    = () => {};
+    let offDisconnect = () => {};
+    let mounted       = true; // guard against state updates after unmount
 
     (async () => {
       const sock = await initializeSocket();
-      if (!sock) return;
+      if (!sock || !mounted) return;
 
       setSocket(sock);
       setConnected(sock.connected);
 
-      // Use named handlers so we can detach them precisely
-      const onConnect    = () => { setConnected(true);  emitPresence(sock); };
-      const onDisconnect = () => { setConnected(false); };
+      const onConnect    = () => { if (mounted) { setConnected(true);  emitPresence(sock); } };
+      const onDisconnect = () => { if (mounted) { setConnected(false); } };
 
-      const offConnect    = onSocketEvent('connect',    onConnect);
-      const offDisconnect = onSocketEvent('disconnect', onDisconnect);
+      offConnect    = onSocketEvent('connect',    onConnect);
+      offDisconnect = onSocketEvent('disconnect', onDisconnect);
 
       // If socket is already connected when we attach the listener
       if (sock.connected) onConnect();
-
-      cleanup = () => {
-        offConnect();
-        offDisconnect();
-      };
     })();
 
-    return () => cleanup();
+    return () => {
+      mounted = false;
+      offConnect();
+      offDisconnect();
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []); // intentionally empty — runs once on mount
 
@@ -105,7 +126,7 @@ export const SocketProvider = ({ children }) => {
   const reconnect = useCallback(async () => {
     await reconnectSocket();
     const sock = getSocket();
-    setSocket(sock);
+    setSocket(sock ?? null);
     setConnected(!!sock?.connected);
     if (sock?.connected) emitPresence(sock);
   }, [emitPresence]);

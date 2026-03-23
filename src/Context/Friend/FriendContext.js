@@ -8,6 +8,20 @@
 //   • Smarter socket event handling (friend_list_updated)
 //   • Suggestion cache bust on accept / send / unfriend
 //   • All fetches guarded against concurrent duplicate calls via fetchingRef
+//
+// FIXES:
+//   1. `getSocket` was imported as a default export which does not exist on
+//      WebSocketClient. The module only has named exports. The broken import
+//      meant every `getSocket()` call returned `undefined`, so all socket
+//      listeners (friend_request, friend_accept, friend_list_updated) silently
+//      registered on `undefined` and never fired — and socket emissions for
+//      notifying the other party of a friend request were also dead.
+//      Fix: use the named import `{ getSocket }`.
+//
+//   2. The activity filter in sendRequest emitted a socket notification using
+//      `userId` (parameter) which shadows the destructured `user` from useAuth.
+//      The emit payload already used the parameter correctly, so no functional
+//      change needed there, but the variable name was clarified.
 
 import React, {
   createContext,
@@ -19,21 +33,22 @@ import React, {
 } from 'react';
 import { toast } from 'react-hot-toast';
 import { useAuth } from '../Authorisation/AuthContext';
-import getSocket from '../../WebSocket/WebSocketClient';
+// FIX: named import — WebSocketClient has no default export
+import { getSocket } from '../../WebSocket/WebSocketClient';
 import apiRequest from '../../utils/apiRequest';
 import FriendReducer from './FriendReducer';
 
 const FriendContext = createContext(null);
 
 const INITIAL_STATE = {
-  friends:          [],
-  requests:         [],
-  sentRequests:     [],   // NEW
-  suggestions:      [],
-  loading:          false,
+  friends:            [],
+  requests:           [],
+  sentRequests:       [],
+  suggestions:        [],
+  loading:            false,
   suggestionsLoading: false,
-  requestsLoading:  false,
-  sentLoading:      false, // NEW
+  requestsLoading:    false,
+  sentLoading:        false,
 };
 
 export const FriendProvider = ({ children }) => {
@@ -136,9 +151,9 @@ export const FriendProvider = ({ children }) => {
     }
   }, []);
 
-  const getFriendCount = useCallback(async (userId) => {
+  const getFriendCount = useCallback(async (targetUserId) => {
     try {
-      const { data } = await apiRequest.get(`/api/friends/count/${userId}`);
+      const { data } = await apiRequest.get(`/api/friends/count/${targetUserId}`);
       return data?.count ?? 0;
     } catch (err) {
       console.error('[FriendContext] getFriendCount:', err);
@@ -146,19 +161,20 @@ export const FriendProvider = ({ children }) => {
     }
   }, []);
 
-  const sendRequest = useCallback(async (userId) => {
+  const sendRequest = useCallback(async (recipientId) => {
     try {
-      const { data } = await apiRequest.post(`/api/friends/friend-request/${userId}`);
+      const { data } = await apiRequest.post(`/api/friends/friend-request/${recipientId}`);
       if (data.status === 'success') {
         toast.success('Friend request sent!');
-        dispatch({ type: 'REMOVE_SUGGESTION', payload: userId });
-        // Optimistically add to sent requests
-        dispatch({ type: 'ADD_SENT_REQUEST', payload: { _id: data.data?._id, recipientId: userId } });
+        dispatch({ type: 'REMOVE_SUGGESTION', payload: recipientId });
+        dispatch({ type: 'ADD_SENT_REQUEST', payload: { _id: data.data?._id, recipientId } });
+
+        // Notify the recipient via socket
         const socket = getSocket();
         socket?.emit('notify', {
-          userId,
+          userId:  recipientId,
           message: `${user?.name} sent you a friend request`,
-          type: 'friend_request',
+          type:    'friend_request',
         });
       } else {
         toast.error(data.message || 'Could not send request');
@@ -222,10 +238,10 @@ export const FriendProvider = ({ children }) => {
     }
   }, [fetchRequests]);
 
-  const unfriend = useCallback(async (userId) => {
-    dispatch({ type: 'REMOVE_FRIEND', payload: userId });
+  const unfriend = useCallback(async (friendId) => {
+    dispatch({ type: 'REMOVE_FRIEND', payload: friendId });
     try {
-      const { data } = await apiRequest.delete(`/api/friends/unfriend/${userId}`);
+      const { data } = await apiRequest.delete(`/api/friends/unfriend/${friendId}`);
       if (data.status === 'success') {
         toast.success('Unfriended.');
       } else {
@@ -240,13 +256,13 @@ export const FriendProvider = ({ children }) => {
     }
   }, [fetchFriends]);
 
-  const blockUser = useCallback(async (userId, userName) => {
+  const blockUser = useCallback(async (targetId, userName) => {
     try {
-      const { data } = await apiRequest.post(`/api/friends/block/${userId}`);
+      const { data } = await apiRequest.post(`/api/friends/block/${targetId}`);
       if (data.status === 'success') {
         toast.success(`${userName || 'User'} blocked.`);
-        dispatch({ type: 'REMOVE_FRIEND',     payload: userId });
-        dispatch({ type: 'REMOVE_SUGGESTION', payload: userId });
+        dispatch({ type: 'REMOVE_FRIEND',     payload: targetId });
+        dispatch({ type: 'REMOVE_SUGGESTION', payload: targetId });
       } else {
         toast.error(data.message || 'Could not block user');
       }
@@ -257,9 +273,9 @@ export const FriendProvider = ({ children }) => {
     }
   }, []);
 
-  const unblockUser = useCallback(async (userId, userName) => {
+  const unblockUser = useCallback(async (targetId, userName) => {
     try {
-      const { data } = await apiRequest.delete(`/api/friends/block/${userId}`);
+      const { data } = await apiRequest.delete(`/api/friends/block/${targetId}`);
       if (data.status === 'success') {
         toast.success(`${userName || 'User'} unblocked.`);
         await fetchSuggestions(true);
@@ -281,13 +297,17 @@ export const FriendProvider = ({ children }) => {
     fetchSentRequests();
     fetchSuggestions();
 
+    // FIX: getSocket() now returns the correct singleton because it is a named
+    // import — previously this returned undefined from a missing default export.
     const socket = getSocket();
     if (socket) {
       socket.emit('join-room', user._id);
       socket.emit('user-online', {
-        userId: user._id, name: user.name,
-        hometown: user.hometown, currentcity: user.currentcity,
-        timestamp: new Date().toISOString(),
+        userId:      user._id,
+        name:        user.name,
+        hometown:    user.hometown,
+        currentcity: user.currentcity,
+        timestamp:   new Date().toISOString(),
       });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -296,6 +316,8 @@ export const FriendProvider = ({ children }) => {
   // ─── Real-time socket events ────────────────────────────────────────────────
   useEffect(() => {
     if (!user?._id) return;
+
+    // FIX: getSocket() now resolves correctly with named import
     const socket = getSocket();
     if (!socket) return;
 
@@ -320,9 +342,8 @@ export const FriendProvider = ({ children }) => {
       }
     };
 
-    // NEW: direct friend list update event from server
-    const handleFriendListUpdated = ({ action, userId }) => {
-      if (action === 'removed')  dispatch({ type: 'REMOVE_FRIEND', payload: userId });
+    const handleFriendListUpdated = ({ action, userId: affectedId }) => {
+      if (action === 'removed')  dispatch({ type: 'REMOVE_FRIEND', payload: affectedId });
       if (action === 'accepted') fetchFriends();
     };
 

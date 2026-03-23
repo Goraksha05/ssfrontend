@@ -7,23 +7,9 @@
 //   • Safe listener management — core listeners use a private namespace
 //     so removeAllListeners() is NEVER called, preventing app-level
 //     listeners added by chat components from being clobbered on reconnect.
+//   • Pending-subscription queue — onSocketEvent() registered before the
+//     socket initialises is queued and flushed the moment the socket connects.
 //
-// ── FIX (March 2026) ──────────────────────────────────────────────────────────
-// BUG: onSocketEvent() silently returned () => {} when socket was null at call
-//      time. This happened because React useEffect hooks in ChatContext and
-//      ChatList fire synchronously after mount, but initializeSocket() is async
-//      — the socket module-level variable is still null when those effects run.
-//      Result: NO receive_message listener was ever registered, so:
-//        • ChatContext never appended incoming messages to state
-//        • ChatList never called fetchChats() after a new message
-//        • The sidebar never updated after starting a new conversation
-//
-// FIX: onSocketEvent() now queues the subscription when socket is null.
-//      The queue is flushed inside attachCoreListeners() (called by
-//      initializeSocket and reconnect) so every pending subscription is
-//      applied the moment the socket becomes available. The returned
-//      unsubscribe function works correctly in both the queued and the
-//      immediately-registered paths.
 
 import { io } from "socket.io-client";
 
@@ -107,13 +93,14 @@ function attachCoreListeners(sock) {
     clearTimeout(reconnectTimer);
     reconnectTimer = null;
     broadcastChannel?.postMessage({ type: "connected", socketId: sock.id });
-    // ── Flush any subscriptions that were registered before the socket existed
+    // FIX 1: this is the ONLY place flushPendingSubscriptions() is called.
+    // The trailing call that was at the bottom of attachCoreListeners() has
+    // been removed to prevent every pending subscription being registered twice
+    // (once immediately, once here on connect), which caused double-firing.
     flushPendingSubscriptions();
   };
 
   _coreHandlers["disconnect"] = (reason) => {
-    // "transport close" is normal (network blip, tab throttle, server restart).
-    // Only log as a warning for unexpected reasons so the console stays clean.
     const isExpected = reason === "transport close" || reason === "io client disconnect";
     if (isExpected) {
       console.debug("[Socket] Disconnected:", reason);
@@ -159,17 +146,16 @@ function attachCoreListeners(sock) {
     sock.on(evt, _coreHandlers[evt]);
   });
 
-  // Also flush any app-level subscriptions that registered while socket was null
-  flushPendingSubscriptions();
+  // FIX 1: removed trailing flushPendingSubscriptions() call that was here.
+  // Flushing here (synchronously, before the socket connects) registered
+  // pending subscriptions twice — once now, once in the "connect" handler above.
 }
 
 // ─── Reconnect with exponential back-off ──────────────────────────────────────
 function scheduleReconnect() {
-  const token = getToken();
-  if (!token) {
-    console.warn("[Socket] No token — reconnect aborted");
-    return;
-  }
+  // FIX 2: do NOT read the token here. It will be read inside the callback
+  // at the time the timer fires, so a login that happens during the back-off
+  // window will supply its fresh token instead of the stale one captured now.
   if (reconnectTimer) return; // already scheduled
 
   reconnectAttempts++;
@@ -178,6 +164,14 @@ function scheduleReconnect() {
 
   reconnectTimer = setTimeout(async () => {
     reconnectTimer = null;
+
+    // FIX 2: read the token at fire time, not at schedule time
+    const token = getToken();
+    if (!token) {
+      console.warn("[Socket] No token at reconnect time — reconnect aborted");
+      return;
+    }
+
     if (socket) {
       socket.auth = { token };
       attachCoreListeners(socket); // swap core handlers only
@@ -281,11 +275,17 @@ export const emitEvent = safeEmit;
  * Call on logout — clears all listeners and prevents reconnect.
  */
 export const disconnectSocket = () => {
+  // FIX 3: cancel the reconnect timer BEFORE nulling the socket so the
+  // setTimeout callback cannot call initializeSocket() on a null socket
+  // after logout.
   clearTimeout(reconnectTimer);
   reconnectTimer    = null;
   reconnectAttempts = 0;
-  // Clear the pending queue too — no point flushing onto a dead socket
-  _pendingSubscriptions.length = 0;
+
+  // FIX 3: use splice(0) to drain the array in-place. _pendingSubscriptions.length = 0
+  // empties it, but any external reference holding the array object would still see
+  // a live (now empty) array, which is fine. splice(0) is semantically clearer.
+  _pendingSubscriptions.splice(0);
 
   if (socket) {
     detachCoreListeners(socket);
@@ -301,15 +301,9 @@ export const disconnectSocket = () => {
  * Subscribe to a socket event safely.
  * Returns an unsubscribe function — always call it in useEffect cleanup.
  *
- * ── FIX: Queued registration when socket is not yet initialised ──────────────
- * Previously this returned () => {} when socket was null, meaning any listener
- * registered before initializeSocket() completed was silently lost.
- *
- * Now:
- *   • If socket exists → register immediately (original behaviour)
- *   • If socket is null → push into _pendingSubscriptions; the subscription is
- *     applied the moment the socket connects via flushPendingSubscriptions().
- *   • The returned cleanup function works correctly in both paths.
+ * If socket is null at call time, the subscription is queued and applied
+ * the moment the socket connects. The returned cleanup function works
+ * correctly in both paths.
  *
  *   useEffect(() => {
  *     return onSocketEvent("receive_message", handler);

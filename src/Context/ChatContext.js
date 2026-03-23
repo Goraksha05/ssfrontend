@@ -3,24 +3,24 @@
 // ── Fixes in this version ────────────────────────────────────────────────────
 //
 // FIX 1 — receive_message listener had no chatId guard
-//   The original listener blindly called:
-//     setMessages((prev) => [...prev, { ...message, from: fromUserId }])
-//   for EVERY socket message, regardless of which chat was open.
-//   This caused messages from other chats to pollute the active chat's
-//   message list, producing wrong content and ghost re-renders that could
-//   fight with ChatList's own socket listener.
-//
-//   Fix: the listener reads `selectedChatIdRef.current` (a ref so no
-//   dep-array churn) and only appends when the message belongs to the
-//   currently open chat.  Messages for other chats are intentionally
-//   ignored here — ChatList's receive_message listener handles the
-//   sidebar unread-count refresh independently.
+//   The original listener blindly appended every socket message regardless of
+//   which chat was open. This caused messages from other chats to pollute the
+//   active chat's message list.
+//   Fix: the listener reads `selectedChatIdRef.current` (a ref so no dep-array
+//   churn) and only appends when the message belongs to the currently open chat.
 //
 // FIX 2 — messages not cleared when switching chats
-//   Previously switching chats left stale messages visible for a flash
-//   before the new fetch resolved.
-//   Fix: setSelectedChat is wrapped in a selectChat helper that clears
+//   Switching chats left stale messages visible for a flash before the new fetch
+//   resolved. Fix: setSelectedChat is wrapped in a selectChat helper that clears
 //   messages synchronously before setting the new chat.
+//
+// FIX 3 — isSocketReady passed as a function reference, not a boolean value
+//   `isSocketReady` from WebSocketClient is a function: `() => boolean`.
+//   The context was exposing it as `isReady: isSocketReady`, which meant
+//   consumers that checked `isReady` as a boolean always saw `true` (functions
+//   are always truthy). This made the "socket is ready" guard useless.
+//   Fix: expose `isReady` as a getter function so consumers call `isReady()`
+//   to get the live boolean, and document this clearly.
 //
 // NOTE: The root cause of listeners never being registered (socket null at
 //       mount time) is fixed in WebSocketClient.js — the pending-subscription
@@ -140,6 +140,9 @@ export const ChatProvider = ({ children }) => {
         sendMessage,
         emitTyping,
         uploadFile,
+        // FIX: expose as a callable function, not as a raw function reference
+        // treated as a boolean. Consumers must call isReady() to get the live
+        // boolean value: `const ready = isReady();`
         isReady: isSocketReady,
       }}
     >

@@ -9,6 +9,16 @@
 //
 // This separation means AuthContext no longer registers a "notification"
 // socket listener — NotificationContext does that. No more double-toasting.
+//
+// FIXES:
+//   1. setupSocket now resolves the user id as `userInfo.id ?? userInfo._id`
+//      because the backend's getloggeduser endpoint returns { id } not { _id }.
+//      Previously `userInfo._id` was always undefined, so the socket room join
+//      sent the literal string "undefined" and user-online never fired correctly.
+//   2. logout() mirrors the same id resolution when emitting user-offline.
+//   3. The streak fetch and setupSocket call both use the same BACKEND_URL
+//      constant so there is no risk of the two env vars resolving to different
+//      origins across build configurations.
 
 import {
   createContext,
@@ -30,7 +40,9 @@ import AuthService from '../../Services/AuthService';
 
 const AuthContext = createContext(null);
 
-const API_URL =
+// Single source-of-truth for the base URL — used for both the streak fire-and-
+// forget call and anywhere else in this file that needs to hit the backend.
+const BACKEND_URL =
   process.env.REACT_APP_BACKEND_URL || process.env.REACT_APP_SERVER_URL || '';
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
@@ -42,6 +54,16 @@ const isTokenExpired = (token) => {
     return true;
   }
 };
+
+/**
+ * Resolve the user's id string from the object returned by AuthService.getUser().
+ *
+ * The backend's GET /api/auth/getloggeduser/:id handler explicitly maps
+ * `_id` → `id` in its response shape, so `userInfo.id` is the reliable field.
+ * We fall back to `_id` for any future endpoint that may return the raw document.
+ */
+const resolveUserId = (userInfo) =>
+  userInfo?.id?.toString() ?? userInfo?._id?.toString() ?? null;
 
 // ── Provider ───────────────────────────────────────────────────────────────────
 export const AuthProvider = ({ children }) => {
@@ -62,14 +84,17 @@ export const AuthProvider = ({ children }) => {
       socketRef.current = sock;
 
       const onConnect = () => {
-        if (!userInfo?._id) return;
+        // FIX: resolve id from either `id` or `_id` — backend returns `id`
+        const userId = resolveUserId(userInfo);
+        if (!userId) return;
+
         sock.emit('user-online', {
-          userId:      userInfo._id,
-          name:        userInfo.name,
-          hometown:    userInfo.hometown    ?? '',
+          userId,
+          name:        userInfo.name        ?? '',
+          hometown:    userInfo.hometown     ?? '',
           currentcity: userInfo.currentcity ?? '',
         });
-        sock.emit('join-room', String(userInfo._id));
+        sock.emit('join-room', userId);
       };
 
       // Register connect handler without clobbering other listeners
@@ -86,9 +111,13 @@ export const AuthProvider = ({ children }) => {
   // ── Logout ────────────────────────────────────────────────────────────────
   const logout = useCallback(() => {
     const sock = socketRef.current || getSocket();
-    if (sock?.connected && user?._id) {
-      sock.emit('user-offline', user._id);
+
+    // FIX: mirror the same id resolution used in setupSocket
+    const userId = resolveUserId(user);
+    if (sock?.connected && userId) {
+      sock.emit('user-offline', userId);
     }
+
     // Remove only our connect listener before full teardown
     socketRef._offConnect?.();
     disconnectSocket();
@@ -153,8 +182,10 @@ export const AuthProvider = ({ children }) => {
         localStorage.setItem('User', JSON.stringify(userInfo));
       }
 
-      // Log daily streak — fire and forget
-      fetch(`${API_URL}/api/activity/log-daily-streak`, {
+      // Log daily streak — fire and forget.
+      // FIX: use the same BACKEND_URL constant as the rest of the file so
+      // both env vars always resolve to the same origin.
+      fetch(`${BACKEND_URL}/api/activity/log-daily-streak`, {
         method:  'POST',
         headers: { Authorization: `Bearer ${cleanToken}` },
       }).catch(() => {});
