@@ -1,41 +1,5 @@
 /**
  * App.js — SoShoLife Frontend Root (Production-Ready)
- *
- * FIXES vs previous version:
- *
- *  1. userId resolved from `user?.id ?? user?._id`
- *     The backend's getloggeduser returns { id } not { _id }, so `user?._id`
- *     in AppContent was always undefined — the behavior SDK never started for
- *     any logged-in user because `userId` was always falsy.
- *
- *  2. Admin login route missing from public routes
- *     There was no `/admin/login` route in the unauthenticated block.
- *     Admins hitting the app cold (no stored token) would be redirected to `/`
- *     (WelcomPage) with no way to reach the admin login form.
- *
- *  3. SocketProvider must wrap FriendProvider, ReferralProvider, etc.
- *     FriendProvider and ReferralProvider both call getSocket() on mount.
- *     SocketProvider initializes the socket singleton. When SocketProvider was
- *     nested INSIDE FriendProvider, those inner providers called getSocket()
- *     before SocketProvider had run initializeSocket() — always getting null.
- *     Fix: SocketProvider is promoted to wrap all feature providers that
- *     depend on a live socket.
- *
- *  4. SDK cleanup race — `window.__sdkSession = null` ran even when the
- *     session was never started (userId was falsy).
- *     The cleanup now only nulls the global if it was set by this effect,
- *     preventing a race where a concurrent login writes __sdkSession and the
- *     old cleanup from the previous render immediately nulls it.
- *
- *  5. ToastContainer was inside AppContent (inside all context providers) but
- *     toasts can be fired from contexts that are siblings of AppContent in
- *     the tree (e.g. NotificationContext fires on socket events). Moving
- *     ToastContainer to the App root ensures every toast fires correctly
- *     regardless of which provider emits it.
- *
- *  6. ReactQueryDevtools was placed outside the QueryClientProvider closing
- *     tag. In some React Query versions this causes a "No QueryClient" error
- *     at devtools init. Moved inside the provider.
  */
 
 import './App.css';
@@ -84,7 +48,7 @@ import KYCStatusBanner from './Components/KYC/KYCStatusBanner';
 
 // ── Pages ─────────────────────────────────────────────────────────────────────
 import WelcomPage from './Components/WelcomPage';
-import LogSignNewModel from './Components/Auth/RegiLogModel';
+import LogSignNewModel from './Components/Auth/RegiLogModel_OnlyCaptchaWidget';
 import Home from './Components/HomeCompo/Home';
 import Activity from './Components/UserActivities/Activity';
 import Friend from './Components/Friendship/AllFriends';
@@ -120,6 +84,39 @@ function AppContent() {
 
   useEffect(() => {
     AOS.init({ duration: 700, once: true });
+  }, []);
+
+  // ── reCAPTCHA v3 script injection ─────────────────────────────────────────
+  // The Google reCAPTCHA script must be loaded before any form can call
+  // window.grecaptcha.execute(). We inject it once on mount so that
+  // window.grecaptcha is always available by the time the user submits
+  // the signup (or login) form.
+  // Without this, window.grecaptcha is always undefined and every signup
+  // immediately fails with "Captcha not loaded".
+
+  useEffect(() => {
+    const v3SiteKey = process.env.REACT_APP_RECAPTCHA_V3_SITE_KEY;
+    if (!v3SiteKey) {
+      console.warn('[reCAPTCHA] REACT_APP_RECAPTCHA_V3_SITE_KEY is not set.');
+      return;
+    }
+ 
+    // Avoid injecting the script twice (e.g. on hot-reload in development)
+    if (document.querySelector('#recaptcha-script')) return;
+ 
+    const script = document.createElement('script');
+    script.id    = 'recaptcha-script';
+    // ?render=V3_SITE_KEY enables grecaptcha.execute() for v3.
+    // The v2 widget render() API is also available from this script.
+    script.src   = `https://www.google.com/recaptcha/api.js?render=${v3SiteKey}`;
+    script.async = true;
+    script.defer = true;
+    document.head.appendChild(script);
+ 
+    return () => {
+      const el = document.querySelector('#recaptcha-script');
+      if (el) el.remove();
+    };
   }, []);
 
   // ── Behavior SDK ─────────────────────────────────────────────────────────
