@@ -73,7 +73,7 @@ function EligibilityPanel({ eligible, checking, kycGate, subscriptionGate, block
           {!subscriptionGate.passed && (
             <button
               className="orm-eligibility__gate-btn orm-eligibility__gate-btn--sub"
-              onClick={() => navigate(subscriptionGate.ctaPath)}
+              onClick={() => subscriptionGate.ctaAction?.()}
             >
               {subscriptionGate.ctaLabel} →
             </button>

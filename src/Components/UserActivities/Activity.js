@@ -7,6 +7,7 @@ import { StreakProvider } from '../../Context/Activity/StreakContext';
 import apiRequest from '../../utils/apiRequest';
 import ObtainedRewardsModal from './ObtainedRewardsModal';
 import './Activity.css';
+import RewardsHub from '../Rewards/RewardsHub';
 
 const SERVER_URL = process.env.REACT_APP_SERVER_URL;
 
@@ -16,13 +17,13 @@ const Activity = () => {
   const [
     // userData,
     setUserData
-  ]     = useState(null);
-  const [activeTab, setActiveTab]   = useState('streak');
+  ] = useState(null);
+  const [activeTab, setActiveTab] = useState('streak');
   const [showRewards, setShowRewards] = useState(false);
   const [
     // fetching,
     setFetching
-  ]     = useState(false);
+  ] = useState(false);
   const { statePosts } = useContext(postContext);
 
   const fetchUser = useCallback(async () => {
@@ -55,9 +56,9 @@ const Activity = () => {
   }
 
   const tabs = [
-    { key: 'streak',   label: '🔥 Streaks',   color: '#ff6b35' },
-    { key: 'referral', label: '🤝 Referrals',  color: '#10b981' },
-    { key: 'post',     label: '📝 Posts',      color: '#f59e0b' },
+    { key: 'streak', label: '🔥 Streaks', color: '#ff6b35' },
+    { key: 'referral', label: '🤝 Referrals', color: '#10b981' },
+    { key: 'post', label: '📝 Posts', color: '#f59e0b' },
   ];
 
   // const rewardItems = [
@@ -94,6 +95,8 @@ const Activity = () => {
           ))}
         </div>
       )} */}
+
+      <RewardsHub/>
 
       {/* ── Tab Navigation ── */}
       <div className="activity-tab-bar">

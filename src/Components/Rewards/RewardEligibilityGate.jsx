@@ -75,7 +75,8 @@ function getGateConfig(kycGate, subscriptionGate, blockerCode) {
       icon:     isSubmitted ? <ClockIcon /> : <ShieldXIcon />,
       title:    isSubmitted ? 'KYC Under Review' : 'KYC Verification Required',
       message:  kycGate.message,
-      ctaPath:  kycGate.ctaPath,
+      // KYC has a real route — pass path for navigation
+      onCta:    (navigate) => navigate(kycGate.ctaPath),
       ctaLabel: kycGate.ctaLabel,
       variant:  isSubmitted ? 'pending' : 'error',
     });
@@ -87,7 +88,8 @@ function getGateConfig(kycGate, subscriptionGate, blockerCode) {
       icon:     <CreditCardIcon />,
       title:    subscriptionGate.expired ? 'Subscription Expired' : 'Subscription Required',
       message:  subscriptionGate.message,
-      ctaPath:  subscriptionGate.ctaPath,
+      // Subscription is a modal — call ctaAction, never navigate
+      onCta:    () => subscriptionGate.ctaAction?.(),
       ctaLabel: subscriptionGate.ctaLabel,
       variant:  'warning',
     });
@@ -131,9 +133,11 @@ const variantStyles = {
 };
 
 // ── GateItem — single requirement card ─────────────────────────────────────────
-function GateItem({ icon, title, message, ctaPath, ctaLabel, variant, compact }) {
+function GateItem({ icon, title, message, onCta, ctaLabel, variant, compact }) {
   const navigate  = useNavigate();
   const s         = variantStyles[variant] ?? variantStyles.error;
+
+  const handleCta = () => onCta?.(navigate);
 
   if (compact) {
     return (
@@ -150,9 +154,9 @@ function GateItem({ icon, title, message, ctaPath, ctaLabel, variant, compact })
       }}>
         <span style={{ color: s.icon, flexShrink: 0 }}>{icon}</span>
         <span style={{ flex: 1 }}>{message}</span>
-        {ctaPath && (
+        {onCta && (
           <button
-            onClick={() => navigate(ctaPath)}
+            onClick={handleCta}
             style={{
               padding:      '4px 10px',
               background:   s.ctaBg,
@@ -206,9 +210,9 @@ function GateItem({ icon, title, message, ctaPath, ctaLabel, variant, compact })
           }}>
             {message}
           </p>
-          {ctaPath && (
+          {onCta && (
             <button
-              onClick={() => navigate(ctaPath)}
+              onClick={handleCta}
               style={{
                 marginTop:    '10px',
                 padding:      '7px 14px',

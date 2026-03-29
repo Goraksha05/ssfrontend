@@ -20,14 +20,17 @@
 //   onError      — called with error message on failure
 
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { useRewardEligibility }  from '../../hooks/useRewardEligibility';
+// import { useNavigate } from 'react-router-dom';
+import { useRewardEligibility } from '../../hooks/useRewardEligibility';
+import FloatingEligibilityPopover from "./EligibilityPopover";
+import { motion } from "framer-motion";
+import confetti from "canvas-confetti";
 
 /* ── Icons ───────────────────────────────────────────────────────────────────── */
 const LockIcon = () => (
   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-    <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
-    <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+    <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+    <path d="M7 11V7a5 5 0 0 1 10 0v4" />
   </svg>
 );
 
@@ -41,7 +44,7 @@ const SpinnerIcon = () => (
 
 const CheckIcon = () => (
   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-    <polyline points="20 6 9 17 4 12"/>
+    <polyline points="20 6 9 17 4 12" />
   </svg>
 );
 
@@ -53,100 +56,100 @@ const SIZE = {
 };
 
 /* ── Eligibility popover ─────────────────────────────────────────────────────── */
-function EligibilityPopover({ kycGate, subscriptionGate, blockerCode, onClose }) {
-  const navigate = useNavigate();
+// function EligibilityPopover({ kycGate, subscriptionGate, blockerCode, onClose }) {
+//   const navigate = useNavigate();
 
-  const items = [];
-  if (!kycGate.passed) {
-    items.push({
-      key:      'kyc',
-      message:  kycGate.message,
-      ctaLabel: kycGate.ctaLabel,
-      ctaPath:  kycGate.ctaPath,
-      color:    kycGate.status === 'submitted' ? '#2563eb' : '#dc2626',
-    });
-  }
-  if (!subscriptionGate.passed) {
-    items.push({
-      key:      'sub',
-      message:  subscriptionGate.message,
-      ctaLabel: subscriptionGate.ctaLabel,
-      ctaPath:  subscriptionGate.ctaPath,
-      color:    '#f59e0b',
-    });
-  }
+//   const items = [];
+//   if (!kycGate.passed) {
+//     items.push({
+//       key:      'kyc',
+//       message:  kycGate.message,
+//       ctaLabel: kycGate.ctaLabel,
+//       ctaPath:  kycGate.ctaPath,
+//       color:    kycGate.status === 'submitted' ? '#2563eb' : '#dc2626',
+//     });
+//   }
+//   if (!subscriptionGate.passed) {
+//     items.push({
+//       key:      'sub',
+//       message:  subscriptionGate.message,
+//       ctaLabel: subscriptionGate.ctaLabel,
+//       ctaPath:  subscriptionGate.ctaPath,
+//       color:    '#f59e0b',
+//     });
+//   }
 
-  return (
-    <div style={{
-      position:     'absolute',
-      bottom:       'calc(100% + 8px)',
-      left:         '50%',
-      transform:    'translateX(-50%)',
-      width:        '260px',
-      background:   '#ffffff',
-      border:       '1px solid #e5e7eb',
-      borderRadius: '12px',
-      boxShadow:    '0 10px 25px rgba(0,0,0,0.12)',
-      zIndex:       1000,
-      padding:      '14px',
-    }}>
-      {/* Caret */}
-      <div style={{
-        position:   'absolute',
-        bottom:     '-6px',
-        left:       '50%',
-        transform:  'translateX(-50%)',
-        width:      '12px',
-        height:     '12px',
-        background: '#ffffff',
-        border:     '1px solid #e5e7eb',
-        borderTop:  'none',
-        borderLeft: 'none',
-        rotate:     '45deg',
-      }} />
+//   return (
+//     <div style={{
+//       position:     'absolute',
+//       bottom:       'calc(100% + 8px)',
+//       left:         '50%',
+//       transform:    'translateX(-50%)',
+//       width:        '260px',
+//       background:   '#ffffff',
+//       border:       '1px solid #e5e7eb',
+//       borderRadius: '12px',
+//       boxShadow:    '0 10px 25px rgba(0,0,0,0.12)',
+//       zIndex:       1000,
+//       padding:      '14px',
+//     }}>
+//       {/* Caret */}
+//       <div style={{
+//         position:   'absolute',
+//         bottom:     '-6px',
+//         left:       '50%',
+//         transform:  'translateX(-50%)',
+//         width:      '12px',
+//         height:     '12px',
+//         background: '#ffffff',
+//         border:     '1px solid #e5e7eb',
+//         borderTop:  'none',
+//         borderLeft: 'none',
+//         rotate:     '45deg',
+//       }} />
 
-      <p style={{ margin: '0 0 10px', fontSize: '12px', fontWeight: 700, color: '#111827' }}>
-        🔒 Rewards locked
-      </p>
+//       <p style={{ margin: '0 0 10px', fontSize: '12px', fontWeight: 700, color: '#111827' }}>
+//         🔒 Rewards locked
+//       </p>
 
-      {items.map(item => (
-        <div key={item.key} style={{ marginBottom: '10px' }}>
-          <p style={{ margin: '0 0 4px', fontSize: '12px', color: '#374151', lineHeight: '1.4' }}>
-            {item.message}
-          </p>
-          {item.ctaPath && (
-            <button
-              onClick={() => { navigate(item.ctaPath); onClose(); }}
-              style={{
-                padding:      '4px 10px',
-                background:   item.color,
-                color:        '#ffffff',
-                border:       'none',
-                borderRadius: '6px',
-                fontSize:     '11px',
-                fontWeight:   600,
-                cursor:       'pointer',
-              }}
-            >
-              {item.ctaLabel} →
-            </button>
-          )}
-        </div>
-      ))}
-    </div>
-  );
-}
+//       {items.map(item => (
+//         <div key={item.key} style={{ marginBottom: '10px' }}>
+//           <p style={{ margin: '0 0 4px', fontSize: '12px', color: '#374151', lineHeight: '1.4' }}>
+//             {item.message}
+//           </p>
+//           {item.ctaPath && (
+//             <button
+//               onClick={() => { navigate(item.ctaPath); onClose(); }}
+//               style={{
+//                 padding:      '4px 10px',
+//                 background:   item.color,
+//                 color:        '#ffffff',
+//                 border:       'none',
+//                 borderRadius: '6px',
+//                 fontSize:     '11px',
+//                 fontWeight:   600,
+//                 cursor:       'pointer',
+//               }}
+//             >
+//               {item.ctaLabel} →
+//             </button>
+//           )}
+//         </div>
+//       ))}
+//     </div>
+//   );
+// }
 
 /* ── Main component ───────────────────────────────────────────────────────────── */
 export function RewardClaimButton({
   onClaim,
-  label       = 'Claim Reward',
-  claimed     = false,
-  disabled    = false,
+  label = 'Claim Reward',
+  claimed = false,
+  disabled = false,
   disabledTip = '',
-  size        = 'md',
-  variant     = 'primary',
-  className   = '',
+  size = 'md',
+  variant = 'primary',
+  className = '',
   onSuccess,
   onError,
 }) {
@@ -160,11 +163,11 @@ export function RewardClaimButton({
     parseClaimError,
   } = useRewardEligibility();
 
-  const [loading,       setLoading]       = useState(false);
-  const [showPopover,   setShowPopover]   = useState(false);
-  const [justClaimed,   setJustClaimed]   = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [showPopover, setShowPopover] = useState(false);
+  const [justClaimed, setJustClaimed] = useState(false);
   const popoverRef = useRef(null);
-  const buttonRef  = useRef(null);
+  const buttonRef = useRef(null);
 
   // Close popover on outside click
   useEffect(() => {
@@ -177,6 +180,19 @@ export function RewardClaimButton({
     document.addEventListener('mousedown', handleClick);
     return () => document.removeEventListener('mousedown', handleClick);
   }, [showPopover]);
+
+  useEffect(() => {
+    if (justClaimed) {
+      confetti({
+        particleCount: 120,
+        spread: 90,
+        startVelocity: 30,
+        gravity: 0.8,
+        ticks: 200,
+        origin: { y: 0.6 },
+      });
+    }
+  }, [justClaimed]);
 
   const handleClick = useCallback(async () => {
     // Not eligible — show popover
@@ -197,6 +213,7 @@ export function RewardClaimButton({
     try {
       const result = await onClaim();
       setJustClaimed(true);
+
       setTimeout(() => setJustClaimed(false), 2500);
       if (typeof onSuccess === 'function') onSuccess(result);
     } catch (err) {
@@ -217,48 +234,48 @@ export function RewardClaimButton({
   // ── Claimed state ────────────────────────────────────────────────────────
   if (claimed || justClaimed) {
     return (
-      <button
+      <motion.button
         disabled
         className={className}
         style={{
           ...sz,
-          display:     'inline-flex',
-          alignItems:  'center',
-          gap:         '6px',
-          background:  '#f3f4f6',
-          color:       '#6b7280',
-          border:      '1px solid #e5e7eb',
-          cursor:      'default',
-          fontWeight:  600,
+          display: 'inline-flex',
+          alignItems: 'center',
+          gap: '6px',
+          background: '#f3f4f6',
+          color: '#6b7280',
+          border: '1px solid #e5e7eb',
+          cursor: 'default',
+          fontWeight: 600,
         }}
       >
         <CheckIcon />
         Claimed
-      </button>
+      </motion.button>
     );
   }
 
   // ── Loading state ────────────────────────────────────────────────────────
   if (loading) {
     return (
-      <button
+      <motion.button
         disabled
         className={className}
         style={{
           ...sz,
-          display:     'inline-flex',
-          alignItems:  'center',
-          gap:         '6px',
-          background:  '#111827',
-          color:       '#ffffff',
-          border:      'none',
-          cursor:      'wait',
-          fontWeight:  600,
+          display: 'inline-flex',
+          alignItems: 'center',
+          gap: '6px',
+          background: '#111827',
+          color: '#ffffff',
+          border: 'none',
+          cursor: 'wait',
+          fontWeight: 600,
         }}
       >
         <SpinnerIcon />
         Claiming…
-      </button>
+      </motion.button>
     );
   }
 
@@ -271,9 +288,9 @@ export function RewardClaimButton({
         style={{
           ...sz,
           background: '#f3f4f6',
-          color:      '#9ca3af',
-          border:     '1px solid #e5e7eb',
-          cursor:     'wait',
+          color: '#9ca3af',
+          border: '1px solid #e5e7eb',
+          cursor: 'wait',
           fontWeight: 600,
         }}
       >
@@ -292,9 +309,9 @@ export function RewardClaimButton({
         style={{
           ...sz,
           background: '#f3f4f6',
-          color:      '#9ca3af',
-          border:     '1px solid #e5e7eb',
-          cursor:     'not-allowed',
+          color: '#9ca3af',
+          border: '1px solid #e5e7eb',
+          cursor: 'not-allowed',
           fontWeight: 600,
         }}
       >
@@ -307,36 +324,36 @@ export function RewardClaimButton({
   if (!eligible) {
     return (
       <div style={{ position: 'relative', display: 'inline-block' }}>
-        <button
+        <motion.button
           ref={buttonRef}
           onClick={handleClick}
           className={className}
           title={blockerMessage}
           style={{
             ...sz,
-            display:     'inline-flex',
-            alignItems:  'center',
-            gap:         '6px',
-            background:  '#f3f4f6',
-            color:       '#9ca3af',
-            border:      '1px solid #e5e7eb',
-            cursor:      'pointer',
-            fontWeight:  600,
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: '6px',
+            background: '#f3f4f6',
+            color: '#9ca3af',
+            border: '1px solid #e5e7eb',
+            cursor: 'pointer',
+            fontWeight: 600,
           }}
         >
           <LockIcon />
           {label}
-        </button>
+        </motion.button>
 
         {showPopover && (
-          <div ref={popoverRef}>
-            <EligibilityPopover
+          <motion.div ref={popoverRef}>
+            <FloatingEligibilityPopover
               kycGate={kycGate}
               subscriptionGate={subscriptionGate}
               blockerCode={blockerCode}
               onClose={() => setShowPopover(false)}
             />
-          </div>
+          </motion.div>
         )}
       </div>
     );
@@ -345,38 +362,38 @@ export function RewardClaimButton({
   // ── Eligible — active button ─────────────────────────────────────────────
   const primaryStyle = {
     ...sz,
-    display:     'inline-flex',
-    alignItems:  'center',
-    gap:         '6px',
-    background:  '#111827',
-    color:       '#ffffff',
-    border:      'none',
-    cursor:      'pointer',
-    fontWeight:  600,
-    transition:  'background 0.15s',
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: '6px',
+    background: '#111827',
+    color: '#ffffff',
+    border: 'none',
+    cursor: 'pointer',
+    fontWeight: 600,
+    transition: 'background 0.15s',
   };
 
   const outlineStyle = {
     ...sz,
-    display:     'inline-flex',
-    alignItems:  'center',
-    gap:         '6px',
-    background:  'transparent',
-    color:       '#111827',
-    border:      '1.5px solid #111827',
-    cursor:      'pointer',
-    fontWeight:  600,
-    transition:  'background 0.15s',
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: '6px',
+    background: 'transparent',
+    color: '#111827',
+    border: '1.5px solid #111827',
+    cursor: 'pointer',
+    fontWeight: 600,
+    transition: 'background 0.15s',
   };
 
   return (
-    <button
+    <motion.button
       onClick={handleClick}
       className={className}
       style={variant === 'outline' ? outlineStyle : primaryStyle}
     >
       {label}
-    </button>
+    </motion.button>
   );
 }
 

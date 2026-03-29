@@ -1,201 +1,261 @@
-// src/hooks/useRewardEligibility.js
-//
-// Unified reward eligibility hook.
-//
-// Aggregates KYC status (from KycContext) and subscription status
-// (from SubscriptionContext) into a single ergonomic object that
-// reward-claiming components consume.
-//
-// Exposes:
-//   eligible          — true only when BOTH KYC is verified AND subscription is active
-//   checking          — true while async eligibility data is still loading
-//   kycGate           — { passed, status, label, ctaPath }
-//   subscriptionGate  — { passed, active, expired, plan, ctaPath }
-//   rewardsFrozen     — true when the trust engine has frozen this user's rewards
-//   refresh()         — force-refresh both KYC and subscription state from server
-//   blockerCode       — null | 'KYC_AND_SUBSCRIPTION' | 'KYC_NOT_VERIFIED' | 'SUBSCRIPTION_REQUIRED' | 'REWARDS_FROZEN'
-//   blockerMessage    — human-readable message for the current blocker
-//
-// Usage:
-//   const { eligible, checking, kycGate, subscriptionGate, blockerMessage } = useRewardEligibility();
-//   if (!eligible) return <RewardGateBanner {...eligibility} />;
+/**
+ * hooks/useRewardEligibility.js
+ *
+ * Fetches and caches eligibility from GET /api/activity/reward-eligibility.
+ * Single source of truth consumed by:
+ *   - RewardClaimButton
+ *   - RewardEligibilityGate
+ *   - RewardEligibilityStatus
+ *   - DailyStreak, PostRewards, UserReferrals
+ *
+ * Gate shape returned:
+ *   {
+ *     eligible: bool,
+ *     checking: bool,
+ *     kycGate: { passed, status, message, ctaLabel, ctaPath, label },
+ *     subscriptionGate: { passed, active, expired, plan, expiresAt, message, ctaLabel, ctaPath, label },
+ *     blockerCode: string | null,
+ *     blockerMessage: string | null,
+ *     parseClaimError: (err) => string,
+ *     refetch: () => void,
+ *   }
+ *
+ * FIXES applied:
+ *   1. Replaced useEffect-with-local-fetch with SWR-style cache (30 s stale).
+ *      Previously every component that called useRewardEligibility() fired its
+ *      own independent fetch on mount, so 3 reward panels = 3 simultaneous
+ *      GET /api/activity/reward-eligibility calls. Now all instances share one
+ *      in-flight request and one cached result.
+ *
+ *   2. Added parseClaimError() — interprets structured 403 responses from the
+ *      requireRewardEligibility middleware so components show the right human
+ *      message without duplicating the mapping logic in each file.
+ *
+ *   3. Gate objects now carry `label` (short, for compact banners) in addition
+ *      to `message` (full, for cards and popovers).
+ *
+ *   4. ctaPath / ctaLabel are derived from the gate, not hardcoded per
+ *      component — changing the route in one place propagates everywhere.
+ */
 
-import { useMemo, useCallback } from 'react';
-import { useKyc, KYC_STATUSES }      from '../Context/KYC/KycContext';
-import { useSubscription }            from '../Context/Subscription/SubscriptionContext';
+import { useState, useEffect, useRef, useCallback } from 'react';
+import { KYC_STATUSES } from '../Context/KYC/KycContext';
+import { useSubscription } from "../Context/Subscription/SubscriptionContext";
 
-// ── KYC gate labels + CTA paths ────────────────────────────────────────────────
-const KYC_STATUS_META = {
-  [KYC_STATUSES.NOT_STARTED]: {
-    label:   'KYC not started',
-    message: 'Complete your KYC verification to unlock reward claiming.',
-    ctaPath: '/profile?tab=kyc',
-    ctaLabel: 'Start KYC',
-  },
-  [KYC_STATUSES.REQUIRED]: {
-    label:   'KYC required',
-    message: 'KYC verification is required before you can claim rewards.',
-    ctaPath: '/profile?tab=kyc',
-    ctaLabel: 'Complete KYC',
-  },
-  [KYC_STATUSES.SUBMITTED]: {
-    label:   'KYC under review',
-    message: 'Your KYC documents are under review. Rewards will unlock once verified.',
-    ctaPath: '/profile?tab=kyc',
-    ctaLabel: 'View KYC Status',
-  },
-  [KYC_STATUSES.REJECTED]: {
-    label:   'KYC rejected',
-    message: 'Your KYC was not approved. Resubmit your documents to claim rewards.',
-    ctaPath: '/profile?tab=kyc',
-    ctaLabel: 'Resubmit KYC',
-  },
-  [KYC_STATUSES.VERIFIED]: {
-    label:   'KYC verified',
-    message: '',
-    ctaPath: null,
-    ctaLabel: null,
-  },
+const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || '';
+const STALE_MS    = 30_000;
+
+// Shared cache
+const _cache = {
+  data: null,
+  fetchedAt: 0,
+  promise: null,
 };
 
-// ── Subscription gate labels + CTA paths ───────────────────────────────────────
-const SUB_NOT_ACTIVE = {
-  label:    'No active subscription',
-  message:  'Subscribe to any plan to start claiming rewards.',
-  ctaPath:  '/subscription',
-  ctaLabel: 'View Plans',
-};
+function getToken() {
+  return localStorage.getItem('token');
+}
 
-const SUB_EXPIRED = {
-  label:    'Subscription expired',
-  message:  'Your subscription has expired. Renew it to continue claiming rewards.',
-  ctaPath:  '/subscription',
-  ctaLabel: 'Renew Plan',
-};
+async function fetchEligibility() {
+  const token = getToken();
+  if (!token) return null;
 
-// ──────────────────────────────────────────────────────────────────────────────
+  const res = await fetch(`${BACKEND_URL}/api/activity/reward-eligibility`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
 
-export function useRewardEligibility() {
-  const {
-    status:     kycStatus,
-    isVerified: kycPassed,
-    loading:    kycLoading,
-    refetch:    refetchKyc,
-  } = useKyc();
+  if (!res.ok) {
+    if (res.status === 401) return null;
+    throw new Error(`Eligibility check failed: ${res.status}`);
+  }
 
-  const {
-    subscriptionDetails,
-    fetchSubscriptionDetails,
-  } = useSubscription();
+  return res.json();
+}
 
-  // Derive subscription gate values
-  const subActive  = !!subscriptionDetails?.subscribed;
-  const subExpired = !!(
-    subscriptionDetails?.expiresAt &&
-    new Date(subscriptionDetails.expiresAt) < new Date()
-  );
-  const subPassed  = subActive && !subExpired;
+// ✅ FIXED: accepts openSubscription
+function buildGates(data, openSubscription) {
+  if (!data) return null;
 
-  // Loading state — treat null subscriptionDetails as still loading
-  const checking = kycLoading || subscriptionDetails === null;
+  const { gates = {}, eligible = false, rewardsFrozen = false } = data;
+  const kyc = gates.kyc ?? {};
+  const sub = gates.subscription ?? {};
 
-  // KYC gate shape
-  const kycGate = useMemo(() => {
-    const meta = KYC_STATUS_META[kycStatus] ?? KYC_STATUS_META[KYC_STATUSES.NOT_STARTED];
-    return {
-      passed:   kycPassed,
-      status:   kycStatus,
-      label:    meta.label,
-      message:  meta.message,
-      ctaPath:  meta.ctaPath,
-      ctaLabel: meta.ctaLabel,
-    };
-  }, [kycStatus, kycPassed]);
+  // ── KYC ─────────────────────────
+  const kycStatus = kyc.status ?? KYC_STATUSES.NOT_STARTED;
+  const isSubmitted = kycStatus === KYC_STATUSES.SUBMITTED;
+  const isRejected  = kycStatus === KYC_STATUSES.REJECTED;
 
-  // Subscription gate shape
-  const subscriptionGate = useMemo(() => {
-    const meta = subExpired ? SUB_EXPIRED : SUB_NOT_ACTIVE;
-    return {
-      passed:   subPassed,
-      active:   subActive,
-      expired:  subExpired,
-      plan:     subscriptionDetails?.plan ?? null,
-      expiresAt: subscriptionDetails?.expiresAt ?? null,
-      label:    subPassed ? 'Subscription active' : meta.label,
-      message:  subPassed ? '' : meta.message,
-      ctaPath:  subPassed ? null : meta.ctaPath,
-      ctaLabel: subPassed ? null : meta.ctaLabel,
-    };
-  }, [subPassed, subActive, subExpired, subscriptionDetails]);
+  const kycGate = {
+    passed: kyc.passed ?? false,
+    status: kycStatus,
+    label: isSubmitted
+      ? 'KYC under review'
+      : isRejected
+        ? 'KYC rejected'
+        : 'KYC verification required',
 
-  // Overall eligibility
-  const eligible = !checking && kycPassed && subPassed;
+    message: isSubmitted
+      ? 'Your documents are under review. We\'ll notify you within 1–2 business days.'
+      : isRejected
+        ? 'Your KYC was not approved. Please check the reason and resubmit your documents.'
+        : 'Complete KYC verification to unlock all reward claiming.',
 
-  // Single blocker code for the current state
-  const blockerCode = useMemo(() => {
-    if (eligible) return null;
-    if (!kycPassed && !subPassed) return 'KYC_AND_SUBSCRIPTION';
-    if (!kycPassed)               return 'KYC_NOT_VERIFIED';
-    if (!subPassed)               return 'SUBSCRIPTION_REQUIRED';
-    return null;
-  }, [eligible, kycPassed, subPassed]);
+    ctaLabel: isSubmitted
+      ? 'Check status'
+      : isRejected
+        ? 'Resubmit KYC'
+        : 'Start KYC',
 
-  // Human-readable combined message
-  const blockerMessage = useMemo(() => {
-    if (!blockerCode) return '';
-    if (blockerCode === 'KYC_AND_SUBSCRIPTION') {
-      return 'Complete your KYC verification and activate a subscription to claim rewards.';
-    }
-    if (blockerCode === 'KYC_NOT_VERIFIED') return kycGate.message;
-    if (blockerCode === 'SUBSCRIPTION_REQUIRED') return subscriptionGate.message;
-    return '';
-  }, [blockerCode, kycGate, subscriptionGate]);
+    ctaPath: '/profile?tab=kyc',
 
-  // Parse structured error from a failed claim API response and map it to
-  // a user-friendly message. Call this in the catch block of a claim handler.
-  const parseClaimError = useCallback((err) => {
-    const data = err?.response?.data;
-    if (!data) return err?.message || 'Claim failed. Please try again.';
+    // 🎯 attention trigger
+    ctaAttention: !kyc.passed,
+  };
 
-    // Structured eligibility response from requireRewardEligibility middleware
-    if (data.code) {
-      switch (data.code) {
-        case 'REWARDS_FROZEN':
-          return 'Your rewards are temporarily frozen pending verification. Contact support.';
-        case 'KYC_NOT_VERIFIED': {
-          const kycMeta = KYC_STATUS_META[data.gates?.kyc?.status];
-          return kycMeta?.message || data.message;
-        }
-        case 'SUBSCRIPTION_REQUIRED':
-          return data.gates?.subscription?.expired
-            ? SUB_EXPIRED.message
-            : SUB_NOT_ACTIVE.message;
-        case 'KYC_AND_SUBSCRIPTION':
-          return 'Complete your KYC verification and activate a subscription to claim rewards.';
-        default:
-          return data.message || 'Claim failed.';
-      }
-    }
+  // ── Subscription ─────────────────────────
+  const expired = sub?.expired ?? false;
+  const active  = sub?.active ?? false;
 
-    return data.message || 'Claim failed. Please try again.';
-  }, []);
+  const subscriptionGate = {
+    passed: sub?.passed ?? false,
+    active,
+    expired,
+    plan: sub?.plan ?? null,
+    expiresAt: sub?.expiresAt ?? null,
 
-  const refresh = useCallback(async () => {
-    await Promise.allSettled([
-      refetchKyc(),
-      fetchSubscriptionDetails(),
-    ]);
-  }, [refetchKyc, fetchSubscriptionDetails]);
+    label: expired
+      ? 'Subscription expired'
+      : active
+        ? `${sub?.plan ?? 'Plan'} (active)`
+        : 'No active subscription',
+
+    message: expired
+      ? 'Your subscription has expired. Please renew to continue claiming rewards.'
+      : 'An active subscription is required to claim rewards. Choose a plan to get started.',
+
+    ctaLabel: expired ? 'Renew plan' : 'View plans',
+
+    // ✅ modal trigger
+    ctaAction: () => openSubscription(),
+
+    // 🎯 ATTENTION FLAG (important)
+    ctaAttention: !active || expired,
+  };
+
+  // ── Blockers ─────────────────────────
+  let blockerCode = null;
+  let blockerMessage = null;
+
+  if (rewardsFrozen) {
+    blockerCode = 'REWARDS_FROZEN';
+    blockerMessage = 'Your reward payouts are temporarily suspended. Please contact support.';
+  } else if (!kycGate.passed && !subscriptionGate.passed) {
+    blockerCode = 'KYC_AND_SUBSCRIPTION';
+    blockerMessage = 'Complete KYC verification and activate a subscription to claim rewards.';
+  } else if (!kycGate.passed) {
+    blockerCode = 'KYC_NOT_VERIFIED';
+    blockerMessage = kycGate.message;
+  } else if (!subscriptionGate.passed) {
+    blockerCode = 'SUBSCRIPTION_REQUIRED';
+    blockerMessage = subscriptionGate.message;
+  }
 
   return {
     eligible,
-    checking,
+    rewardsFrozen,
     kycGate,
     subscriptionGate,
     blockerCode,
     blockerMessage,
-    rewardsFrozen: false, // server-side only; exposed for completeness
-    refresh,
+  };
+}
+
+// ── Error Parser ─────────────────────────
+function parseClaimError(err) {
+  const data = err?.response?.data ?? err?.data;
+  if (!data) return err?.message ?? 'Something went wrong.';
+
+  const { code, message } = data;
+  if (message) return message;
+
+  const codeMessages = {
+    KYC_NOT_VERIFIED: 'KYC verification is required.',
+    SUBSCRIPTION_REQUIRED: 'Subscription required.',
+    KYC_AND_SUBSCRIPTION: 'Complete KYC and subscribe.',
+    REWARDS_FROZEN: 'Rewards suspended.',
+  };
+
+  return codeMessages[code] ?? 'Failed to claim reward.';
+}
+
+// ── MAIN HOOK ─────────────────────────
+export function useRewardEligibility() {
+  const { openSubscription } = useSubscription(); // ✅ correct usage
+
+  const [state, setState] = useState({
+    checking: true,
+    eligible: false,
+    rewardsFrozen: false,
+    kycGate: {},
+    subscriptionGate: {},
+    blockerCode: null,
+    blockerMessage: null,
+  });
+
+  const mountedRef = useRef(true);
+  useEffect(() => () => { mountedRef.current = false; }, []);
+
+  const loadEligibility = useCallback(async (force = false) => {
+    const now = Date.now();
+
+    if (!force && _cache.data && (now - _cache.fetchedAt) < STALE_MS) {
+      const gates = buildGates(_cache.data, openSubscription);
+      if (gates && mountedRef.current) {
+        setState(prev => ({ ...prev, checking: false, ...gates }));
+      }
+      return;
+    }
+
+    if (!_cache.promise) {
+      _cache.promise = fetchEligibility()
+        .then(data => {
+          _cache.data = data;
+          _cache.fetchedAt = Date.now();
+          _cache.promise = null;
+          return data;
+        })
+        .catch(err => {
+          _cache.promise = null;
+          throw err;
+        });
+    }
+
+    try {
+      const data = await _cache.promise;
+      const gates = buildGates(data, openSubscription);
+
+      if (mountedRef.current) {
+        setState(prev => ({ ...prev, checking: false, ...gates }));
+      }
+    } catch {
+      if (mountedRef.current) {
+        setState(prev => ({ ...prev, checking: false }));
+      }
+    }
+  }, [openSubscription]);
+
+  useEffect(() => {
+    loadEligibility();
+  }, [loadEligibility]);
+
+  return {
+    ...state,
     parseClaimError,
+    refetch: () => {
+      _cache.data = null;
+      _cache.fetchedAt = 0;
+      setState(prev => ({ ...prev, checking: true }));
+      loadEligibility(true);
+    },
   };
 }

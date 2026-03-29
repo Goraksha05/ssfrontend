@@ -147,9 +147,11 @@ export const StreakProvider = ({ children }) => {
     <StreakContext.Provider
       value={{
         streakCount,
+        totalUniqueDays: streakCount, // streakCount IS the unique-day count (set from data.totalUniqueDays)
         streakDates,
         claimedDays,
         fetchStreakHistory,
+        fetchStreakData: fetchStreakHistory, // alias consumed by DailyStreak after a claim
         claimStreakReward,
         message,
         rewardMilestones,

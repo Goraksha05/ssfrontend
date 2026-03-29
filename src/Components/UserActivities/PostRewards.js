@@ -1,5 +1,6 @@
 // PostRewards.jsx — Redesigned with KYC + subscription eligibility enforcement
 import React, { useContext, useState } from "react";
+import { motion } from "framer-motion";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../../Context/Authorisation/AuthContext";
 import PostContext from "../../Context/Posts/PostContext";
@@ -23,7 +24,8 @@ function PostEligibilityGate({ kycGate, subscriptionGate, blockerCode }) {
       label:    kycGate.status === "submitted" ? "KYC under review" : "KYC verification required",
       sub:      kycGate.message,
       ctaLabel: kycGate.status === "submitted" ? null : kycGate.ctaLabel,
-      ctaPath:  kycGate.ctaPath,
+      // KYC has a real route
+      onCta:    () => navigate(kycGate.ctaPath),
       variant:  kycGate.status === "submitted" ? "info" : "error",
     });
   }
@@ -33,7 +35,8 @@ function PostEligibilityGate({ kycGate, subscriptionGate, blockerCode }) {
       label:    subscriptionGate.label,
       sub:      subscriptionGate.message,
       ctaLabel: subscriptionGate.ctaLabel,
-      ctaPath:  subscriptionGate.ctaPath,
+      // Subscription is a modal — call ctaAction, never navigate
+      onCta:    () => subscriptionGate.ctaAction?.(),
       variant:  "warn",
     });
   }
@@ -56,9 +59,9 @@ function PostEligibilityGate({ kycGate, subscriptionGate, blockerCode }) {
               <p className="post-gate-item__sub">{item.sub}</p>
             </div>
             {item.ctaLabel && (
-              <button className="post-gate-item__cta" onClick={() => navigate(item.ctaPath)}>
+              <motion.button className="post-gate-item__cta" onClick={item.onCta}>
                 {item.ctaLabel} →
-              </button>
+              </motion.button>
             )}
           </div>
         ))}

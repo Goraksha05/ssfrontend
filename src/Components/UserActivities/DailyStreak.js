@@ -8,6 +8,7 @@ import { useNavigate } from "react-router-dom";
 import usePlanSlabs from "../../hooks/usePlanSlabs";
 import { useStreak } from "../../Context/Activity/StreakContext";
 import { useRewardEligibility } from "../../hooks/useRewardEligibility";
+import { useSubscription } from "../../Context/Subscription/SubscriptionContext";
 import BankDetailsModal from "../Common/BankDetailsModal";
 import "./Rewards.css";
 
@@ -21,6 +22,7 @@ const toISO = (d) => {
 /* ── Eligibility gate banner ─────────────────────────────────────────────────── */
 function EligibilityBanner({ kycGate, subscriptionGate, blockerCode }) {
   const navigate = useNavigate();
+  const { openSubscription } = useSubscription();
 
   if (blockerCode === "KYC_AND_SUBSCRIPTION") {
     return (
@@ -39,7 +41,7 @@ function EligibilityBanner({ kycGate, subscriptionGate, blockerCode }) {
             <div className="eligibility-banner__step eligibility-banner__step--warn">
               <span className="eligibility-banner__step-dot" />
               <span>Active subscription required</span>
-              <button className="eligibility-banner__cta eligibility-banner__cta--warn" onClick={() => navigate("/subscription")}>
+              <button className="eligibility-banner__cta eligibility-banner__cta--warn" onClick={openSubscription}>
                 View Plans →
               </button>
             </div>

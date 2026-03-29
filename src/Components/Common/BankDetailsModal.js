@@ -1,5 +1,5 @@
-// src/Components/Common/BankDetailsModal.js
 import React, { useState, useEffect, useRef } from "react";
+import { motion, AnimatePresence } from "framer-motion";
 import { toast } from "react-toastify";
 
 const BankDetailsModal = ({ modalId, loading, onSubmit }) => {
@@ -11,24 +11,21 @@ const BankDetailsModal = ({ modalId, loading, onSubmit }) => {
   });
 
   const [mismatch, setMismatch] = useState(false);
+  const [submitted, setSubmitted] = useState(false);
   const triggerRef = useRef(null);
 
-  // 🔹 Capture the button (or element) that opened the modal
+  /* ── Modal lifecycle ── */
   useEffect(() => {
     const modalEl = document.getElementById(modalId);
     if (!modalEl) return;
 
     const handleShow = (e) => {
-      // Save the element that triggered modal
       triggerRef.current = e.relatedTarget;
+      setSubmitted(false);
     };
 
     const handleHidden = () => {
-      // Restore focus when modal closes
-      if (triggerRef.current) {
-        triggerRef.current.focus();
-      }
-      // Reset state
+      triggerRef.current?.focus();
       setBankDetails({
         accountNumber: "",
         confirmAccountNumber: "",
@@ -36,6 +33,7 @@ const BankDetailsModal = ({ modalId, loading, onSubmit }) => {
         panNumber: "",
       });
       setMismatch(false);
+      setSubmitted(false);
     };
 
     modalEl.addEventListener("show.bs.modal", handleShow);
@@ -47,118 +45,127 @@ const BankDetailsModal = ({ modalId, loading, onSubmit }) => {
     };
   }, [modalId]);
 
+  const isValid =
+    bankDetails.accountNumber &&
+    bankDetails.confirmAccountNumber &&
+    bankDetails.ifscCode &&
+    bankDetails.panNumber &&
+    bankDetails.accountNumber === bankDetails.confirmAccountNumber;
+
   const handleSubmit = () => {
-    if (bankDetails.accountNumber !== bankDetails.confirmAccountNumber) {
+    if (!isValid) {
       setMismatch(true);
-      toast.error("Account numbers do not match.");
+      toast.error("Fix errors first");
       return;
     }
+
     onSubmit(bankDetails, () => {
-      const modalEl = document.getElementById(modalId);
-      if (modalEl) {
+      setSubmitted(true);
+
+      setTimeout(() => {
+        const modalEl = document.getElementById(modalId);
         const bsModal = window.bootstrap.Modal.getInstance(modalEl);
         bsModal?.hide();
-      }
+      }, 2200);
     });
   };
 
   return (
-    <div
-      className="modal fade"
-      id={modalId}
-      tabIndex="-1"
-      aria-labelledby={`${modalId}Label`}
-      aria-hidden="true"
-    >
-      <div className="modal-dialog">
-        <div className="modal-content">
-          <div className="modal-header">
-            <h5 className="modal-title" id={`${modalId}Label`}>
-              Submit Your Bank Details
+    <div className="modal fade" id={modalId}>
+      <div className="modal-dialog modal-dialog-centered">
+        <motion.div
+          initial={{ scale: 0.9, opacity: 0 }}
+          animate={{ scale: 1, opacity: 1 }}
+          transition={{ duration: 0.25 }}
+          className="modal-content"
+          style={{ borderRadius: 18, overflow: "hidden" }}
+        >
+          {/* HEADER */}
+          <div className="modal-header border-0">
+            <h5 className="modal-title">
+              {submitted ? "🎉 Success" : "Add Bank Details"}
             </h5>
-            <button
-              type="button"
-              className="btn-close"
-              data-bs-dismiss="modal"
-              aria-label="Close"
-              id={`close-${modalId}`}
-            />
           </div>
+
+          {/* BODY */}
           <div className="modal-body">
-            <div className="mb-3">
-              <label className="form-label">Bank Account No.</label>
-              <input
-                type="text"
-                className="form-control"
-                value={bankDetails.accountNumber}
-                onChange={(e) =>
-                  setBankDetails({ ...bankDetails, accountNumber: e.target.value })
-                }
-              />
-            </div>
-            <div className="mb-3">
-              <label className="form-label">Confirm Bank Account No.</label>
-              <input
-                type="text"
-                className={`form-control ${
-                  mismatch ? "is-invalid" : ""
-                }`}
-                value={bankDetails.confirmAccountNumber}
-                onChange={(e) => {
-                  setMismatch(false);
-                  setBankDetails({
-                    ...bankDetails,
-                    confirmAccountNumber: e.target.value,
-                  });
-                }}
-              />
-              {mismatch && (
-                <div className="invalid-feedback">
-                  Account numbers do not match.
-                </div>
+
+            <AnimatePresence mode="wait">
+              {!submitted ? (
+                <motion.div
+                  key="form"
+                  initial={{ opacity: 0, x: 20 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  exit={{ opacity: 0, x: -20 }}
+                >
+                  {["accountNumber", "confirmAccountNumber", "ifscCode", "panNumber"].map((field, i) => (
+                    <motion.input
+                      key={field}
+                      initial={{ opacity: 0, y: 10 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{ delay: i * 0.05 }}
+                      placeholder={field.replace(/([A-Z])/g, " $1")}
+                      className={`form-control mb-3 ${mismatch && field === "confirmAccountNumber" ? "is-invalid" : ""}`}
+                      value={bankDetails[field]}
+                      onChange={(e) => {
+                        setMismatch(false);
+                        setBankDetails({ ...bankDetails, [field]: e.target.value });
+                      }}
+                      style={{
+                        transition: "all 0.2s",
+                      }}
+                      onFocus={(e) => (e.target.style.boxShadow = "0 0 0 2px #111827")}
+                      onBlur={(e) => (e.target.style.boxShadow = "none")}
+                    />
+                  ))}
+                </motion.div>
+              ) : (
+                <motion.div
+                  key="success"
+                  initial={{ scale: 0.8, opacity: 0 }}
+                  animate={{ scale: 1, opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  style={{ textAlign: "center", padding: 30 }}
+                >
+                  <motion.div
+                    animate={{ scale: [1, 1.3, 1] }}
+                    transition={{ duration: 0.6 }}
+                    style={{ fontSize: 50 }}
+                  >
+                    🎉
+                  </motion.div>
+
+                  <p style={{ fontWeight: 600, fontSize: 18 }}>
+                    Reward Claimed!
+                  </p>
+                  <small style={{ color: "#6b7280" }}>
+                    Processing your payout…
+                  </small>
+                </motion.div>
               )}
-            </div>
-            <div className="mb-3">
-              <label className="form-label">Bank IFSC Code</label>
-              <input
-                type="text"
-                className="form-control"
-                value={bankDetails.ifscCode}
-                onChange={(e) =>
-                  setBankDetails({ ...bankDetails, ifscCode: e.target.value })
-                }
-              />
-            </div>
-            <div className="mb-3">
-              <label className="form-label">Your PAN No.</label>
-              <input
-                type="text"
-                className="form-control"
-                value={bankDetails.panNumber}
-                onChange={(e) =>
-                  setBankDetails({ ...bankDetails, panNumber: e.target.value })
-                }
-              />
-            </div>
+            </AnimatePresence>
+
           </div>
-          <div className="modal-footer">
-            <button
-              type="button"
-              className="btn btn-secondary"
-              data-bs-dismiss="modal"
-            >
-              Cancel
-            </button>
-            <button
-              type="button"
-              className="btn btn-primary"
-              onClick={handleSubmit}
-              disabled={loading}
-            >
-              {loading ? "Submitting..." : "Submit"}
-            </button>
-          </div>
-        </div>
+
+          {/* FOOTER */}
+          {!submitted && (
+            <div className="modal-footer border-0">
+              <button className="btn btn-light" data-bs-dismiss="modal">
+                Cancel
+              </button>
+
+              <motion.button
+                whileTap={{ scale: 0.95 }}
+                whileHover={{ scale: 1.03 }}
+                className="btn btn-dark"
+                onClick={handleSubmit}
+                disabled={!isValid || loading}
+              >
+                {loading ? "Processing..." : "Submit"}
+              </motion.button>
+            </div>
+          )}
+        </motion.div>
       </div>
     </div>
   );

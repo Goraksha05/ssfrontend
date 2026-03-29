@@ -1,11 +1,13 @@
 // UserReferrals.jsx — Redesigned with KYC + subscription eligibility enforcement
 import React, { useContext, useEffect, useState, useMemo } from "react";
-import { useNavigate } from "react-router-dom";
+// import { useNavigate } from "react-router-dom";
 import { StreakContext } from "../../Context/Activity/StreakContext";
 import { useReferral } from "../../Context/Activity/ReferralContext";
 import { useAuth } from "../../Context/Authorisation/AuthContext";
 import usePlanSlabs from "../../hooks/usePlanSlabs";
 import { useRewardEligibility } from "../../hooks/useRewardEligibility";
+import RewardClaimButton from "../Rewards/RewardClaimButton";
+import EligibilityBanner from "../Common/EligibilityBanner";
 import ShareModal from "./ShareModal";
 import { toast } from "react-toastify";
 import apiRequest from "../../utils/apiRequest";
@@ -14,62 +16,62 @@ import "./Rewards.css";
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 
-const isBigMilestone   = (s) => s.groceryCoupons > 0 || s.shares > 0;
+const isBigMilestone = (s) => s.groceryCoupons > 0 || s.shares > 0;
 const isTokenMilestone = (s) => s.groceryCoupons === 0 && s.shares === 0 && s.referralToken > 0;
 
 /* ── Eligibility banner ──────────────────────────────────────────────────────── */
-function ReferralEligibilityBanner({ kycGate, subscriptionGate, blockerCode }) {
-  const navigate = useNavigate();
+// function ReferralEligibilityBanner({ kycGate, subscriptionGate, blockerCode }) {
+//   const navigate = useNavigate();
 
-  const BannerRow = ({ icon, label, sub, ctaLabel, ctaPath, variant }) => (
-    <div className={`referral-eligibility-row referral-eligibility-row--${variant}`}>
-      <span className="referral-eligibility-row__icon">{icon}</span>
-      <div className="referral-eligibility-row__body">
-        <p className="referral-eligibility-row__label">{label}</p>
-        {sub && <p className="referral-eligibility-row__sub">{sub}</p>}
-      </div>
-      {ctaLabel && (
-        <button
-          className="referral-eligibility-row__cta"
-          onClick={() => navigate(ctaPath)}
-        >
-          {ctaLabel} →
-        </button>
-      )}
-    </div>
-  );
+//   const BannerRow = ({ icon, label, sub, ctaLabel, ctaPath, variant }) => (
+//     <div className={`referral-eligibility-row referral-eligibility-row--${variant}`}>
+//       <span className="referral-eligibility-row__icon">{icon}</span>
+//       <div className="referral-eligibility-row__body">
+//         <p className="referral-eligibility-row__label">{label}</p>
+//         {sub && <p className="referral-eligibility-row__sub">{sub}</p>}
+//       </div>
+//       {ctaLabel && (
+//         <button
+//           className="referral-eligibility-row__cta"
+//           onClick={() => navigate(ctaPath)}
+//         >
+//           {ctaLabel} →
+//         </button>
+//       )}
+//     </div>
+//   );
 
-  return (
-    <div className="referral-eligibility-card">
-      <p className="referral-eligibility-card__title">🔒 Referral rewards locked</p>
-      {(!kycGate.passed) && (
-        <BannerRow
-          icon={kycGate.status === "submitted" ? "⏳" : "🛡️"}
-          label={kycGate.status === "submitted" ? "KYC under review" : "KYC verification required"}
-          sub={kycGate.message}
-          ctaLabel={kycGate.status !== "submitted" ? kycGate.ctaLabel : null}
-          ctaPath={kycGate.ctaPath}
-          variant={kycGate.status === "submitted" ? "info" : "error"}
-        />
-      )}
-      {(!subscriptionGate.passed) && (
-        <BannerRow
-          icon="💳"
-          label={subscriptionGate.label}
-          sub={subscriptionGate.message}
-          ctaLabel={subscriptionGate.ctaLabel}
-          ctaPath={subscriptionGate.ctaPath}
-          variant="warn"
-        />
-      )}
-    </div>
-  );
-}
+//   return (
+//     <div className="referral-eligibility-card">
+//       <p className="referral-eligibility-card__title">🔒 Referral rewards locked</p>
+//       {(!kycGate.passed) && (
+//         <BannerRow
+//           icon={kycGate.status === "submitted" ? "⏳" : "🛡️"}
+//           label={kycGate.status === "submitted" ? "KYC under review" : "KYC verification required"}
+//           sub={kycGate.message}
+//           ctaLabel={kycGate.status !== "submitted" ? kycGate.ctaLabel : null}
+//           ctaPath={kycGate.ctaPath}
+//           variant={kycGate.status === "submitted" ? "info" : "error"}
+//         />
+//       )}
+//       {(!subscriptionGate.passed) && (
+//         <BannerRow
+//           icon="💳"
+//           label={subscriptionGate.label}
+//           sub={subscriptionGate.message}
+//           ctaLabel={subscriptionGate.ctaLabel}
+//           ctaPath={subscriptionGate.ctaPath}
+//           variant="warn"
+//         />
+//       )}
+//     </div>
+//   );
+// }
 
 /* ── Main component ──────────────────────────────────────────────────────────── */
 const UserReferrals = ({ onActivityRecorded }) => {
-  const { user }    = useAuth();
-  const navigate    = useNavigate();
+  const { user } = useAuth();
+  // const navigate = useNavigate();
   const { activities } = useContext(StreakContext);
   const { referralCount = 0, fetchReferralData, referredUsers = [] } = useReferral();
 
@@ -84,38 +86,38 @@ const UserReferrals = ({ onActivityRecorded }) => {
     parseClaimError,
   } = useRewardEligibility();
 
-  const sortedSlabs  = useMemo(() =>
+  const sortedSlabs = useMemo(() =>
     [...rawSlabs]
       .filter(s => typeof s.referralCount === "number")
       .sort((a, b) => a.referralCount - b.referralCount),
     [rawSlabs]
   );
-  const bigSlabs    = useMemo(() => sortedSlabs.filter(isBigMilestone),   [sortedSlabs]);
-  const tokenSlabs  = useMemo(() => sortedSlabs.filter(isTokenMilestone), [sortedSlabs]);
+  const bigSlabs = useMemo(() => sortedSlabs.filter(isBigMilestone), [sortedSlabs]);
+  const tokenSlabs = useMemo(() => sortedSlabs.filter(isTokenMilestone), [sortedSlabs]);
 
-  const [selectedSlab,     setSelectedSlab]     = useState(null);
-  const [claimedSlabs,     setClaimedSlabs]     = useState([]);
-  const [loading,          setLoading]          = useState(false);
-  const [showShareModal,   setShowShareModal]   = useState(false);
+  const [selectedSlab, setSelectedSlab] = useState(null);
+  const [claimedSlabs, setClaimedSlabs] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [showShareModal, setShowShareModal] = useState(false);
   const [showReferredList, setShowReferredList] = useState(false);
-  const [showTokenSlabs,   setShowTokenSlabs]   = useState(false);
+  const [showTokenSlabs, setShowTokenSlabs] = useState(false);
 
-  const token      = localStorage.getItem("token");
+  const token = localStorage.getItem("token");
   const referralId = user?.referralId;
   const inviteLink = referralId
     ? `${window.location.origin}/invite/${referralId}`
     : `${window.location.origin}/invite`;
 
-  const activeReferrals   = referredUsers.filter(u => u.subscription?.active);
+  const activeReferrals = referredUsers.filter(u => u.subscription?.active);
   const inactiveReferrals = referredUsers.filter(u => !u.subscription?.active);
-  const activeCount       = activeReferrals.length;
+  const activeCount = activeReferrals.length;
 
   useEffect(() => {
-    const fromUser     = (user?.redeemedReferralSlabs ?? []).map(Number).filter(Boolean);
+    const fromUser = (user?.redeemedReferralSlabs ?? []).map(Number).filter(Boolean);
     const fromActivity = Array.isArray(activities)
       ? activities
-          .filter(a => a?.type === "referral_reward" && a.slabAwarded != null)
-          .map(a => Number(a.slabAwarded))
+        .filter(a => a?.type === "referral_reward" && a.slabAwarded != null)
+        .map(a => Number(a.slabAwarded))
       : [];
     setClaimedSlabs([...new Set([...fromUser, ...fromActivity])]);
   }, [activities, user]);
@@ -162,9 +164,9 @@ const UserReferrals = ({ onActivityRecorded }) => {
 
   let disabledReason = "";
   if (eligible) {
-    if (!selectedSlab)                       disabledReason = "Select a milestone first";
+    if (!selectedSlab) disabledReason = "Select a milestone first";
     else if (claimedSlabs.includes(selectedSlab)) disabledReason = "Already claimed";
-    else if (activeCount < selectedSlab)     disabledReason = `Need ${selectedSlab} active referrals (you have ${activeCount})`;
+    else if (activeCount < selectedSlab) disabledReason = `Need ${selectedSlab} active referrals (you have ${activeCount})`;
   }
 
   const copyLink = () => {
@@ -177,7 +179,7 @@ const UserReferrals = ({ onActivityRecorded }) => {
 
       {/* ── Eligibility banner ── */}
       {!checking && !eligible && (
-        <ReferralEligibilityBanner
+        <EligibilityBanner
           kycGate={kycGate}
           subscriptionGate={subscriptionGate}
           blockerCode={blockerCode}
@@ -227,8 +229,8 @@ const UserReferrals = ({ onActivityRecorded }) => {
 
       <div className="referral-chips-row">
         {bigSlabs.map(s => {
-          const isClaimed  = claimedSlabs.includes(s.referralCount);
-          const isActive   = activeCount >= s.referralCount;
+          const isClaimed = claimedSlabs.includes(s.referralCount);
+          const isActive = activeCount >= s.referralCount;
           const stateClass = isClaimed ? "claimed" : isActive ? "active" : "locked";
           return (
             <div key={s.referralCount} className={`referral-big-chip ${stateClass}`}>
@@ -237,8 +239,8 @@ const UserReferrals = ({ onActivityRecorded }) => {
               <span className="referral-chip-sub">referrals</span>
               <div className="referral-chip-rewards">
                 {s.groceryCoupons > 0 && <span className="referral-reward-pill">🛒 ₹{s.groceryCoupons.toLocaleString("en-IN")}</span>}
-                {s.shares         > 0 && <span className="referral-reward-pill">📈 {s.shares} shares</span>}
-                {s.referralToken  > 0 && <span className="referral-reward-pill">🪙 {s.referralToken} tokens</span>}
+                {s.shares > 0 && <span className="referral-reward-pill">📈 {s.shares} shares</span>}
+                {s.referralToken > 0 && <span className="referral-reward-pill">🪙 {s.referralToken} tokens</span>}
               </div>
               {isClaimed && <span className="referral-claimed-badge">Claimed</span>}
             </div>
@@ -258,8 +260,8 @@ const UserReferrals = ({ onActivityRecorded }) => {
           {showTokenSlabs && (
             <div className="referral-token-grid">
               {tokenSlabs.map(s => {
-                const isClaimed  = claimedSlabs.includes(s.referralCount);
-                const isActive   = activeCount >= s.referralCount;
+                const isClaimed = claimedSlabs.includes(s.referralCount);
+                const isActive = activeCount >= s.referralCount;
                 const stateClass = isClaimed ? "claimed" : isActive ? "active" : "";
                 return (
                   <div key={s.referralCount} className={`referral-token-chip ${stateClass}`}>
@@ -278,7 +280,7 @@ const UserReferrals = ({ onActivityRecorded }) => {
       <div className="referral-link-box">
         <code className="referral-link-code">{inviteLink}</code>
         <div className="referral-link-actions">
-          <button className="referral-copy-btn"  onClick={copyLink}>📋 Copy</button>
+          <button className="referral-copy-btn" onClick={copyLink}>📋 Copy</button>
           <button className="referral-share-btn" onClick={() => setShowShareModal(true)}>🔗 Share</button>
         </div>
       </div>
@@ -353,27 +355,27 @@ const UserReferrals = ({ onActivityRecorded }) => {
         )}
 
         {/* Eligibility-aware button */}
-        {checking ? (
-          <button className="rewards-claim-btn referral" disabled>Checking…</button>
-        ) : !eligible ? (
-          <button
-            type="button"
-            className="rewards-claim-btn referral rewards-claim-btn--locked"
-            onClick={() => navigate(kycGate.passed ? subscriptionGate.ctaPath : kycGate.ctaPath)}
-          >
-            🔒 Unlock Rewards
-          </button>
-        ) : (
-          <button
-            type="button"
-            className="rewards-claim-btn referral"
-            disabled={!canClaim || loading}
-            data-bs-toggle="modal"
-            data-bs-target="#referralBankModal"
-          >
-            {loading ? "⏳ Claiming…" : "Claim Reward"}
-          </button>
-        )}
+        <RewardClaimButton
+          label="Claim Reward"
+          disabled={!canClaim}
+          claimed={claimedSlabs.includes(selectedSlab)}
+          onClaim={() => {
+            if (!selectedSlab) {
+              toast.warn("Select a milestone first");
+              return Promise.reject();
+            }
+
+            const modalEl = document.getElementById("referralBankModal");
+            if (!modalEl) return Promise.reject();
+
+            const modal = new window.bootstrap.Modal(modalEl);
+            modal.show();
+
+            return Promise.resolve();
+          }}
+          onError={(msg) => toast.error(msg)}
+          className="rewards-claim-btn referral"
+        />
       </div>
 
       <BankDetailsModal modalId="referralBankModal" loading={loading} onSubmit={handleClaim} />

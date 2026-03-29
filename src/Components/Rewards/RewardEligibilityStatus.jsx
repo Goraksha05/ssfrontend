@@ -105,9 +105,7 @@ function EligibleBanner() {
 }
 
 /* ── Step row ─────────────────────────────────────────────────────────────────── */
-function StepRow({ icon, label, statusIcon, statusLabel, statusColor, ctaLabel, ctaPath, isLast }) {
-  const navigate = useNavigate();
-
+function StepRow({ icon, label, statusIcon, statusLabel, statusColor, ctaLabel, onCta, isLast }) {
   return (
     <div style={{
       display:        'flex',
@@ -144,9 +142,9 @@ function StepRow({ icon, label, statusIcon, statusLabel, statusColor, ctaLabel, 
       {/* Status icon + optional CTA */}
       <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 }}>
         {statusIcon}
-        {ctaPath && (
+        {onCta && (
           <button
-            onClick={() => navigate(ctaPath)}
+            onClick={onCta}
             style={{
               padding:      '5px 12px',
               background:   '#111827',
@@ -205,14 +203,15 @@ function CompactStatusBar({ kycGate, subscriptionGate, eligible, checking, block
     );
   }
 
-  // Determine the primary blocker for the compact strip
-  const primaryMessage = !kycGate.passed
+  // Primary blocker: KYC navigates to route; subscription opens modal
+  const kycBlocked = !kycGate.passed;
+  const primaryMessage = kycBlocked
     ? `${kycGate.label} · ${kycGate.ctaLabel}`
     : `${subscriptionGate.label} · ${subscriptionGate.ctaLabel}`;
 
-  const primaryPath = !kycGate.passed
-    ? kycGate.ctaPath
-    : subscriptionGate.ctaPath;
+  const handleFix = kycBlocked
+    ? () => navigate(kycGate.ctaPath)
+    : () => subscriptionGate.ctaAction?.();
 
   return (
     <div style={{
@@ -228,30 +227,29 @@ function CompactStatusBar({ kycGate, subscriptionGate, eligible, checking, block
       <span style={{ flex: 1, fontSize: '13px', color: '#9a3412', fontWeight: 500 }}>
         {primaryMessage}
       </span>
-      {primaryPath && (
-        <button
-          onClick={() => navigate(primaryPath)}
-          style={{
-            padding:      '4px 10px',
-            background:   '#ea580c',
-            color:        '#ffffff',
-            border:       'none',
-            borderRadius: '6px',
-            fontSize:     '12px',
-            fontWeight:   600,
-            cursor:       'pointer',
-            whiteSpace:   'nowrap',
-          }}
-        >
-          Fix now →
-        </button>
-      )}
+      <button
+        onClick={handleFix}
+        style={{
+          padding:      '4px 10px',
+          background:   '#ea580c',
+          color:        '#ffffff',
+          border:       'none',
+          borderRadius: '6px',
+          fontSize:     '12px',
+          fontWeight:   600,
+          cursor:       'pointer',
+          whiteSpace:   'nowrap',
+        }}
+      >
+        Fix now →
+      </button>
     </div>
   );
 }
 
 /* ── Main export ──────────────────────────────────────────────────────────────── */
 export function RewardEligibilityStatus({ compact = false, className = '', onDismiss }) {
+  const navigate = useNavigate();
   const {
     eligible,
     checking,
@@ -337,7 +335,7 @@ export function RewardEligibilityStatus({ compact = false, className = '', onDis
             statusLabel={kycDisplay.label}
             statusColor={kycDisplay.color}
             ctaLabel={kycGate.ctaLabel}
-            ctaPath={kycGate.passed ? null : kycGate.ctaPath}
+            onCta={kycGate.passed ? null : () => navigate(kycGate.ctaPath)}
             isLast={false}
           />
           <StepRow
@@ -347,7 +345,7 @@ export function RewardEligibilityStatus({ compact = false, className = '', onDis
             statusLabel={subDisplay.label}
             statusColor={subDisplay.color}
             ctaLabel={subscriptionGate.ctaLabel}
-            ctaPath={subscriptionGate.passed ? null : subscriptionGate.ctaPath}
+            onCta={subscriptionGate.passed ? null : () => subscriptionGate.ctaAction?.()}
             isLast={true}
           />
 

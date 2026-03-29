@@ -67,92 +67,154 @@ const KYCStatusBanner = () => {
       style={{
         background: cfg.bg,
         borderBottom: `1.5px solid ${cfg.border}`,
-        padding: '10px 20px',
-        display: 'flex',
-        alignItems: 'center',
-        gap: 12,
+        padding: '12px 14px',
         fontFamily: FF,
         position: 'relative',
         zIndex: 90,
         animation: 'bannerSlideDown 0.35s ease',
       }}
     >
-      {/* Icon */}
-      <div style={{
-        width: 34, height: 34, borderRadius: 10,
-        background: 'rgba(255,255,255,0.65)',
-        display: 'flex', alignItems: 'center', justifyContent: 'center',
-        flexShrink: 0,
-        boxShadow: '0 1px 4px rgba(0,0,0,0.08)',
-      }}>
-        <Icon size={17} color={cfg.iconClr} />
+      <div className="kyc-banner-container">
+
+        {/* Left Section */}
+        <div className="kyc-left">
+          <div className="kyc-icon-box">
+            <Icon size={16} color={cfg.iconClr} />
+          </div>
+
+          <div className="kyc-text">
+            <p className="kyc-main-text">{cfg.text}</p>
+
+            {reason && (
+              <p className="kyc-reason">
+                Reason: {reason}
+              </p>
+            )}
+          </div>
+        </div>
+
+        {/* Right Section */}
+        <div className="kyc-actions">
+          <button
+            onClick={handleCTAClick}
+            className="kyc-btn"
+          >
+            {cfg.cta} <ArrowRight size={13} />
+          </button>
+
+          <button
+            onClick={() => setDismissed(true)}
+            aria-label="Dismiss"
+            className="kyc-close"
+          >
+            <X size={16} />
+          </button>
+        </div>
       </div>
-
-      {/* Text */}
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <p style={{
-          margin: 0, fontSize: 13, fontWeight: 600,
-          color: '#1e293b', lineHeight: 1.4,
-        }}>
-          {cfg.text}
-        </p>
-        {reason && (
-          <p style={{
-            margin: '2px 0 0', fontSize: 12, color: '#dc2626',
-            fontWeight: 500,
-          }}>
-            Reason: {reason}
-          </p>
-        )}
-      </div>
-
-      {/* CTA */}
-      <button
-        onClick={handleCTAClick}
-        style={{
-          display:    'inline-flex',
-          alignItems: 'center',
-          gap:        6,
-          padding:    '7px 16px',
-          borderRadius: 20,
-          background: cfg.ctaBg,
-          color:      '#fff',
-          border:     'none',
-          fontSize:   12,
-          fontWeight: 700,
-          fontFamily: FF,
-          cursor:     'pointer',
-          whiteSpace: 'nowrap',
-          boxShadow:  '0 2px 8px rgba(0,0,0,0.15)',
-          flexShrink: 0,
-          transition: 'opacity 0.15s, transform 0.15s',
-        }}
-        onMouseEnter={e => { e.currentTarget.style.opacity = '0.88'; e.currentTarget.style.transform = 'translateY(-1px)'; }}
-        onMouseLeave={e => { e.currentTarget.style.opacity = '1';    e.currentTarget.style.transform = 'translateY(0)'; }}
-      >
-        {cfg.cta} <ArrowRight size={13} />
-      </button>
-
-      {/* Dismiss */}
-      <button
-        onClick={() => setDismissed(true)}
-        aria-label="Dismiss"
-        style={{
-          background: 'none', border: 'none',
-          cursor: 'pointer', padding: 4,
-          color: '#94a3b8', flexShrink: 0,
-          display: 'flex', alignItems: 'center',
-        }}
-      >
-        <X size={16} />
-      </button>
 
       <style>{`
-        @keyframes bannerSlideDown {
-          from { transform: translateY(-100%); opacity: 0; }
-          to   { transform: translateY(0);     opacity: 1; }
+      .kyc-banner-container {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+      }
+
+      .kyc-left {
+        display: flex;
+        flex: 1;
+        min-width: 0;
+      }
+
+      .kyc-icon-box {
+        width: 32px;
+        height: 32px;
+        border-radius: 10px;
+        background: rgba(255,255,255,0.7);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        flex-shrink: 0;
+      }
+
+      .kyc-text {
+        display: flex;
+        flex-direction: column;
+      }
+
+      .kyc-main-text {
+        margin: 0;
+        font-size: 13px;
+        font-weight: 600;
+        color: #1e293b;
+        line-height: 1.4;
+      }
+
+      .kyc-reason {
+        margin-top: 2px;
+        font-size: 12px;
+        color: #dc2626;
+      }
+
+      .kyc-actions {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        flex-shrink: 0;
+      }
+
+      .kyc-btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 7px 14px;
+        border-radius: 18px;
+        background: ${cfg.ctaBg};
+        color: #fff;
+        border: none;
+        font-size: 12px;
+        font-weight: 700;
+        cursor: pointer;
+        white-space: nowrap;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+        transition: all 0.2s ease;
+      }
+
+      .kyc-btn:hover {
+        opacity: 0.9;
+        transform: translateY(-1px);
+      }
+
+      .kyc-close {
+        background: none;
+        border: none;
+        cursor: pointer;
+        color: #94a3b8;
+        padding: 4px;
+      }
+
+      /* 🔥 MOBILE FIX */
+      @media (max-width: 576px) {
+        .kyc-banner-container {
+          flex-direction: column;
+          align-items: flex-start;
         }
-      `}</style>
+
+        .kyc-actions {
+          width: 100%;
+          justify-content: space-between;
+        }
+
+        .kyc-btn {
+          width: 50%;
+          justify-content: center;
+        }
+      }
+
+      @keyframes bannerSlideDown {
+        from { transform: translateY(-100%); opacity: 0; }
+        to   { transform: translateY(0); opacity: 1; }
+      }
+    `}</style>
     </div>
   );
 };
