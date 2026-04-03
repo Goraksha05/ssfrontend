@@ -442,6 +442,12 @@
     auto, auto, auto, auto, auto;
 }
 
+.chat-messages {
+  position: relative;
+  z-index: 2;
+  background: transparent; /* ensure wallpaper visible but not overlaying */
+}
+
 /* ── Light mode animated bokeh orbs (via pseudo-elements + children) */
 .messenger-chat::before {
   content:'';
@@ -1258,4 +1264,19 @@
   display: flex;
   align-items: center;
   justify-content: center;
+}
+
+@media (max-width: 768px) {
+  .messenger-sidebar {
+    display: none;
+  }
+
+  .messenger-main.mobile-open .messenger-sidebar {
+    display: flex;
+    width: 100%;
+  }
+
+  .messenger-main.mobile-open .chat-window {
+    display: none;
+  }
 }

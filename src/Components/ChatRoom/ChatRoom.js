@@ -68,7 +68,6 @@ const ChatRoom = () => {
 
       {/* Main */}
       <div className="messenger-main">
-        <div className="chat-wallpaper-vignette" />
         {/* Sidebar */}
         <div className="messenger-sidebar">
           {/* ── Tab bar ────────────────────────────────────────────── */}
@@ -109,6 +108,7 @@ const ChatRoom = () => {
         {/* Chat panel — only shown when chats tab is active */}
         {activeTab === 'chats' && (
           <div className={`messenger-chat ${isMobileChatOpen ? 'active' : ''}`}>
+            <div className="chat-wallpaper-vignette" />
             <ChatWindow
               onBackToList={() => setIsMobileChatOpen(false)}
               replyTo={replyTo}

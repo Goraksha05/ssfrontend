@@ -69,8 +69,8 @@ const ChatWindow = ({ onBackToList, replyTo, setReplyTo }) => {
     [selectedChat?.members, selectedChat?.users]
   );
   const recipient = useMemo(
-    () => chatMembers.find((m) => m._id?.toString() !== user?._id?.toString()) ?? null,
-    [chatMembers, user?._id]
+    () => chatMembers.find((m) => m._id?.toString() !== user?._id?.toString() && m._id?.toString() !== user?.id?.toString()) ?? null,
+    [chatMembers, user?._id, user?.id]
   );
 
   const [recipientProfile, setRecipientProfile] = useState(null);
@@ -112,6 +112,34 @@ const ChatWindow = ({ onBackToList, replyTo, setReplyTo }) => {
   }, []);
 
   useEffect(() => {
+  const el = messagesAreaRef.current;
+  if (!el) return;
+
+  const handleScroll = () => {
+    const nearBottom =
+      el.scrollHeight - el.scrollTop - el.clientHeight < 100;
+
+    setShowScrollBtn(!nearBottom);
+
+    if (nearBottom) {
+      setNewMsgCount(0);
+    }
+  };
+
+    el.addEventListener('scroll', handleScroll);
+    return () => el.removeEventListener('scroll', handleScroll);
+  }, []);
+
+  useEffect(() => {
+  if (!messagesEndRef.current) return;
+
+  messagesEndRef.current.scrollIntoView({
+    behavior: 'smooth',
+    block: 'end',
+  });
+  }, [messages]);
+
+  useEffect(() => {
     if (isNearBottom()) {
       messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
       setNewMsgCount(0);
@@ -135,7 +163,7 @@ const ChatWindow = ({ onBackToList, replyTo, setReplyTo }) => {
 
   // ── Socket listeners ──────────────────────────────────────────────
   useEffect(() => {
-    if (!selectedChat?._id || !user?._id) return;
+    if (!selectedChat?._id || !user?._id || !user?.id) return;
     let typingTimer = null;
 
     const offMsg = onSocketEvent('receive_message', ({ message }) => {
@@ -158,7 +186,7 @@ const ChatWindow = ({ onBackToList, replyTo, setReplyTo }) => {
     });
 
     return () => { offMsg(); offTyping(); offStop(); clearTimeout(typingTimer); };
-  }, [selectedChat?._id, recipient?._id, user?._id, setMessages, setIsTyping]);
+  }, [selectedChat?._id, recipient?._id, user?._id, user?.id, setMessages, setIsTyping]);
 
   // ── Deduped messages ──────────────────────────────────────────────
   const dedupedMessages = useMemo(
@@ -193,7 +221,7 @@ const ChatWindow = ({ onBackToList, replyTo, setReplyTo }) => {
   return (
     <ReplyContext.Provider value={setReplyTo}>
       {/* Header */}
-      <div className="chat-header">
+      <div className="flex items-center justify-between mt-5 px-4 h-[60px] bg-[var(--header-bg)] border-b border-[var(--border-color)] shadow-msg-xs flex-shrink-0 z-10">
         <div className="chat-header-left">
           <button className="chat-header-btn chat-back-btn" onClick={onBackToList} aria-label="Back">
             <ArrowLeft size={20} />
@@ -205,7 +233,7 @@ const ChatWindow = ({ onBackToList, replyTo, setReplyTo }) => {
               userId={recipient?._id}
               name={recipientInfo.name}
               avatarUrl={recipientInfo.profileImage}
-              currentUserId={user?._id}
+              currentUserId={user?._id || user?.id || null}
               size={10}
               fallbackRender={
                 // Shown when no avatar URL — matches original placeholder style

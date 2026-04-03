@@ -471,9 +471,22 @@ function EligibilityBanner({ kycGate, subscriptionGate, blockerCode, blockerMess
   const navigate = useNavigate();
   if (!blockerCode) return null;
 
+  // KYC navigates to a route; subscription opens the modal via ctaAction
   const items = [];
-  if (!kycGate.passed) items.push({ label: kycGate.label, cta: kycGate.ctaLabel, path: kycGate.ctaPath });
-  if (!subscriptionGate.passed) items.push({ label: subscriptionGate.label, cta: subscriptionGate.ctaLabel, path: subscriptionGate.ctaPath });
+  if (!kycGate.passed) {
+    items.push({
+      label: kycGate.label,
+      cta:   kycGate.ctaLabel,
+      onCta: () => navigate(kycGate.ctaPath),
+    });
+  }
+  if (!subscriptionGate.passed) {
+    items.push({
+      label: subscriptionGate.label,
+      cta:   subscriptionGate.ctaLabel,
+      onCta: () => subscriptionGate.ctaAction?.(),
+    });
+  }
 
   return (
     <div style={styles.banner(blockerCode)}>
@@ -485,7 +498,7 @@ function EligibilityBanner({ kycGate, subscriptionGate, blockerCode, blockerMess
         <p style={{ margin: '2px 0 6px', fontFamily: 'var(--font-sans)', fontSize: 13 }}>{blockerMessage}</p>
         <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
           {items.map(it => (
-            <button key={it.label} style={styles.bannerCta} onClick={() => navigate(it.path)}>
+            <button key={it.label} style={styles.bannerCta} onClick={it.onCta}>
               {it.cta} →
             </button>
           ))}
@@ -983,10 +996,10 @@ export default function RewardsHub({ initialTab = 'streak' }) {
   return (
     <div style={styles.shell}>
       {/* Masthead */}
-      <div style={styles.masthead}>
+      {/* <div style={styles.masthead}>
         <h1 style={styles.mastheadTitle}>Rewards</h1>
         <p style={styles.mastheadSub}>Claim grocery coupons, shares, and referral tokens</p>
-      </div>
+      </div> */}
 
       {/* Eligibility banner — shown once, not per-tab */}
       {!checking && !eligible && (

@@ -38,8 +38,8 @@ const ChatContext = createContext();
 
 export const ChatProvider = ({ children }) => {
   const [selectedChat, setSelectedChat] = useState(null);
-  const [messages,     setMessages]     = useState([]);
-  const [isTyping,     setIsTyping]     = useState(false);
+  const [messages, setMessages] = useState([]);
+  const [isTyping, setIsTyping] = useState(false);
 
   // Ref that always holds the currently-open chat's _id as a string.
   // Using a ref (not state) means the socket listener registered below
@@ -53,6 +53,7 @@ export const ChatProvider = ({ children }) => {
   //
   // Registered once on mount. WebSocketClient queues this subscription if the
   // socket isn't ready yet and flushes it once the connection is established.
+  
   useEffect(() => {
     const off = onSocketEvent('receive_message', ({ fromUserId, message }) => {
       if (!message) return;
@@ -65,12 +66,9 @@ export const ChatProvider = ({ children }) => {
       }
 
       setMessages((prev) => {
-        // Deduplicate — handles the case where ChatWindow also receives the
-        // same message via its own listener.
-        if (message._id && prev.some((m) => m._id?.toString() === message._id.toString())) {
-          return prev;
-        }
-        return [...prev, { ...message, from: fromUserId }];
+        const exists = prev.some(m => m._id === message._id);
+        if (exists) return prev;
+        return [...prev, message];
       });
     });
     return off;
@@ -135,6 +133,7 @@ export const ChatProvider = ({ children }) => {
         setSelectedChat: selectChat,
         messages,
         setMessages,
+        selectChat,
         isTyping,
         setIsTyping,
         sendMessage,

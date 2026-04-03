@@ -78,7 +78,7 @@ function EligibilityBanner({ kycGate, subscriptionGate, blockerCode }) {
         <div className="eligibility-banner__body">
           <p className="eligibility-banner__title">{subscriptionGate.label}</p>
           <p className="eligibility-banner__sub">{subscriptionGate.message}</p>
-          <button className="eligibility-banner__cta eligibility-banner__cta--warn" onClick={() => navigate(subscriptionGate.ctaPath)}>
+          <button className="eligibility-banner__cta eligibility-banner__cta--warn" onClick={openSubscription}>
             {subscriptionGate.ctaLabel} →
           </button>
         </div>
@@ -93,13 +93,7 @@ function EligibilityBanner({ kycGate, subscriptionGate, blockerCode }) {
 function LockedClaimButton({ blockerCode, kycGate, subscriptionGate }) {
   const [open, setOpen] = useState(false);
   const navigate = useNavigate();
-
-  const primaryPath = blockerCode === "SUBSCRIPTION_REQUIRED"
-    ? subscriptionGate.ctaPath
-    : kycGate.ctaPath;
-  const primaryLabel = blockerCode === "SUBSCRIPTION_REQUIRED"
-    ? subscriptionGate.ctaLabel
-    : kycGate.ctaLabel;
+  const { openSubscription } = useSubscription();
 
   return (
     <div style={{ position: "relative" }}>
@@ -117,14 +111,29 @@ function LockedClaimButton({ blockerCode, kycGate, subscriptionGate }) {
             <>
               <p className="reward-lock-popover__item">• Complete KYC verification</p>
               <p className="reward-lock-popover__item">• Activate a subscription</p>
-              <button className="reward-lock-popover__btn" onClick={() => navigate("/profile?tab=kyc")}>Start KYC →</button>
-              <button className="reward-lock-popover__btn reward-lock-popover__btn--sub" onClick={() => navigate("/subscription")}>View Plans →</button>
+              <button className="reward-lock-popover__btn" onClick={() => navigate("/profile?tab=kyc")}>
+                Start KYC →
+              </button>
+              <button className="reward-lock-popover__btn reward-lock-popover__btn--sub" onClick={openSubscription}>
+                View Plans →
+              </button>
+            </>
+          ) : blockerCode === "SUBSCRIPTION_REQUIRED" ? (
+            <>
+              <p className="reward-lock-popover__item">{subscriptionGate.message}</p>
+              <button className="reward-lock-popover__btn reward-lock-popover__btn--sub" onClick={openSubscription}>
+                {subscriptionGate.ctaLabel} →
+              </button>
             </>
           ) : (
             <>
-              <p className="reward-lock-popover__item">{kycGate.status === "submitted" ? "KYC is under review" : blockerCode === "SUBSCRIPTION_REQUIRED" ? subscriptionGate.message : kycGate.message}</p>
-              {primaryPath && kycGate.status !== "submitted" && (
-                <button className="reward-lock-popover__btn" onClick={() => navigate(primaryPath)}>{primaryLabel} →</button>
+              <p className="reward-lock-popover__item">
+                {kycGate.status === "submitted" ? "KYC is under review" : kycGate.message}
+              </p>
+              {kycGate.status !== "submitted" && (
+                <button className="reward-lock-popover__btn" onClick={() => navigate(kycGate.ctaPath)}>
+                  {kycGate.ctaLabel} →
+                </button>
               )}
             </>
           )}

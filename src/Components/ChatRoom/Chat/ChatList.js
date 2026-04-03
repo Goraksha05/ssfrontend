@@ -1,66 +1,17 @@
 // src/Components/ChatRoom/Chat/ChatList.js
-//
-// ── Root cause analysis (March 2026) ─────────────────────────────────────────
-//
-// Three bugs were working together to make the sidebar blank after starting
-// a new chat. They are fixed across three files. Here is the full picture:
-//
-// ┌─────────────────────────────────────────────────────────────────────────┐
-// │ BUG 1 — WebSocketClient.js (THE ROOT CAUSE)                            │
-// │                                                                         │
-// │ onSocketEvent() returned () => {} when socket was null at call time.   │
-// │ React useEffect hooks in ChatContext and ChatList fire synchronously     │
-// │ after mount. initializeSocket() is async — the socket module variable  │
-// │ is still null when those effects run on first render.                  │
-// │                                                                         │
-// │ Result: ZERO receive_message listeners were ever registered.            │
-// │   • ChatContext never appended incoming messages                        │
-// │   • ChatList's fetchChats() was never triggered by socket events       │
-// │   • After starting a new chat, the sidebar never updated               │
-// │                                                                         │
-// │ Fix: onSocketEvent() now queues subscriptions when socket is null.     │
-// │ The queue is flushed inside attachCoreListeners() (called from the     │
-// │ socket's own 'connect' event) the moment the socket connects.         │
-// └─────────────────────────────────────────────────────────────────────────┘
-//
-// ┌─────────────────────────────────────────────────────────────────────────┐
-// │ BUG 2 — ChatContext.js                                                  │
-// │                                                                         │
-// │ The receive_message listener had no chatId guard. It appended every    │
-// │ incoming socket message to messages[] regardless of which chat was     │
-// │ open. Messages from other chats polluted the active window.            │
-// │                                                                         │
-// │ Fix: the listener reads selectedChatIdRef.current (a ref, no dep-array │
-// │ churn) and only appends when the message belongs to the open chat.     │
-// └─────────────────────────────────────────────────────────────────────────┘
-//
-// ┌─────────────────────────────────────────────────────────────────────────┐
-// │ BUG 3 — ChatList.js (this file)                                        │
-// │                                                                         │
-// │ `starting` (a useState variable) was listed in handleStartNewChat's    │
-// │ useCallback dependency array. The moment setStarting(true) fired,      │
-// │ React created a new closure for handleStartNewChat. The modal had an   │
-// │ already-captured reference to the old closure, meaning the async flow  │
-// │ could run in an unpredictable state. More importantly, this caused     │
-// │ unnecessary re-renders during the critical insert window.              │
-// │                                                                         │
-// │ Fix: `startingRef` (useRef) replaces `starting` (useState). Refs are  │
-// │ mutated synchronously, never cause re-renders, and are always current  │
-// │ inside any closure — so the same function instance runs start-to-end.  │
-// └─────────────────────────────────────────────────────────────────────────┘
 
 import React, {
   useEffect, useRef, useCallback, useState, useMemo,
 } from 'react';
 import { Search, MessageSquarePlus } from 'lucide-react';
-import { useFriend }      from '../../../Context/Friend/FriendContext';
-import { useChat }        from '../../../Context/ChatContext';
-import { useAuth }        from '../../../Context/Authorisation/AuthContext';
+import { useFriend } from '../../../Context/Friend/FriendContext';
+import { useChat } from '../../../Context/ChatContext';
+import { useAuth } from '../../../Context/Authorisation/AuthContext';
 import { useOnlineUsers } from '../../../Context/OnlineUsersContext';
-import { onSocketEvent }  from '../../../WebSocket/WebSocketClient';
-import apiRequest         from '../../../utils/apiRequest';
-import { getInitials }    from '../../../utils/getInitials';
-import NewChatModal       from './NewChatModal';
+import { onSocketEvent } from '../../../WebSocket/WebSocketClient';
+import apiRequest from '../../../utils/apiRequest';
+import { getInitials } from '../../../utils/getInitials';
+import NewChatModal from './NewChatModal';
 
 // ─── Module-level pure helpers ────────────────────────────────────────────────
 // These are plain functions, not hooks. They never change identity and never
@@ -76,11 +27,11 @@ function getColor(name = '') {
 
 function formatTime(dateStr) {
   if (!dateStr) return '';
-  const d    = new Date(dateStr);
+  const d = new Date(dateStr);
   const diff = Date.now() - d.getTime();
-  if (diff < 60_000)         return 'now';
-  if (diff < 3_600_000)      return `${Math.floor(diff / 60_000)}m`;
-  if (diff < 86_400_000)     return `${Math.floor(diff / 3_600_000)}h`;
+  if (diff < 60_000) return 'now';
+  if (diff < 3_600_000) return `${Math.floor(diff / 60_000)}m`;
+  if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)}h`;
   if (diff < 7 * 86_400_000) return d.toLocaleDateString(undefined, { weekday: 'short' });
   return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 }
@@ -93,9 +44,9 @@ function formatTime(dateStr) {
 function resolveAvatar(obj) {
   if (!obj) return null;
   if (typeof obj.profileavatar === 'string' && obj.profileavatar) return obj.profileavatar;
-  if (obj.profileavatar?.URL)  return obj.profileavatar.URL;
-  if (obj.profileImage)        return obj.profileImage;
-  if (obj.avatar)              return obj.avatar;
+  if (obj.profileavatar?.URL) return obj.profileavatar.URL;
+  if (obj.profileImage) return obj.profileImage;
+  if (obj.avatar) return obj.avatar;
   return null;
 }
 
@@ -106,13 +57,13 @@ function normaliseChat(chat, currentUserId) {
     (m) => m._id?.toString() !== currentUserId?.toString(),
   );
   return {
-    chatId:          chat._id?.toString()    ?? '',
-    friendId:        other?._id?.toString()  ?? null,
-    name:            other?.name             ?? 'Unknown',
-    profileImage:    resolveAvatar(other),
-    lastMessage:     chat.lastMessage        ?? '',
-    lastMessageTime: chat.lastMessageTime    ?? null,
-    unreadCount:     chat.unreadCount        ?? 0,
+    chatId: chat._id?.toString() ?? '',
+    friendId: other?._id?.toString() ?? null,
+    name: other?.name ?? 'Unknown',
+    profileImage: resolveAvatar(other),
+    lastMessage: chat.lastMessage ?? '',
+    lastMessageTime: chat.lastMessageTime ?? null,
+    unreadCount: chat.unreadCount ?? 0,
   };
 }
 
@@ -122,7 +73,7 @@ function sortChats(list) {
   return [...list].sort((a, b) => {
     if (!a.lastMessageTime && !b.lastMessageTime) return 0;
     if (!a.lastMessageTime) return -1;
-    if (!b.lastMessageTime) return  1;
+    if (!b.lastMessageTime) return 1;
     return new Date(b.lastMessageTime) - new Date(a.lastMessageTime);
   });
 }
@@ -169,15 +120,15 @@ const Avatar = ({ name, imageUrl, size = 42, online = false }) => (
 
 const ChatList = ({ onChatSelect }) => {
   const { friends, loading: loadingFriends, fetchFriends } = useFriend();
-  const { setSelectedChat, setMessages, selectedChat }     = useChat();
-  const { user }     = useAuth();
+  const { selectChat, setMessages, selectedChat } = useChat();
+  const { user } = useAuth();
   const { isOnline } = useOnlineUsers();
 
-  const [chats,        setChats]        = useState([]);
+  const [chats, setChats] = useState([]);
   const [loadingChats, setLoadingChats] = useState(true);
-  const [query,        setQuery]        = useState('');
-  const [debQ,         setDebQ]         = useState('');
-  const [modalOpen,    setModalOpen]    = useState(false);
+  const [query, setQuery] = useState('');
+  const [debQ, setDebQ] = useState('');
+  const [modalOpen, setModalOpen] = useState(false);
 
   const selectedRef = useRef(null);
 
@@ -193,10 +144,10 @@ const ChatList = ({ onChatSelect }) => {
   //               the critical optimistic-insert window.
   //               A ref mutation is synchronous, never triggers a re-render,
   //               and is always current inside any closure.
-  const userIdRef   = useRef(user?._id);
+  const userIdRef = useRef(user?._id || user?.id || null);
   const startingRef = useRef(false);
 
-  useEffect(() => { userIdRef.current = user?._id; }, [user?._id]);
+  useEffect(() => { userIdRef.current = user?._id || user?.id || null; }, [user?._id, user?.id]);
 
   // ── Debounce search ────────────────────────────────────────────────
   useEffect(() => {
@@ -228,9 +179,38 @@ const ChatList = ({ onChatSelect }) => {
           return sortChats([...freshEntries, ...localOnly]);
         });
       })
-      .catch(() => {})
+      .catch(() => { })
       .finally(() => setLoadingChats(false));
   }, []); // ← EMPTY: all dynamic values read via refs
+
+  // Refresh sidebar when any message arrives.
+  // Thanks to the WebSocketClient queue fix, this subscription is guaranteed
+  // to be registered even if the socket wasn't ready at mount time.
+  useEffect(() => {
+    const off = onSocketEvent('receive_message', (msg) => {
+      if (!msg) return;
+
+      // ✅ Update sidebar instantly (real-time UX)
+      setChats(prev =>
+        sortChats(
+          prev.map(chat =>
+            chat.chatId === msg.chatId
+              ? {
+                ...chat,
+                lastMessage: msg.text || msg.content || '📎 Media',
+                lastMessageTime: msg.createdAt || new Date(),
+              }
+              : chat
+          )
+        )
+      );
+
+      // ✅ Optional fallback (sync with backend)
+      setTimeout(fetchChats, 400);
+    });
+
+    return off;
+  }, [fetchChats]);
 
   // Initial load on mount
   useEffect(() => {
@@ -238,16 +218,6 @@ const ChatList = ({ onChatSelect }) => {
     fetchChats();
   }, [fetchChats]);
 
-  // Refresh sidebar when any message arrives.
-  // Thanks to the WebSocketClient queue fix, this subscription is guaranteed
-  // to be registered even if the socket wasn't ready at mount time.
-  useEffect(() => {
-    const off = onSocketEvent('receive_message', () => {
-      // Small delay to let the server finish writing before we read
-      setTimeout(fetchChats, 600);
-    });
-    return off;
-  }, [fetchChats]);
 
   // Lazy-load friends only when modal first opens
   useEffect(() => {
@@ -279,7 +249,7 @@ const ChatList = ({ onChatSelect }) => {
   const handleSelectChat = useCallback(async (entry) => {
     try {
       const { data: chat } = await apiRequest.post('/api/chat', { receiverId: entry.friendId });
-      setSelectedChat(chat); // ChatContext.selectChat clears messages first
+      selectChat(chat) // ChatContext.selectChat clears messages first
       const { data: msgs } = await apiRequest.get(`/api/message/${chat._id}`);
       setMessages(msgs);
       setChats((prev) =>
@@ -289,7 +259,7 @@ const ChatList = ({ onChatSelect }) => {
     } catch (err) {
       console.error('[ChatList] Failed to open chat:', err.message);
     }
-  }, [setSelectedChat, setMessages, onChatSelect]);
+  }, [selectChat, setMessages, onChatSelect]);
 
   // ── Start a new chat from the friend-picker modal ──────────────────
   //
@@ -322,13 +292,13 @@ const ChatList = ({ onChatSelect }) => {
       );
 
       const newEntry = {
-        chatId:          chat._id.toString(),
-        friendId:        friend._id?.toString(),
-        name:            friend.name             || memberFromChat?.name || 'Unknown',
-        profileImage:    resolveAvatar(friend)   || resolveAvatar(memberFromChat),
-        lastMessage:     chat.lastMessage        ?? '',
-        lastMessageTime: chat.lastMessageTime    ?? null,
-        unreadCount:     0,
+        chatId: chat._id.toString(),
+        friendId: friend._id?.toString(),
+        name: friend.name || memberFromChat?.name || 'Unknown',
+        profileImage: resolveAvatar(friend) || resolveAvatar(memberFromChat),
+        lastMessage: chat.lastMessage ?? '',
+        lastMessageTime: chat.lastMessageTime ?? null,
+        unreadCount: 0,
       };
 
       // Step 4: update sidebar list synchronously — this is the critical step.
@@ -339,7 +309,7 @@ const ChatList = ({ onChatSelect }) => {
       });
 
       // Step 5: open the chat window
-      setSelectedChat(chat); // ChatContext.selectChat clears stale messages
+      selectChat(chat) // ChatContext.selectChat clears stale messages
 
       // Step 6: load messages (async — sidebar is already showing the entry)
       const { data: msgs } = await apiRequest.get(`/api/message/${chat._id}`);
@@ -353,7 +323,7 @@ const ChatList = ({ onChatSelect }) => {
     } finally {
       startingRef.current = false;
     }
-  }, [setSelectedChat, setMessages, onChatSelect, fetchChats]);
+  }, [selectChat, setMessages, onChatSelect, fetchChats]);
   // ↑ No `starting` in deps — startingRef mutations never recreate this callback
 
   // ── Render ─────────────────────────────────────────────────────────
@@ -450,8 +420,8 @@ const ChatList = ({ onChatSelect }) => {
           <ul className="chat-list">
             {filteredChats.map((entry) => {
               const isSelected = entry.friendId === selectedFriendId;
-              const online     = isOnline(entry.friendId);
-              const unread     = entry.unreadCount ?? 0;
+              const online = isOnline(entry.friendId);
+              const unread = entry.unreadCount ?? 0;
 
               return (
                 <li

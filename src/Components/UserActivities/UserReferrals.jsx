@@ -1,7 +1,5 @@
 // UserReferrals.jsx — Redesigned with KYC + subscription eligibility enforcement
-import React, { useContext, useEffect, useState, useMemo } from "react";
-// import { useNavigate } from "react-router-dom";
-import { StreakContext } from "../../Context/Activity/StreakContext";
+import React, { useEffect, useState, useMemo } from "react";
 import { useReferral } from "../../Context/Activity/ReferralContext";
 import { useAuth } from "../../Context/Authorisation/AuthContext";
 import usePlanSlabs from "../../hooks/usePlanSlabs";
@@ -71,8 +69,6 @@ const isTokenMilestone = (s) => s.groceryCoupons === 0 && s.shares === 0 && s.re
 /* ── Main component ──────────────────────────────────────────────────────────── */
 const UserReferrals = ({ onActivityRecorded }) => {
   const { user } = useAuth();
-  // const navigate = useNavigate();
-  const { activities } = useContext(StreakContext);
   const { referralCount = 0, fetchReferralData, referredUsers = [] } = useReferral();
 
   const { slabs: rawSlabs } = usePlanSlabs("referral");
@@ -112,15 +108,10 @@ const UserReferrals = ({ onActivityRecorded }) => {
   const inactiveReferrals = referredUsers.filter(u => !u.subscription?.active);
   const activeCount = activeReferrals.length;
 
+  // Claimed slabs come from the user document (authoritative, no activity fallback needed)
   useEffect(() => {
-    const fromUser = (user?.redeemedReferralSlabs ?? []).map(Number).filter(Boolean);
-    const fromActivity = Array.isArray(activities)
-      ? activities
-        .filter(a => a?.type === "referral_reward" && a.slabAwarded != null)
-        .map(a => Number(a.slabAwarded))
-      : [];
-    setClaimedSlabs([...new Set([...fromUser, ...fromActivity])]);
-  }, [activities, user]);
+    setClaimedSlabs((user?.redeemedReferralSlabs ?? []).map(Number).filter(Boolean));
+  }, [user]);
 
   const nextBig = bigSlabs.find(s => activeCount < s.referralCount);
   const prevBig = [...bigSlabs].reverse().find(s => activeCount >= s.referralCount);

@@ -66,9 +66,12 @@ const MessageInput = ({ replyTo, setReplyTo }) => {
 
   const handleChange = (e) => {
     setText(e.target.value);
-    emitTypingStart();
-    clearTimeout(typingTimer.current);
-    typingTimer.current = setTimeout(emitTypingStop, 2_000);
+      emitTypingStart();
+
+      clearTimeout(typingTimer.current);
+        typingTimer.current = setTimeout(() => {
+          emitTypingStop();
+        }, 1500);
   };
 
   // ── Send ───────────────────────────────────────────────────────────
