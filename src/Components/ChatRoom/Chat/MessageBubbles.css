@@ -1,0 +1,233 @@
+/* ================================================================
+   MessageBubbles.css
+   Styles specific to SentMessage, ReceivedMessage, and AudioPlayer.
+   Import this file once — either in ChatRoom.css or App.css.
+   ================================================================ */
+
+/* ── Sent bubble overrides ────────────────────────────────────────
+   The base .bubble.sent rules live in ChatRoom.css.
+   These add sent-specific layout guarantees.
+──────────────────────────────────────────────────────────────────*/
+
+/* Ensure sent groups are always flush to the right edge */
+.msg-group.sent {
+  align-self: flex-end;
+  align-items: flex-end;
+  margin-left: auto;          /* pushes group away from left edge  */
+}
+
+/* Sent row: reverse so bubble is on the right */
+.msg-row.sent {
+  flex-direction: row-reverse;
+  justify-content: flex-start; /* content anchors to right after reverse */
+}
+
+/* Sent bubble-wrap: align content to the right */
+.msg-group.sent .bubble-wrap {
+  align-items: flex-end;
+}
+
+/* Sent reactions: right-aligned chips */
+.msg-group.sent .reactions {
+  justify-content: flex-end;
+}
+
+/* ── Received bubble overrides ────────────────────────────────────
+   The base .bubble.received rules live in ChatRoom.css.
+──────────────────────────────────────────────────────────────────*/
+
+/* Ensure received groups are always flush to the left edge */
+.msg-group.received {
+  align-self: flex-start;
+  align-items: flex-start;
+  margin-right: auto;         /* pushes group away from right edge */
+}
+
+/* Received row: normal left-to-right */
+.msg-row.received {
+  flex-direction: row;
+  justify-content: flex-start;
+}
+
+/* Received bubble-wrap: align content to the left */
+.msg-group.received .bubble-wrap {
+  align-items: flex-start;
+}
+
+/* Received reactions: left-aligned chips */
+.msg-group.received .reactions {
+  justify-content: flex-start;
+}
+
+/* ── Avatar image (received messages) ─────────────────────────────
+   .msg-avatar-mini is already defined in ChatRoom.css (div fallback).
+   This adds the img variant used by ReceivedMessage.
+──────────────────────────────────────────────────────────────────*/
+.msg-avatar-img {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  object-fit: cover;
+  display: block;
+  flex-shrink: 0;
+}
+
+/* ── Bubble tail corrections ──────────────────────────────────────
+   ChatRoom.css already defines ::after pseudo-tails.
+   These rules make sure the tail only shows on the correct side.
+──────────────────────────────────────────────────────────────────*/
+
+/* Sent tail: bottom-right corner pointing right */
+.bubble.sent.tail::after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  right: -7px;
+  width: 0;
+  height: 0;
+  border-left:   8px solid var(--sent-bg);
+  border-bottom: 8px solid transparent;
+}
+
+/* Received tail: bottom-left corner pointing left */
+.bubble.received.tail::after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  left: -7px;
+  width: 0;
+  height: 0;
+  border-right:  8px solid var(--received-bg);
+  border-bottom: 8px solid transparent;
+}
+
+/* Consecutive (no-tail) bubbles — tighter radius on joining corner */
+.bubble.sent.follow     { border-top-right-radius: var(--radius-sm, 8px); }
+.bubble.received.follow { border-top-left-radius:  var(--radius-sm, 8px); }
+
+/* ── Delivery tick colours ────────────────────────────────────────
+   .tick base defined in ChatRoom.css.
+──────────────────────────────────────────────────────────────────*/
+.tick.sent      { color: #92b4a7; }   /* grey single check  */
+.tick.delivered { color: #92b4a7; }   /* grey double check  */
+.tick.read      { color: var(--read-tick, #2563eb); } /* blue double check  */
+
+/* ── Audio Player ─────────────────────────────────────────────────
+   Shared layout; coloured differently per side via class prefix.
+──────────────────────────────────────────────────────────────────*/
+.sent-audio-player,
+.received-audio-player {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0;
+  min-width: 200px;
+  max-width: 280px;
+}
+
+.audio-play-btn {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  border: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  flex-shrink: 0;
+  transition: transform 0.15s, opacity 0.15s;
+}
+.audio-play-btn:hover  { transform: scale(1.1); opacity: 0.85; }
+.audio-play-btn:active { transform: scale(0.95); }
+
+/* Sent side — green tinted */
+.sent-audio-player .audio-play-btn {
+  background: rgba(0, 0, 0, 0.18);
+  color: var(--sent-text, #111827);
+}
+
+/* Received side — accent blue */
+.received-audio-player .audio-play-btn {
+  background: var(--accent, #2563eb);
+  color: #fff;
+}
+
+.audio-track {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.audio-track input[type="range"] {
+  width: 100%;
+  accent-color: var(--accent, #2563eb);
+  cursor: pointer;
+  height: 3px;
+}
+
+.audio-time {
+  font-size: 10px;
+  color: var(--text-tertiary, #9ca3af);
+  white-space: nowrap;
+  letter-spacing: 0.2px;
+}
+
+/* Sent side time — slightly lighter on green background */
+.sent-audio-player .audio-time {
+  color: var(--sent-time, #6b8f6e);
+}
+
+/* ── Reply quote inside sent bubble ───────────────────────────────
+   The received side already works with the base rules in ChatRoom.css.
+   Sent bubbles need the border and background to contrast with the
+   green/teal sent-bg.
+──────────────────────────────────────────────────────────────────*/
+.bubble.sent .reply-quote {
+  background: rgba(0, 0, 0, 0.10);
+  border-left-color: rgba(255, 255, 255, 0.55);
+}
+.bubble.sent .reply-quote:hover {
+  background: rgba(0, 0, 0, 0.16);
+}
+.bubble.sent .reply-quote-name {
+  color: rgba(255, 255, 255, 0.85);
+}
+.bubble.sent .reply-quote-text {
+  color: rgba(255, 255, 255, 0.7);
+}
+
+/* ── Failed-send indicator ────────────────────────────────────────*/
+.sent-failed-label {
+  font-size: 11px;
+  color: var(--danger, #ef4444);
+  margin-top: 3px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* ── Reaction picker positioning ──────────────────────────────────
+   Sent: anchored to right.   Received: anchored to left of avatar.
+   The component sets inline style for left/right — here we just
+   ensure the absolute context is correct.
+──────────────────────────────────────────────────────────────────*/
+.msg-group { position: relative; } /* already in ChatRoom.css but guard */
+
+/* ── Sent bubble sender-name (not normally shown but available) ───*/
+.msg-group.sent .bubble-sender-name { display: none; }
+
+/* ── Mobile max-width overrides ───────────────────────────────────*/
+@media (max-width: 768px) {
+  .msg-group.sent,
+  .msg-group.received { max-width: 85%; }
+
+  .sent-audio-player,
+  .received-audio-player { min-width: 160px; }
+}
+@media (max-width: 480px) {
+  .msg-group.sent,
+  .msg-group.received { max-width: 90%; }
+}

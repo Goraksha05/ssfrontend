@@ -4,7 +4,7 @@
  * ============================================================
  *  Import ORDER in index.js / App.js:
  *    1. globals.css          ← this file (tokens + resets + utilities)
- *    2. Theme.css            ← palette overrides via body.theme-*/
+ *    2. Theme.css            ← palette overrides via body.theme-
  *    3. App.css              ← legacy component overrides
  *    4. individual *.css     ← scoped component styles
  *
