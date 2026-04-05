@@ -146,6 +146,14 @@ export const ThemeProvider = ({ children }) => {
       '--logo-color-b':    tok.logoColorB,
       '--radius':          '14px',
       '--radius-sm':       '8px',
+      // Bubble colours — driven entirely by the active palette + mode
+      '--sent-bg':         tok.sentBg,
+      '--sent-text':       tok.sentText,
+      '--sent-time':       tok.sentTime,
+      '--received-bg':     tok.receivedBg,
+      '--received-text':   tok.receivedText,
+      '--received-time':   tok.receivedTime,
+      '--read-tick':       tok.readTick,
     };
 
     Object.entries(varMap).forEach(([k, v]) => root.style.setProperty(k, v));

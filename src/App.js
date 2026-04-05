@@ -20,7 +20,7 @@ import 'aos/dist/aos.css';
 // ── Context Providers ─────────────────────────────────────────────────────────
 import { AuthProvider, useAuth } from './Context/Authorisation/AuthContext';
 import { I18nProvider } from './i18n/i18nContext';
-import { UIProvider } from './Context/ThemeUI/UIContext';
+import { UIProvider, useUI } from './Context/ThemeUI/UIContext';
 import { ThemeProvider } from './Context/ThemeUI/ThemeContext';
 import { OnlineUsersProvider } from './Context/OnlineUsersContext';
 import { ChatProvider } from './Context/ChatContext';
@@ -45,6 +45,8 @@ import Navbartemp from './Components/Navbartemp';
 import Subscription from './Components/Subscription/Subscription';
 import TermsPopup from './Components/TermsAndConditions/TermsPopup';
 import KYCStatusBanner from './Components/KYC/KYCStatusBanner';
+// ThemePalettePicker is rendered at app level — controlled by UIContext
+import ThemePalettePicker from './Components/Theme/ThemePalettePicker';
 
 // ── Pages ─────────────────────────────────────────────────────────────────────
 import WelcomPage from './Components/WelcomPage';
@@ -82,6 +84,9 @@ function AppContent() {
   // behavior SDK never started. Resolve from either field.
   const userId = user?.id ?? user?._id;
 
+  // ── UIContext — theme picker state ─────────────────────────────────────────
+  const { isThemePickerOpen, closeThemePicker } = useUI();
+
   useEffect(() => {
     AOS.init({ duration: 700, once: true });
   }, []);
@@ -100,19 +105,19 @@ function AppContent() {
       console.warn('[reCAPTCHA] REACT_APP_RECAPTCHA_V3_SITE_KEY is not set.');
       return;
     }
- 
+
     // Avoid injecting the script twice (e.g. on hot-reload in development)
     if (document.querySelector('#recaptcha-script')) return;
- 
+
     const script = document.createElement('script');
-    script.id    = 'recaptcha-script';
+    script.id = 'recaptcha-script';
     // ?render=V3_SITE_KEY enables grecaptcha.execute() for v3.
     // The v2 widget render() API is also available from this script.
-    script.src   = `https://www.google.com/recaptcha/api.js?render=${v3SiteKey}`;
+    script.src = `https://www.google.com/recaptcha/api.js?render=${v3SiteKey}`;
     script.async = true;
     script.defer = true;
     document.head.appendChild(script);
- 
+
     return () => {
       const el = document.querySelector('#recaptcha-script');
       if (el) el.remove();
@@ -199,7 +204,7 @@ function AppContent() {
                                   }
                                 >
                                   <Route path="dashboard" element={<AdminDashboard />} />
-                                  <Route path="users"     element={<AdminUserReport />} />
+                                  <Route path="users" element={<AdminUserReport />} />
                                   <Route
                                     path="*"
                                     element={<Navigate to="/admin/dashboard" replace />}
@@ -215,8 +220,8 @@ function AppContent() {
                             {/* ── Public (unauthenticated) ──────────────────── */}
                             {!isAuthenticated && (
                               <>
-                                <Route path="/"           element={<WelcomPage />} />
-                                <Route path="/login"      element={<LogSignNewModel />} />
+                                <Route path="/" element={<WelcomPage />} />
+                                <Route path="/login" element={<LogSignNewModel />} />
                                 <Route path="/terms-popup" element={<TermsPopup />} />
                                 {/*
                                   FIX 2: admin login route added to the public block.
@@ -224,32 +229,38 @@ function AppContent() {
                                   are redirected to "/" with no route to the admin login form.
                                 */}
                                 {/* <Route path="/admin/login" element={<AdminLogin />} /> */}
-                                <Route path="*"           element={<Navigate to="/" replace />} />
+                                <Route path="*" element={<Navigate to="/" replace />} />
                               </>
                             )}
 
                             {/* ── Authenticated regular user ────────────────── */}
                             {isAuthenticated && !isAdmin && (
                               <>
-                                <Route path="/"              element={<Home />} />
-                                <Route path="/activity"      element={<Activity />} />
-                                <Route path="/invitaion"     element={<InviteCard />} />
-                                <Route path="/allfriends"    element={<Friend />} />
+                                <Route path="/" element={<Home />} />
+                                <Route path="/activity" element={<Activity />} />
+                                <Route path="/invitaion" element={<InviteCard />} />
+                                <Route path="/allfriends" element={<Friend />} />
                                 <Route path="/friendrequest" element={<FriendReq />} />
-                                <Route path="/suggestions"   element={<Suggestions />} />
-                                <Route path="/profile"       element={<Profile />} />
+                                <Route path="/suggestions" element={<Suggestions />} />
+                                <Route path="/profile" element={<Profile />} />
                                 <Route path="/reels/fullscreen" element={<FullscreenReels />} />
-                                <Route path="/chat"          element={<ChatRoom />} />
-                                <Route path="/aboutus"       element={<AboutUs />} />
-                                <Route path="/contactus"     element={<ContactUs />} />
+                                <Route path="/chat" element={<ChatRoom />} />
+                                <Route path="/aboutus" element={<AboutUs />} />
+                                <Route path="/contactus" element={<ContactUs />} />
                                 <Route path="/privacypolicy" element={<PrivacyPolicy />} />
                                 <Route path="/refcanclepolicy" element={<RefCancelPolicy />} />
-                                <Route path="/login"         element={<Navigate to="/" replace />} />
-                                <Route path="*"              element={<Navigate to="/" replace />} />
+                                <Route path="/login" element={<Navigate to="/" replace />} />
+                                <Route path="*" element={<Navigate to="/" replace />} />
                               </>
                             )}
 
                           </Routes>
+
+                          {/* ── Global Theme Picker Modal ────────────────────*/}
+                          <ThemePalettePicker
+                            open={isThemePickerOpen}
+                            onClose={closeThemePicker}
+                          />
 
                         </StatusProvider>
                       </SubscriptionProvider>
@@ -273,8 +284,8 @@ export default function App() {
       new QueryClient({
         defaultOptions: {
           queries: {
-            staleTime:           60_000, // 1 minute
-            retry:               1,
+            staleTime: 60_000, // 1 minute
+            retry: 1,
             refetchOnWindowFocus: false,
           },
         },

@@ -8,6 +8,7 @@ import { useTranslation } from 'react-i18next';
 import LogBtnIcon from '../Assets/LoginCreateAccount.png';
 import ModalContent from './TodayOffer/ModalContent';
 import ThemePalettePicker from './Theme/ThemePalettePicker';
+import { useTheme } from '../Context/ThemeUI/ThemeContext';
 
 const FEATURES = [
   {
@@ -48,6 +49,7 @@ const WelcomePage = () => {
   const { t } = useTranslation();
   const [showModal, setShowModal] = useState(false);
   const [visible, setVisible] = useState(false);
+  const { isDark } = useTheme();
 
   useEffect(() => {
     const timer = setTimeout(() => setVisible(true), 100);
@@ -84,10 +86,23 @@ const WelcomePage = () => {
           <h1 className="hero-title mt-3">
             {t('Welcome to')} "<Logo />"
           </h1>
-          <p className="hero-tagline">
+          <p
+            className="hero-tagline"
+            style={{
+              color: isDark ? '#ffffff' : '#1a2031',
+              transition: 'color 0.3s ease',
+            }}
+          >
             {t("Your digital identity deserves more — engage, earn, and grow with India's most rewarding social platform.")}
           </p>
-          <p className="hero-marathi">
+
+          <p
+            className="hero-marathi"
+            style={{
+              color: isDark ? '#ffffff' : '#1a2031',
+              transition: 'color 0.3s ease',
+            }}
+          >
             तुमची डिजिटल ओळख अधिक मूल्यवान व्हावी यासाठी — कनेक्ट व्हा, कमवा आणि भारताच्या सर्वात फायदेशीर सोशल प्लॅटफॉर्मसोबत तुमचे आर्थिक भविष्य घडवा.
           </p>
         </div>

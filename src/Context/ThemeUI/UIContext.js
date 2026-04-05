@@ -10,6 +10,10 @@ export const UIProvider = ({ children }) => {
   const [isRegisterModalOpen, setIsRegisterModalOpen] = useState(false);
   const [isForgotPasswordModalOpen, setIsForgotPasswordModalOpen] = useState(false);
   const [activeTaskId, setActiveTaskId] = useState(null);
+  const [isThemePickerOpen, setIsThemePickerOpen] = useState(false);
+
+  const openThemePicker = () => setIsThemePickerOpen(true);
+  const closeThemePicker = () => setIsThemePickerOpen(false);
 
   // Handle auto-close on browser navigation
   useEffect(() => {
@@ -114,6 +118,11 @@ export const UIProvider = ({ children }) => {
         closeRegisterModal,
         openForgotPasswordModal,
         closeForgotPasswordModal,
+
+        // Theme Picker
+        isThemePickerOpen,
+        openThemePicker,
+        closeThemePicker,
       }}
     >
       {children}

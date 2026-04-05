@@ -77,13 +77,6 @@
   --border-color: #2c2c2e;
   --border-light: #3a3a3c;
 
-  --sent-bg:            #1b4332;
-  --sent-text:          #d1fae5;
-  --sent-time:          #6ee7b7;
-  --received-bg:        #2c2c2e;
-  --received-text:      #f2f2f7;
-  --received-time:      #636366;
-
   --sidebar-bg:           #1c1c1e;
   --sidebar-hover:        #2c2c2e;
   --sidebar-active:       #1a2744;
@@ -377,84 +370,410 @@
   50%    { opacity:0.09; }
 }
 
+/* ================================================================
+   CHAT WINDOW WALLPAPER — palette-aware
+   Each body.palette-X class (set by ThemeProvider) drives its own
+   background. Dark/light variants are controlled by [data-theme].
+   ================================================================ */
+
+/* ── Default / Ocean — light ──────────────────────────────────── */
 .messenger-chat {
   flex: 1;
   display: flex;
   flex-direction: column;
   overflow: hidden;
   position: relative;
-  background-color: #fdf6f0;
+  background-color: #e8f4fc;
   background-image:
-    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='56' height='100'%3E%3Cpath d='M28 66L0 50V18L28 2l28 16v32L28 66zm0-4l24-14V20L28 6 4 20v28l24 14z' fill='none' stroke='rgba(180,100,120,0.09)' stroke-width='0.8'/%3E%3C/svg%3E"),
-    radial-gradient(circle at 1px 1px, rgba(160,80,100,0.07) 1px, transparent 0),
-    radial-gradient(ellipse 55% 40% at 15% 20%,  rgba(255,180,160,0.35) 0%, transparent 65%),
-    radial-gradient(ellipse 45% 35% at 85% 75%,  rgba(200,160,220,0.28) 0%, transparent 65%),
-    radial-gradient(ellipse 40% 30% at 70% 15%,  rgba(255,200,180,0.25) 0%, transparent 60%),
-    radial-gradient(ellipse 50% 40% at 25% 85%,  rgba(180,200,255,0.2)  0%, transparent 65%),
-    linear-gradient(160deg, #fef3ed 0%, #fdeee8 35%, #faf0f5 65%, #f6eef8 100%);
-  background-size: 56px 100px, 28px 28px, auto, auto, auto, auto, auto;
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='56' height='100'%3E%3Cpath d='M28 66L0 50V18L28 2l28 16v32L28 66zm0-4l24-14V20L28 6 4 20v28l24 14z' fill='none' stroke='rgba(0,92,187,0.07)' stroke-width='0.8'/%3E%3C/svg%3E"),
+    radial-gradient(ellipse 55% 40% at 15% 20%, rgba(100,190,255,0.35) 0%, transparent 65%),
+    radial-gradient(ellipse 45% 35% at 85% 75%, rgba(0,180,230,0.25)   0%, transparent 65%),
+    radial-gradient(ellipse 40% 30% at 70% 15%, rgba(140,210,255,0.22) 0%, transparent 60%),
+    radial-gradient(ellipse 50% 40% at 25% 85%, rgba(60,160,255,0.18)  0%, transparent 65%),
+    linear-gradient(160deg, #edf6fc 0%, #e4f2fa 40%, #eaf5fb 70%, #e0f0f8 100%);
+  background-size: 56px 100px, auto, auto, auto, auto, auto;
 }
 .messenger-chat::before {
-  content:'';
-  position:absolute; inset:0; pointer-events:none; z-index:0;
+  content:''; position:absolute; inset:0; pointer-events:none; z-index:0;
   background:
-    radial-gradient(circle 120px at 20% 30%, rgba(255,140,100,0.22) 0%, transparent 70%),
-    radial-gradient(circle 90px  at 75% 20%, rgba(200,100,220,0.18) 0%, transparent 70%),
-    radial-gradient(circle 150px at 60% 70%, rgba(255,200,160,0.2)  0%, transparent 70%),
-    radial-gradient(circle 80px  at 90% 80%, rgba(140,180,255,0.2)  0%, transparent 70%),
-    radial-gradient(circle 110px at 10% 85%, rgba(255,160,180,0.18) 0%, transparent 70%);
+    radial-gradient(circle 120px at 20% 30%, rgba(0,160,255,0.18) 0%, transparent 70%),
+    radial-gradient(circle  90px at 75% 20%, rgba(0,180,220,0.14) 0%, transparent 70%),
+    radial-gradient(circle 150px at 60% 70%, rgba(60,140,255,0.15) 0%, transparent 70%),
+    radial-gradient(circle  80px at 90% 80%, rgba(0,200,240,0.16) 0%, transparent 70%),
+    radial-gradient(circle 110px at 10% 85%, rgba(80,160,255,0.12) 0%, transparent 70%);
   animation: chatOrb1 18s ease-in-out infinite;
 }
 .messenger-chat::after {
-  content:'';
-  position:absolute; inset:0; pointer-events:none; z-index:0;
+  content:''; position:absolute; inset:0; pointer-events:none; z-index:0;
   background:
-    radial-gradient(circle 100px at 50% 10%, rgba(255,220,180,0.2) 0%, transparent 70%),
-    radial-gradient(circle 130px at 5%  50%, rgba(180,150,255,0.18) 0%, transparent 70%),
-    radial-gradient(circle 80px  at 95% 45%, rgba(255,180,200,0.2)  0%, transparent 70%);
+    radial-gradient(circle 100px at 50% 10%, rgba(0,190,255,0.15) 0%, transparent 70%),
+    radial-gradient(circle 130px at  5% 50%, rgba(0,140,220,0.12) 0%, transparent 70%),
+    radial-gradient(circle  80px at 95% 45%, rgba(40,170,255,0.14) 0%, transparent 70%);
   animation: chatOrb2 22s ease-in-out infinite;
 }
 .messenger-chat > .chat-wallpaper-vignette {
   position:absolute; inset:0; pointer-events:none; z-index:1;
-  background:radial-gradient(ellipse 110% 100% at 50% 50%, transparent 45%, rgba(150,80,100,0.08) 100%);
+  background:radial-gradient(ellipse 110% 100% at 50% 50%, transparent 45%, rgba(0,60,120,0.07) 100%);
 }
 
-[data-theme="dark"] .messenger-chat {
+/* ── Ocean — dark ─────────────────────────────────────────────── */
+[data-theme="dark"] .messenger-chat,
+[data-theme="dark"] body.palette-ocean .messenger-chat {
   background-color: #07080f;
   background-image:
-    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='60' height='60'%3E%3Cpath d='M30 0v60M0 30h60' stroke='rgba(100,200,255,0.06)' stroke-width='0.6'/%3E%3Ccircle cx='30' cy='30' r='1.5' fill='rgba(100,200,255,0.1)'/%3E%3Ccircle cx='0'  cy='0'  r='1'   fill='rgba(100,200,255,0.07)'/%3E%3Ccircle cx='60' cy='0'  r='1'   fill='rgba(100,200,255,0.07)'/%3E%3Ccircle cx='0'  cy='60' r='1'   fill='rgba(100,200,255,0.07)'/%3E%3Ccircle cx='60' cy='60' r='1'   fill='rgba(100,200,255,0.07)'/%3E%3C/svg%3E"),
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='60' height='60'%3E%3Cpath d='M30 0v60M0 30h60' stroke='rgba(14,165,233,0.06)' stroke-width='0.6'/%3E%3Ccircle cx='30' cy='30' r='1.5' fill='rgba(14,165,233,0.1)'/%3E%3Ccircle cx='0'  cy='0'  r='1'   fill='rgba(14,165,233,0.07)'/%3E%3Ccircle cx='60' cy='0'  r='1'   fill='rgba(14,165,233,0.07)'/%3E%3Ccircle cx='0'  cy='60' r='1'   fill='rgba(14,165,233,0.07)'/%3E%3Ccircle cx='60' cy='60' r='1'   fill='rgba(14,165,233,0.07)'/%3E%3C/svg%3E"),
     radial-gradient(ellipse 85% 45% at 10%  0%,  rgba(0,220,200,0.22)  0%, transparent 65%),
-    radial-gradient(ellipse 70% 40% at 90% 20%,  rgba(100,0,255,0.28)  0%, transparent 65%),
-    radial-gradient(ellipse 65% 35% at 50% 90%,  rgba(0,160,255,0.2)   0%, transparent 60%),
-    radial-gradient(ellipse 55% 30% at 80% 60%,  rgba(255,0,180,0.14)  0%, transparent 60%),
+    radial-gradient(ellipse 70% 40% at 90% 20%,  rgba(0,120,255,0.28)  0%, transparent 65%),
+    radial-gradient(ellipse 65% 35% at 50% 90%,  rgba(0,180,255,0.2)   0%, transparent 60%),
+    radial-gradient(ellipse 55% 30% at 80% 60%,  rgba(0,200,240,0.14)  0%, transparent 60%),
     linear-gradient(170deg, #050812 0%, #080c18 40%, #060a14 70%, #040810 100%);
   background-size: 60px 60px, auto, auto, auto, auto, auto;
 }
-[data-theme="dark"] .messenger-chat::before {
+[data-theme="dark"] .messenger-chat::before,
+[data-theme="dark"] body.palette-ocean .messenger-chat::before {
   background:
-    radial-gradient(circle 200px at 15% 25%,  rgba(0,255,200,0.2)  0%, transparent 70%),
-    radial-gradient(circle 160px at 80% 15%,  rgba(120,0,255,0.25) 0%, transparent 70%),
-    radial-gradient(circle 180px at 55% 75%,  rgba(0,180,255,0.18) 0%, transparent 70%),
-    radial-gradient(circle 120px at 90% 70%,  rgba(255,0,160,0.18) 0%, transparent 70%),
-    radial-gradient(circle 140px at 5%  80%,  rgba(0,220,180,0.15) 0%, transparent 70%);
+    radial-gradient(circle 200px at 15% 25%,  rgba(0,200,255,0.2)  0%, transparent 70%),
+    radial-gradient(circle 160px at 80% 15%,  rgba(0,160,255,0.22) 0%, transparent 70%),
+    radial-gradient(circle 180px at 55% 75%,  rgba(0,220,240,0.16) 0%, transparent 70%),
+    radial-gradient(circle 120px at 90% 70%,  rgba(0,180,220,0.15) 0%, transparent 70%),
+    radial-gradient(circle 140px at  5% 80%,  rgba(20,160,255,0.14) 0%, transparent 70%);
   animation: chatAurora1 20s ease-in-out infinite;
   mix-blend-mode: screen;
 }
-[data-theme="dark"] .messenger-chat::after {
+[data-theme="dark"] .messenger-chat::after,
+[data-theme="dark"] body.palette-ocean .messenger-chat::after {
   background:
-    radial-gradient(circle 220px at 50%  5%,  rgba(60,0,200,0.2)   0%, transparent 70%),
-    radial-gradient(circle 170px at 5%  50%,  rgba(0,220,255,0.18) 0%, transparent 70%),
-    radial-gradient(circle 150px at 95% 50%,  rgba(255,60,200,0.15) 0%, transparent 70%);
+    radial-gradient(circle 220px at 50%  5%,  rgba(0,80,200,0.2)   0%, transparent 70%),
+    radial-gradient(circle 170px at  5% 50%,  rgba(0,200,255,0.18) 0%, transparent 70%),
+    radial-gradient(circle 150px at 95% 50%,  rgba(0,200,240,0.15) 0%, transparent 70%);
   animation: chatAurora2 26s ease-in-out infinite;
   mix-blend-mode: screen;
 }
-[data-theme="dark"] .messenger-chat > .chat-wallpaper-vignette {
+[data-theme="dark"] .messenger-chat > .chat-wallpaper-vignette,
+[data-theme="dark"] body.palette-ocean .messenger-chat > .chat-wallpaper-vignette {
   background:
     radial-gradient(ellipse 120% 100% at 50% 50%, transparent 40%, rgba(0,0,20,0.7) 100%),
     repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(0,200,255,0.008) 2px, rgba(0,200,255,0.008) 3px);
   animation: chatGridPulse 6s ease-in-out infinite;
 }
 [data-theme="dark"] .messenger-chat { animation: chatNeuralPulse 8s ease-in-out infinite; }
+
+/* ── Sunset — light ───────────────────────────────────────────── */
+body.palette-sunset .messenger-chat {
+  background-color: #fdf0e0;
+  background-image:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='60' height='60'%3E%3Ccircle cx='30' cy='30' r='1.2' fill='rgba(255,100,0,0.08)'/%3E%3C/svg%3E"),
+    radial-gradient(ellipse 60% 45% at 10% 15%, rgba(255,180,100,0.4)  0%, transparent 65%),
+    radial-gradient(ellipse 50% 40% at 88% 70%, rgba(255,140,60,0.3)   0%, transparent 65%),
+    radial-gradient(ellipse 45% 35% at 60% 10%, rgba(255,200,120,0.28) 0%, transparent 60%),
+    linear-gradient(160deg, #fef3e0 0%, #fdecd5 40%, #fde8d0 70%, #fce5ca 100%);
+  background-size: 60px 60px, auto, auto, auto, auto;
+}
+body.palette-sunset .messenger-chat::before {
+  background:
+    radial-gradient(circle 130px at 20% 30%, rgba(255,120,0,0.2)  0%, transparent 70%),
+    radial-gradient(circle  90px at 78% 22%, rgba(255,180,0,0.18) 0%, transparent 70%),
+    radial-gradient(circle 160px at 55% 72%, rgba(255,100,0,0.15) 0%, transparent 70%),
+    radial-gradient(circle  80px at 90% 85%, rgba(255,160,60,0.18) 0%, transparent 70%);
+  animation: chatOrb1 18s ease-in-out infinite;
+}
+body.palette-sunset .messenger-chat::after {
+  background:
+    radial-gradient(circle 110px at 50% 8%,  rgba(255,200,80,0.15) 0%, transparent 70%),
+    radial-gradient(circle 140px at  5% 55%, rgba(255,120,40,0.12) 0%, transparent 70%),
+    radial-gradient(circle  90px at 95% 45%, rgba(255,160,0,0.14)  0%, transparent 70%);
+  animation: chatOrb2 22s ease-in-out infinite;
+}
+body.palette-sunset .messenger-chat > .chat-wallpaper-vignette {
+  background:radial-gradient(ellipse 110% 100% at 50% 50%, transparent 45%, rgba(120,40,0,0.07) 100%);
+}
+/* Sunset — dark */
+[data-theme="dark"] body.palette-sunset .messenger-chat {
+  background-color: #110600;
+  background-image:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='60' height='60'%3E%3Ccircle cx='30' cy='30' r='1.2' fill='rgba(255,109,0,0.08)'/%3E%3C/svg%3E"),
+    radial-gradient(ellipse 70% 40% at 10%  5%, rgba(255,100,0,0.25)  0%, transparent 65%),
+    radial-gradient(ellipse 60% 35% at 85% 25%, rgba(255,180,0,0.22)  0%, transparent 65%),
+    radial-gradient(ellipse 55% 40% at 50% 85%, rgba(200,60,0,0.18)   0%, transparent 60%),
+    linear-gradient(170deg, #110600 0%, #1a0a00 40%, #130800 70%, #0d0500 100%);
+  background-size: 60px 60px, auto, auto, auto, auto;
+}
+[data-theme="dark"] body.palette-sunset .messenger-chat::before {
+  background:
+    radial-gradient(circle 200px at 15% 25%, rgba(255,100,0,0.22)  0%, transparent 70%),
+    radial-gradient(circle 150px at 80% 15%, rgba(255,160,0,0.18)  0%, transparent 70%),
+    radial-gradient(circle 180px at 55% 75%, rgba(200,60,0,0.16)   0%, transparent 70%),
+    radial-gradient(circle 120px at 90% 65%, rgba(255,120,20,0.15) 0%, transparent 70%);
+  animation: chatAurora1 20s ease-in-out infinite;
+  mix-blend-mode: screen;
+}
+[data-theme="dark"] body.palette-sunset .messenger-chat::after {
+  background:
+    radial-gradient(circle 220px at 50% 5%,  rgba(180,40,0,0.2)   0%, transparent 70%),
+    radial-gradient(circle 170px at  5% 50%, rgba(255,100,0,0.16)  0%, transparent 70%),
+    radial-gradient(circle 140px at 95% 50%, rgba(255,180,60,0.14) 0%, transparent 70%);
+  animation: chatAurora2 26s ease-in-out infinite;
+  mix-blend-mode: screen;
+}
+[data-theme="dark"] body.palette-sunset .messenger-chat > .chat-wallpaper-vignette {
+  background:radial-gradient(ellipse 120% 100% at 50% 50%, transparent 40%, rgba(20,5,0,0.75) 100%);
+}
+
+/* ── Forest — light ───────────────────────────────────────────── */
+body.palette-forest .messenger-chat {
+  background-color: #e6f5e8;
+  background-image:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='56' height='100'%3E%3Cpath d='M28 66L0 50V18L28 2l28 16v32L28 66zm0-4l24-14V20L28 6 4 20v28l24 14z' fill='none' stroke='rgba(0,150,60,0.07)' stroke-width='0.8'/%3E%3C/svg%3E"),
+    radial-gradient(ellipse 55% 40% at 15% 20%, rgba(100,220,140,0.32) 0%, transparent 65%),
+    radial-gradient(ellipse 45% 35% at 85% 75%, rgba(60,180,100,0.26)  0%, transparent 65%),
+    radial-gradient(ellipse 40% 30% at 65% 15%, rgba(140,230,160,0.22) 0%, transparent 60%),
+    linear-gradient(160deg, #edf8ef 0%, #e4f5e7 40%, #eaf7ec 70%, #e0f3e3 100%);
+  background-size: 56px 100px, auto, auto, auto, auto;
+}
+body.palette-forest .messenger-chat::before {
+  background:
+    radial-gradient(circle 130px at 20% 30%, rgba(0,180,80,0.18)  0%, transparent 70%),
+    radial-gradient(circle  90px at 75% 20%, rgba(60,200,100,0.15) 0%, transparent 70%),
+    radial-gradient(circle 150px at 55% 72%, rgba(0,160,70,0.15)   0%, transparent 70%),
+    radial-gradient(circle  80px at 90% 82%, rgba(80,220,120,0.16) 0%, transparent 70%);
+  animation: chatOrb1 18s ease-in-out infinite;
+}
+body.palette-forest .messenger-chat::after {
+  background:
+    radial-gradient(circle 110px at 50% 8%,  rgba(60,200,100,0.14) 0%, transparent 70%),
+    radial-gradient(circle 140px at  5% 55%, rgba(0,160,70,0.12)   0%, transparent 70%),
+    radial-gradient(circle  90px at 95% 45%, rgba(80,220,120,0.13) 0%, transparent 70%);
+  animation: chatOrb2 22s ease-in-out infinite;
+}
+body.palette-forest .messenger-chat > .chat-wallpaper-vignette {
+  background:radial-gradient(ellipse 110% 100% at 50% 50%, transparent 45%, rgba(0,60,20,0.07) 100%);
+}
+/* Forest — dark */
+[data-theme="dark"] body.palette-forest .messenger-chat {
+  background-color: #020a04;
+  background-image:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='60' height='60'%3E%3Cpath d='M30 0v60M0 30h60' stroke='rgba(0,200,83,0.06)' stroke-width='0.6'/%3E%3Ccircle cx='30' cy='30' r='1.5' fill='rgba(0,200,83,0.09)'/%3E%3C/svg%3E"),
+    radial-gradient(ellipse 80% 45% at 10%  5%, rgba(0,200,80,0.2)   0%, transparent 65%),
+    radial-gradient(ellipse 65% 40% at 88% 20%, rgba(0,240,120,0.18) 0%, transparent 65%),
+    radial-gradient(ellipse 60% 38% at 50% 88%, rgba(0,180,70,0.16)  0%, transparent 60%),
+    linear-gradient(170deg, #020a04 0%, #050f07 40%, #030c05 70%, #020904 100%);
+  background-size: 60px 60px, auto, auto, auto, auto;
+}
+[data-theme="dark"] body.palette-forest .messenger-chat::before {
+  background:
+    radial-gradient(circle 200px at 15% 25%, rgba(0,220,90,0.2)  0%, transparent 70%),
+    radial-gradient(circle 155px at 80% 15%, rgba(0,200,80,0.18) 0%, transparent 70%),
+    radial-gradient(circle 180px at 55% 75%, rgba(0,180,70,0.16) 0%, transparent 70%),
+    radial-gradient(circle 120px at 90% 65%, rgba(40,220,100,0.14) 0%, transparent 70%);
+  animation: chatAurora1 20s ease-in-out infinite;
+  mix-blend-mode: screen;
+}
+[data-theme="dark"] body.palette-forest .messenger-chat::after {
+  background:
+    radial-gradient(circle 220px at 50% 5%,  rgba(0,140,50,0.2)   0%, transparent 70%),
+    radial-gradient(circle 170px at  5% 50%, rgba(0,200,80,0.16)   0%, transparent 70%),
+    radial-gradient(circle 150px at 95% 50%, rgba(0,230,100,0.14)  0%, transparent 70%);
+  animation: chatAurora2 26s ease-in-out infinite;
+  mix-blend-mode: screen;
+}
+[data-theme="dark"] body.palette-forest .messenger-chat > .chat-wallpaper-vignette {
+  background:
+    radial-gradient(ellipse 120% 100% at 50% 50%, transparent 40%, rgba(0,10,3,0.75) 100%),
+    repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(0,200,80,0.007) 2px, rgba(0,200,80,0.007) 3px);
+  animation: chatGridPulse 6s ease-in-out infinite;
+}
+
+/* ── Royal — light ────────────────────────────────────────────── */
+body.palette-royal .messenger-chat {
+  background-color: #f0eafe;
+  background-image:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='56' height='100'%3E%3Cpath d='M28 66L0 50V18L28 2l28 16v32L28 66zm0-4l24-14V20L28 6 4 20v28l24 14z' fill='none' stroke='rgba(98,0,234,0.07)' stroke-width='0.8'/%3E%3C/svg%3E"),
+    radial-gradient(ellipse 55% 42% at 12% 18%, rgba(160,100,255,0.32) 0%, transparent 65%),
+    radial-gradient(ellipse 48% 38% at 86% 72%, rgba(120,60,220,0.26)  0%, transparent 65%),
+    radial-gradient(ellipse 42% 32% at 68% 12%, rgba(180,120,255,0.22) 0%, transparent 60%),
+    linear-gradient(160deg, #f5eeff 0%, #efe6fd 40%, #f2eafe 70%, #eee3fc 100%);
+  background-size: 56px 100px, auto, auto, auto, auto;
+}
+body.palette-royal .messenger-chat::before {
+  background:
+    radial-gradient(circle 130px at 20% 30%, rgba(120,0,220,0.18)  0%, transparent 70%),
+    radial-gradient(circle  90px at 76% 22%, rgba(160,60,255,0.15)  0%, transparent 70%),
+    radial-gradient(circle 150px at 56% 72%, rgba(100,0,200,0.14)   0%, transparent 70%),
+    radial-gradient(circle  80px at 90% 82%, rgba(140,80,255,0.16)  0%, transparent 70%);
+  animation: chatOrb1 18s ease-in-out infinite;
+}
+body.palette-royal .messenger-chat::after {
+  background:
+    radial-gradient(circle 110px at 50% 8%,  rgba(140,60,240,0.14) 0%, transparent 70%),
+    radial-gradient(circle 140px at  5% 55%, rgba(100,0,200,0.12)   0%, transparent 70%),
+    radial-gradient(circle  90px at 95% 45%, rgba(160,80,255,0.13)  0%, transparent 70%);
+  animation: chatOrb2 22s ease-in-out infinite;
+}
+body.palette-royal .messenger-chat > .chat-wallpaper-vignette {
+  background:radial-gradient(ellipse 110% 100% at 50% 50%, transparent 45%, rgba(40,0,80,0.07) 100%);
+}
+/* Royal — dark */
+[data-theme="dark"] body.palette-royal .messenger-chat {
+  background-color: #07030e;
+  background-image:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='60' height='60'%3E%3Cpath d='M30 0v60M0 30h60' stroke='rgba(98,0,234,0.07)' stroke-width='0.6'/%3E%3Ccircle cx='30' cy='30' r='1.5' fill='rgba(140,60,255,0.1)'/%3E%3C/svg%3E"),
+    radial-gradient(ellipse 80% 45% at 10%  5%, rgba(100,0,240,0.24) 0%, transparent 65%),
+    radial-gradient(ellipse 65% 40% at 88% 20%, rgba(160,0,255,0.2)  0%, transparent 65%),
+    radial-gradient(ellipse 60% 38% at 50% 88%, rgba(80,0,200,0.18)  0%, transparent 60%),
+    linear-gradient(170deg, #07030e 0%, #0c0518 40%, #09041a 70%, #060312 100%);
+  background-size: 60px 60px, auto, auto, auto, auto;
+}
+[data-theme="dark"] body.palette-royal .messenger-chat::before {
+  background:
+    radial-gradient(circle 200px at 15% 25%, rgba(140,0,255,0.22) 0%, transparent 70%),
+    radial-gradient(circle 155px at 80% 15%, rgba(100,0,220,0.2)  0%, transparent 70%),
+    radial-gradient(circle 180px at 55% 75%, rgba(120,0,240,0.18) 0%, transparent 70%),
+    radial-gradient(circle 120px at 90% 65%, rgba(160,60,255,0.16) 0%, transparent 70%);
+  animation: chatAurora1 20s ease-in-out infinite;
+  mix-blend-mode: screen;
+}
+[data-theme="dark"] body.palette-royal .messenger-chat::after {
+  background:
+    radial-gradient(circle 220px at 50% 5%,  rgba(60,0,160,0.22)  0%, transparent 70%),
+    radial-gradient(circle 170px at  5% 50%, rgba(120,0,240,0.18)  0%, transparent 70%),
+    radial-gradient(circle 150px at 95% 50%, rgba(180,60,255,0.16) 0%, transparent 70%);
+  animation: chatAurora2 26s ease-in-out infinite;
+  mix-blend-mode: screen;
+}
+[data-theme="dark"] body.palette-royal .messenger-chat > .chat-wallpaper-vignette {
+  background:
+    radial-gradient(ellipse 120% 100% at 50% 50%, transparent 40%, rgba(5,0,15,0.78) 100%),
+    repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(100,0,255,0.007) 2px, rgba(100,0,255,0.007) 3px);
+  animation: chatGridPulse 6s ease-in-out infinite;
+}
+
+/* ── Rose — light ─────────────────────────────────────────────── */
+body.palette-rose .messenger-chat {
+  background-color: #fde8f2;
+  background-image:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='56' height='100'%3E%3Cpath d='M28 66L0 50V18L28 2l28 16v32L28 66zm0-4l24-14V20L28 6 4 20v28l24 14z' fill='none' stroke='rgba(180,100,120,0.09)' stroke-width='0.8'/%3E%3C/svg%3E"),
+    radial-gradient(ellipse 55% 40% at 15% 20%, rgba(255,180,200,0.35) 0%, transparent 65%),
+    radial-gradient(ellipse 45% 35% at 85% 75%, rgba(200,100,160,0.28) 0%, transparent 65%),
+    radial-gradient(ellipse 40% 30% at 70% 15%, rgba(255,180,210,0.25) 0%, transparent 60%),
+    radial-gradient(ellipse 50% 40% at 25% 85%, rgba(230,100,150,0.2)  0%, transparent 65%),
+    linear-gradient(160deg, #fef3f8 0%, #fdeef5 35%, #faf0f5 65%, #f8eef6 100%);
+  background-size: 56px 100px, auto, auto, auto, auto, auto;
+}
+body.palette-rose .messenger-chat::before {
+  background:
+    radial-gradient(circle 120px at 20% 30%, rgba(255,100,140,0.22) 0%, transparent 70%),
+    radial-gradient(circle  90px at 75% 20%, rgba(220,60,120,0.18)  0%, transparent 70%),
+    radial-gradient(circle 150px at 60% 70%, rgba(255,140,180,0.2)  0%, transparent 70%),
+    radial-gradient(circle  80px at 90% 80%, rgba(200,80,130,0.18)  0%, transparent 70%),
+    radial-gradient(circle 110px at 10% 85%, rgba(255,120,160,0.16) 0%, transparent 70%);
+  animation: chatOrb1 18s ease-in-out infinite;
+}
+body.palette-rose .messenger-chat::after {
+  background:
+    radial-gradient(circle 100px at 50% 10%, rgba(255,160,200,0.18) 0%, transparent 70%),
+    radial-gradient(circle 130px at  5% 50%, rgba(200,80,130,0.15)  0%, transparent 70%),
+    radial-gradient(circle  80px at 95% 45%, rgba(255,120,170,0.18) 0%, transparent 70%);
+  animation: chatOrb2 22s ease-in-out infinite;
+}
+body.palette-rose .messenger-chat > .chat-wallpaper-vignette {
+  background:radial-gradient(ellipse 110% 100% at 50% 50%, transparent 45%, rgba(150,40,80,0.08) 100%);
+}
+/* Rose — dark */
+[data-theme="dark"] body.palette-rose .messenger-chat {
+  background-color: #100006;
+  background-image:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='60' height='60'%3E%3Ccircle cx='30' cy='30' r='1.5' fill='rgba(233,30,99,0.09)'/%3E%3C/svg%3E"),
+    radial-gradient(ellipse 75% 45% at 10%  5%, rgba(220,0,80,0.24)   0%, transparent 65%),
+    radial-gradient(ellipse 60% 38% at 88% 22%, rgba(255,40,120,0.2)   0%, transparent 65%),
+    radial-gradient(ellipse 55% 38% at 50% 88%, rgba(180,0,70,0.18)    0%, transparent 60%),
+    linear-gradient(170deg, #100006 0%, #1a000c 40%, #140008 70%, #0e0005 100%);
+  background-size: 60px 60px, auto, auto, auto, auto;
+}
+[data-theme="dark"] body.palette-rose .messenger-chat::before {
+  background:
+    radial-gradient(circle 200px at 15% 25%, rgba(233,0,80,0.22)  0%, transparent 70%),
+    radial-gradient(circle 155px at 80% 15%, rgba(255,40,120,0.18) 0%, transparent 70%),
+    radial-gradient(circle 180px at 55% 75%, rgba(180,0,70,0.16)   0%, transparent 70%),
+    radial-gradient(circle 120px at 90% 65%, rgba(255,60,140,0.15) 0%, transparent 70%);
+  animation: chatAurora1 20s ease-in-out infinite;
+  mix-blend-mode: screen;
+}
+[data-theme="dark"] body.palette-rose .messenger-chat::after {
+  background:
+    radial-gradient(circle 220px at 50% 5%,  rgba(150,0,60,0.22)   0%, transparent 70%),
+    radial-gradient(circle 170px at  5% 50%, rgba(230,0,80,0.18)    0%, transparent 70%),
+    radial-gradient(circle 150px at 95% 50%, rgba(255,60,130,0.16)  0%, transparent 70%);
+  animation: chatAurora2 26s ease-in-out infinite;
+  mix-blend-mode: screen;
+}
+[data-theme="dark"] body.palette-rose .messenger-chat > .chat-wallpaper-vignette {
+  background:radial-gradient(ellipse 120% 100% at 50% 50%, transparent 40%, rgba(15,0,8,0.78) 100%);
+}
+
+/* ── Midnight — light ─────────────────────────────────────────── */
+body.palette-midnight .messenger-chat {
+  background-color: #e8e8f8;
+  background-image:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='60' height='60'%3E%3Cpath d='M30 0v60M0 30h60' stroke='rgba(60,60,200,0.06)' stroke-width='0.6'/%3E%3Ccircle cx='30' cy='30' r='1.2' fill='rgba(80,80,200,0.08)'/%3E%3C/svg%3E"),
+    radial-gradient(ellipse 55% 40% at 14% 18%, rgba(120,120,255,0.3)  0%, transparent 65%),
+    radial-gradient(ellipse 45% 36% at 85% 74%, rgba(80,80,220,0.24)   0%, transparent 65%),
+    radial-gradient(ellipse 42% 32% at 65% 12%, rgba(140,140,255,0.2)  0%, transparent 60%),
+    linear-gradient(160deg, #eeeeff 0%, #e8e8fc 40%, #ebebff 70%, #e5e5fa 100%);
+  background-size: 60px 60px, auto, auto, auto, auto;
+}
+body.palette-midnight .messenger-chat::before {
+  background:
+    radial-gradient(circle 130px at 20% 30%, rgba(80,80,220,0.18)  0%, transparent 70%),
+    radial-gradient(circle  90px at 76% 22%, rgba(100,100,240,0.15) 0%, transparent 70%),
+    radial-gradient(circle 150px at 56% 72%, rgba(60,60,200,0.14)   0%, transparent 70%),
+    radial-gradient(circle  80px at 90% 82%, rgba(120,120,255,0.16) 0%, transparent 70%);
+  animation: chatOrb1 18s ease-in-out infinite;
+}
+body.palette-midnight .messenger-chat::after {
+  background:
+    radial-gradient(circle 110px at 50% 8%,  rgba(100,100,240,0.13) 0%, transparent 70%),
+    radial-gradient(circle 140px at  5% 55%, rgba(60,60,200,0.11)    0%, transparent 70%),
+    radial-gradient(circle  90px at 95% 45%, rgba(120,120,255,0.12)  0%, transparent 70%);
+  animation: chatOrb2 22s ease-in-out infinite;
+}
+body.palette-midnight .messenger-chat > .chat-wallpaper-vignette {
+  background:radial-gradient(ellipse 110% 100% at 50% 50%, transparent 45%, rgba(10,10,50,0.07) 100%);
+}
+/* Midnight — dark */
+[data-theme="dark"] body.palette-midnight .messenger-chat {
+  background-color: #040410;
+  background-image:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='60' height='60'%3E%3Cpath d='M30 0v60M0 30h60' stroke='rgba(80,80,220,0.06)' stroke-width='0.6'/%3E%3Ccircle cx='30' cy='30' r='1.5' fill='rgba(100,100,240,0.09)'/%3E%3C/svg%3E"),
+    radial-gradient(ellipse 80% 45% at 10%  5%, rgba(60,60,220,0.24)  0%, transparent 65%),
+    radial-gradient(ellipse 65% 40% at 88% 20%, rgba(100,100,255,0.2)  0%, transparent 65%),
+    radial-gradient(ellipse 60% 38% at 50% 88%, rgba(50,50,200,0.18)   0%, transparent 60%),
+    linear-gradient(170deg, #040410 0%, #07071a 40%, #050518 70%, #040414 100%);
+  background-size: 60px 60px, auto, auto, auto, auto;
+}
+[data-theme="dark"] body.palette-midnight .messenger-chat::before {
+  background:
+    radial-gradient(circle 200px at 15% 25%, rgba(80,80,240,0.22)  0%, transparent 70%),
+    radial-gradient(circle 155px at 80% 15%, rgba(60,60,220,0.18)   0%, transparent 70%),
+    radial-gradient(circle 180px at 55% 75%, rgba(100,100,255,0.16) 0%, transparent 70%),
+    radial-gradient(circle 120px at 90% 65%, rgba(120,120,255,0.15) 0%, transparent 70%);
+  animation: chatAurora1 20s ease-in-out infinite;
+  mix-blend-mode: screen;
+}
+[data-theme="dark"] body.palette-midnight .messenger-chat::after {
+  background:
+    radial-gradient(circle 220px at 50% 5%,  rgba(40,40,160,0.22)  0%, transparent 70%),
+    radial-gradient(circle 170px at  5% 50%, rgba(80,80,240,0.18)   0%, transparent 70%),
+    radial-gradient(circle 150px at 95% 50%, rgba(120,120,255,0.16) 0%, transparent 70%);
+  animation: chatAurora2 26s ease-in-out infinite;
+  mix-blend-mode: screen;
+}
+[data-theme="dark"] body.palette-midnight .messenger-chat > .chat-wallpaper-vignette {
+  background:
+    radial-gradient(ellipse 120% 100% at 50% 50%, transparent 40%, rgba(2,2,12,0.78) 100%),
+    repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(80,80,220,0.007) 2px, rgba(80,80,220,0.007) 3px);
+  animation: chatGridPulse 6s ease-in-out infinite;
+}
+
 
 /* ── Messages area ────────────────────────────────────────────── */
 .chat-messages {

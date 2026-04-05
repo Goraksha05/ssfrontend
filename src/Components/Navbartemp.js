@@ -14,7 +14,7 @@ import {
   Bell,
   Home,
   Activity,
-  User, 
+  User,
   ChevronDown,
   Globe,
   X
@@ -26,6 +26,8 @@ import apiRequest from "../utils/apiRequest";
 import SubscribeIcon from '../Assets/PrimeMembers.png';
 import LogoutIcon from '../Assets/LogoutButton.png';
 // import ThemeToggle from '../Components/Theme/ThemeToggle';
+import { ThemePickerTrigger } from '../Components/Theme/ThemePalettePicker';
+import { useUI } from '../Context/ThemeUI/UIContext';
 // import KycVerification from './KYC/KycVerification';
 
 // ─── NOTE on i18n.js ──────────────────────────────────────────────────────────
@@ -58,6 +60,8 @@ function NavLinkItem({ to, icon: Icon, children, onClick }) {
 
 /* ─── Main Component ─────────────────────────────────────────────────── */
 export default function Navbartemp({ title, myHome }) {
+  const { openThemePicker } = useUI();
+
   const { isAuthenticated, logout, notificationCount, setNotificationCount, authtoken } = useAuth();
   const { openSubscription } = useSubscription();
   const navigate = useNavigate();
@@ -215,13 +219,13 @@ export default function Navbartemp({ title, myHome }) {
     <>
       {/* ══════════════════════════════════════════════════════════ NAV */}
       <nav className="navbar-root">
-        <div className="navbar-inner">
+        <div ref={navbarRef} className="navbar-inner">
 
           {/* Brand */}
           <Link className="navbar-brand" to="/">
             <Logo />
           </Link>
-
+          {/* <span>{title}</span> */}
           {/* Search bar */}
           <div ref={searchRef} className="navbar-search-wrap">
             <div className={`navbar-search-inner${searchFocused ? " focused" : ""}`}>
@@ -352,7 +356,7 @@ export default function Navbartemp({ title, myHome }) {
                 </button>
 
                 {/* Bell — always opens; onClose in the panel sets it false */}
-                <button
+                {/* <button
                   onClick={() => setShowNotifications(true)}
                   title={t["nav.notifications"] || "Notifications"}
                   className="navbar-icon-btn"
@@ -361,7 +365,7 @@ export default function Navbartemp({ title, myHome }) {
                   {notificationCount > 0 && (
                     <span className="navbar-badge">{notificationCount > 9 ? "9+" : notificationCount}</span>
                   )}
-                </button>
+                </button> */}
 
                 {/* ── Language selector ──────────────────────────────────────
                     Uses LANGUAGES from useI18n() — the full list defined in
@@ -411,7 +415,11 @@ export default function Navbartemp({ title, myHome }) {
               </>
             )}
 
+            {/* Dark / light toggle */}
             {/* <ThemeToggle /> */}
+
+            {/* Palette picker trigger — opens the App-level modal */}
+            <ThemePickerTrigger onClick={openThemePicker} />
 
             {/* Mobile hamburger */}
             <button
@@ -428,7 +436,7 @@ export default function Navbartemp({ title, myHome }) {
 
         {/* ── Mobile Drawer ── */}
         {!isCollapsed && (
-          <div ref={navbarRef} className="navbar-mobile-drawer">
+          <div /*ref={navbarRef}*/ className="navbar-mobile-drawer">
             {/* Nav links */}
             {[
               { to: "/", icon: Home, label: myHome || t["nav.home"] || "Home" },
@@ -489,6 +497,20 @@ export default function Navbartemp({ title, myHome }) {
             {/* Mobile auth actions */}
             {isAuthenticated && (
               <div className="navbar-mobile-auth-actions">
+                {/* Bell — notifications */}
+                <button
+                  onClick={() => { setShowNotifications(true); handleNavItemClick(); }}
+                  title={t["nav.notifications"] || "Notifications"}
+                  className="navbar-icon-btn navbar-mobile-bell-btn"
+                >
+                  <Bell size={19} />
+                  {notificationCount > 0 && (
+                    <span className="navbar-badge">
+                      {notificationCount > 9 ? "9+" : notificationCount}
+                    </span>
+                  )}
+                </button>
+
                 <button
                   onClick={openSubscription}
                   title={t["nav.become_prime"] || "Become a Prime Member"}
@@ -505,6 +527,8 @@ export default function Navbartemp({ title, myHome }) {
                 </button>
               </div>
             )}
+            {/* Palette picker trigger — opens the App-level modal */}
+            {/* <ThemePickerTrigger onClick={openThemePicker} /> */}
           </div>
         )}
       </nav>

@@ -17,8 +17,10 @@ import React from 'react';
 import { useTheme } from '../../Context/ThemeUI/ThemeContext';
 
 const ThemeToggle = ({ size = 22, style = {} }) => {
-  const { isDark, toggleTheme, tokens, palette, PALETTES } = useTheme();
-  const currentPalette = PALETTES?.[palette];
+  const { isDark, toggleTheme, tokens, 
+    // palette, PALETTES 
+  } = useTheme();
+  // const currentPalette = PALETTES?.[palette];
 
   const btnStyle = {
     background:     'none',
@@ -48,11 +50,11 @@ const ThemeToggle = ({ size = 22, style = {} }) => {
       aria-label={isDark ? 'Switch to Light Mode' : 'Switch to Dark Mode'}
     >
       {/* Palette emoji indicator */}
-      {currentPalette && (
+      {/* {currentPalette && (
         <span style={{ fontSize: '0.9rem', lineHeight: 1 }}>
           {currentPalette.emoji}
         </span>
-      )}
+      )} */}
 
       {/* Sun / Moon icon */}
       {isDark

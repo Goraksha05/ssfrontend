@@ -13,7 +13,7 @@ import apiRequest      from '../../../utils/apiRequest';
 import { ReplyContext } from './MessageBubble';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
-const QUICK_EMOJIS = ['❤️', '👍', '😂', '😮', '😢', '🙏'];
+// const QUICK_EMOJIS = ['❤️', '👍', '😂', '😮', '😢', '🙏'];
 const safeReactions = (val) => (Array.isArray(val) ? val : []);
 
 // ─── Tick ─────────────────────────────────────────────────────────────────────
@@ -238,12 +238,12 @@ const SentMessage = ({ msg, isFirstInGroup, isLastInGroup }) => {
       >
         {showReactions && (
           <div className="reaction-picker" style={{ right: 0 }}>
-            {QUICK_EMOJIS.map((emoji) => (
+            {/* {QUICK_EMOJIS.map((emoji) => (
               <button key={emoji} className="react-btn"
                 onClick={() => handleReact(emoji)} aria-label={`React ${emoji}`}>
                 {emoji}
               </button>
-            ))}
+            ))} */}
           </div>
         )}
 
