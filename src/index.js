@@ -5,7 +5,7 @@ import App from './App';
 import './Components/XLogo/i18n'
 import AOS from 'aos';
 import 'aos/dist/aos.css';
-// import './globals.css';
+import './globals.css';
 
 AOS.init({ duration: 700 });
 

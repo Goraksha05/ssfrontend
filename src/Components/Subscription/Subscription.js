@@ -4,7 +4,6 @@ import { useSubscription } from '../../Context/Subscription/SubscriptionContext'
 import { useAuth } from '../../Context/Authorisation/AuthContext';
 import InvoicePopup from './InvoicePopup';
 import { toast } from 'react-toastify';
-import './Subscription.css';
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || process.env.REACT_APP_SERVER_URL;
 
@@ -13,6 +12,7 @@ const PLANS = [
     name: 'Basic',
     color: '#3B82F6',
     gradient: 'linear-gradient(135deg, #3B82F6 0%, #1D4ED8 100%)',
+    glow: 'rgba(59, 130, 246, 0.45)',
     actualPackage: 2999,
     discountedAmount: 2500,
     monthlyDisplay: '₹ 208',
@@ -38,6 +38,7 @@ const PLANS = [
     name: 'Standard',
     color: '#8B5CF6',
     gradient: 'linear-gradient(135deg, #8B5CF6 0%, #6D28D9 100%)',
+    glow: 'rgba(139, 92, 246, 0.45)',
     actualPackage: 4199,
     discountedAmount: 3500,
     monthlyDisplay: '₹ 292',
@@ -63,6 +64,7 @@ const PLANS = [
     name: 'Premium',
     color: '#F59E0B',
     gradient: 'linear-gradient(135deg, #F59E0B 0%, #D97706 100%)',
+    glow: 'rgba(245, 158, 11, 0.45)',
     actualPackage: 5499,
     discountedAmount: 4500,
     monthlyDisplay: '₹ 375',
@@ -233,7 +235,7 @@ function PlanCard({ plan, isActive, onSubscribe, onViewInvoice, loading }) {
       <div className="sub-plan-card__footer">
         <button
           className="sub-btn sub-btn--subscribe"
-          style={{ '--plan-color': plan.color }}
+          style={{ '--plan-gradient': plan.gradient, '--plan-glow': plan.glow }}
           onClick={() => onSubscribe(plan)}
           disabled={loading === plan.name}
           aria-label={`Subscribe to ${plan.name} plan`}

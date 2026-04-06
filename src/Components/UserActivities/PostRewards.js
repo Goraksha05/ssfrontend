@@ -9,7 +9,8 @@ import usePlanSlabs from "../../hooks/usePlanSlabs";
 import { useRewardEligibility } from "../../hooks/useRewardEligibility";
 import { toast } from "react-toastify";
 import BankDetailsModal from "../Common/BankDetailsModal";
-import "./Rewards.css";
+// import { useSubscription } from "../../Context/Subscription/SubscriptionContext";
+// import { useKyc, KYC_STATUSES } from "../../Context/KYC/KycContext";  
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 

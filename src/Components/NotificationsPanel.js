@@ -17,6 +17,7 @@ import { useNavigate } from 'react-router-dom';
 import { toast } from 'react-toastify';
 import ProfileModal from '../Components/Profile/ProfileModal';
 import apiRequest from '../utils/apiRequest';
+import { useScrollLock }   from '../hooks/useScrollLock';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 const DEFAULT_AVATAR = 'https://cdn-icons-png.flaticon.com/512/149/149071.png';
@@ -363,6 +364,9 @@ const NotificationsPanel = ({ show, onClose, pageSize = 10 }) => {
   const hoverTimer = useRef(null);
   const navigate   = useNavigate();
   const scrollRef  = useRef(null);
+
+  // ── FIX 1: Use reference-counted scroll lock ──────────────────────
+  useScrollLock(show);
 
   // Refresh relative timestamps every 60 s
   useEffect(() => {

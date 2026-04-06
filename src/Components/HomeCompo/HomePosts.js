@@ -3,7 +3,6 @@ import React, { useContext } from 'react';
 import postContext from '../../Context/Posts/PostContext';
 import PostItem from './HomePostitem';
 import { useTheme } from '../../Context/ThemeUI/ThemeContext';
-import './Home.css';
 
 /* ═══════════════════════════════════════════════════════════════════════════ */
 /*  SkeletonPost — uses CSS classes from Home.css driven by ThemeContext vars  */

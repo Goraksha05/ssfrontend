@@ -31,7 +31,6 @@ import CommentsModal from "./CommentsModal";
 import VerifiedBadge from "../Common/VerifiedBadge";
 import ProfileModal from "../Profile/ProfileModal";
 import "react-toastify/dist/ReactToastify.css";
-import "./FullscreenReels.css";
 
 const MEDIA_BASE_URL =
   process.env.REACT_APP_MEDIA_BASE_URL ||

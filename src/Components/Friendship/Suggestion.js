@@ -3,7 +3,6 @@ import { useNavigate } from 'react-router-dom';
 import { useFriend } from '../../Context/Friend/FriendContext';
 import { toast } from 'react-toastify';
 import ConnectBtn from '../../Assets/RectaAcceptBtn.png';
-import './Suggestion.css';
 
 // ── Skeleton card ─────────────────────────────────────────────────────────────
 const SkeletonCard = () => (

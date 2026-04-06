@@ -10,7 +10,6 @@ import ShareModal from "./ShareModal";
 import { toast } from "react-toastify";
 import apiRequest from "../../utils/apiRequest";
 import BankDetailsModal from "../Common/BankDetailsModal";
-import "./Rewards.css";
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 

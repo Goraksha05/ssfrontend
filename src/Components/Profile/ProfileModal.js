@@ -174,8 +174,14 @@ const ProfileModal = ({ userId, show, onClose }) => {
           setProfile(profileRes.value.data.profile);
         }
         if (postsRes.status === "fulfilled") {
-          const userPosts = postsRes.value.data.filter(
-            (p) => p.user_id._id === userId && p.visibility === "public"
+          const raw = postsRes.value.data;
+          const allPosts = Array.isArray(raw)
+            ? raw
+            : Array.isArray(raw?.posts)
+            ? raw.posts
+            : [];
+          const userPosts = allPosts.filter(
+            (p) => p?.user_id?._id === userId && p?.visibility === "public"
           );
           setPosts(userPosts);
         }

@@ -6,7 +6,7 @@ import apiRequest from '../../utils/apiRequest';
 import CommentsModal from '../Reels/CommentsModal';
 import ProfileModal from '../Profile/ProfileModal';
 import { useTheme } from '../../Context/ThemeUI/ThemeContext';
-import './Home.css';
+import { useScrollLock } from '../../hooks/useScrollLock';
 
 /* ─── Utility ─────────────────────────────────────────────────────────────── */
 const baseUrl = process.env.REACT_APP_BACKEND_URL || 'https://api.sosholife.com';
@@ -165,6 +165,12 @@ function PostItem({ post, deletePost, toggleLikePost }) {
   const gridClass = mediaItems.length === 1 ? 'single'
     : mediaItems.length === 2 ? 'pair'
       : 'trio';
+
+  // Lock page scroll while the Profile Modal is open.
+  // useScrollLock is reference-counted at module level, so multiple PostItem
+  // instances and other modals (e.g. CommentsModal) can all call this safely —
+  // the page only unlocks once every consumer has released its lock.
+  useScrollLock(showProfileModal);
 
   const openProfile = () => {
     setSelectedUserId(author._id);
@@ -358,11 +364,18 @@ function PostItem({ post, deletePost, toggleLikePost }) {
         />
       )}
 
-      <ProfileModal
-        userId={selectedUserId}
-        show={showProfileModal}
-        onClose={() => setShowProfileModal(false)}
-      />
+      {/* Conditional render (not just show={bool}) is intentional:
+          ProfileModal must unmount when closed so useScrollLock's useEffect
+          cleanup fires and releases its slot in the reference counter.
+          An always-mounted modal with show=false would never trigger cleanup,
+          leaving lockCount permanently incremented and the page stuck locked. */}
+      {showProfileModal && (
+        <ProfileModal
+          userId={selectedUserId}
+          show={showProfileModal}
+          onClose={() => setShowProfileModal(false)}
+        />
+      )}
     </article>
   );
 }

@@ -3,7 +3,6 @@ import React from "react";
 import DailyStreak from "./DailyStreak";
 import UserReferrals from "./UserReferrals";
 import PostRewards from "./PostRewards";
-import "./Rewards.css";
 
 const sectionMeta = {
   streak:   { label: "🔥 Daily Streak Rewards", accent: "#ff6b35" },

@@ -3,7 +3,6 @@ import { useNavigate } from 'react-router-dom';
 import { useFriend } from '../../Context/Friend/FriendContext';
 import { getInitials } from '../../utils/getInitials';
 import UnfriendBtn from '../../Assets/RectaUnfrndBtn.png';
-import './AllFriends.css';
 
 const AllFriends = () => {
   const { friends = [], unfriend, fetchFriends } = useFriend();

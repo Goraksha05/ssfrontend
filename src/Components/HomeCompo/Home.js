@@ -15,7 +15,7 @@ import EnhancedMediaUpload from './EnhancedMediaUpload';
 import ObtainedRewardsModal from '../UserActivities/ObtainedRewardsModal';
 import AddFileIcon from '../../Assets/AddMedia.png';
 import { useTheme } from '../../Context/ThemeUI/ThemeContext';
-import './Home.css';
+import { useScrollLock } from '../../hooks/useScrollLock';
 
 const SERVER_URL = process.env.REACT_APP_SERVER_URL;
 
@@ -71,6 +71,8 @@ function Home() {
   /* ── Basic user info ────────────────────────────────────────────────────── */
   const [userData,   setUserData]   = useState(null);
   const [inviteLink, setInviteLink] = useState(''); // eslint-disable-line no-unused-vars
+
+  useScrollLock(showRewardsModal); // Lock scroll when rewards modal is open
 
   /* ── Fetch user profile ─────────────────────────────────────────────────── */
   useEffect(() => {

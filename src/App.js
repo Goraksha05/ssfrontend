@@ -1,12 +1,7 @@
-/**
- * App.js — SoShoLife Frontend Root (Production-Ready)
- */
+/* App.js — SoShoLife Frontend Root (Production-Ready) */
 
 import './App.css';
-import './Theme.css';
-import './ThemeComponents.css';
-import './ThemeOverrides.css';
-import './RewardEligibility.css';
+// import './RewardEligibility.css';
 
 import { useEffect, useMemo } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';

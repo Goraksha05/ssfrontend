@@ -10,7 +10,6 @@ import { useStreak } from "../../Context/Activity/StreakContext";
 import { useRewardEligibility } from "../../hooks/useRewardEligibility";
 import { useSubscription } from "../../Context/Subscription/SubscriptionContext";
 import BankDetailsModal from "../Common/BankDetailsModal";
-import "./Rewards.css";
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 

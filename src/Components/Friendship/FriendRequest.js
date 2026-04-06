@@ -6,7 +6,6 @@ import dayjs from 'dayjs';
 import relativeTime from 'dayjs/plugin/relativeTime';
 import AcceptBtn from '../../Assets/RectaAcceptBtn.png';
 import RejectBtn from '../../Assets/RectaRejectBtn.png';
-import './FriendRequest.css';
 
 dayjs.extend(relativeTime);
 

@@ -3,7 +3,6 @@ import React, { useState, useEffect, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../../Context/Authorisation/AuthContext";
 import { useRewardEligibility } from "../../hooks/useRewardEligibility";
-import "./ObtainedRewardsModal.css";
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 

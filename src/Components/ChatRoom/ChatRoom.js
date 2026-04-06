@@ -22,7 +22,6 @@ import { useTheme }  from '../../Context/ThemeUI/ThemeContext';
 import { useChat }   from '../../Context/ChatContext';
 import { safeEmit }  from '../../WebSocket/WebSocketClient';
 import apiRequest    from '../../utils/apiRequest';
-import './ChatRoom.css';
 
 // ── Inline VoiceRecorder (hold-to-record, same as ChatWindow's) ──────────────
 // Duplicated here so ChatRoom controls the show/hide without prop-drilling

@@ -41,7 +41,6 @@ import {
 import { useSubscription } from "../../Context/Subscription/SubscriptionContext";
 import { useKyc, KYC_STATUSES } from "../../Context/KYC/KycContext";
 import apiRequest from "../../utils/apiRequest";
-import "./Profile.css";
 
 /* ═══════════════════════════════════════════════════
    KYC STATUS CONFIG

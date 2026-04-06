@@ -7,8 +7,9 @@ import groceryCart from '../Assets/grocery-cart.png';
 import { useTranslation } from 'react-i18next';
 import LogBtnIcon from '../Assets/LoginCreateAccount.png';
 import ModalContent from './TodayOffer/ModalContent';
-import ThemePalettePicker from './Theme/ThemePalettePicker';
+// import ThemePalettePicker from './Theme/ThemePalettePicker';
 import { useTheme } from '../Context/ThemeUI/ThemeContext';
+import OpportunityModal from './IncomePossibility'; // ← new
 
 const FEATURES = [
   {
@@ -48,6 +49,7 @@ const FEATURES = [
 const WelcomePage = () => {
   const { t } = useTranslation();
   const [showModal, setShowModal] = useState(false);
+  const [showOpportunity, setShowOpportunity] = useState(false);
   const [visible, setVisible] = useState(false);
   const { isDark } = useTheme();
 
@@ -61,19 +63,35 @@ const WelcomePage = () => {
       {/* Hero */}
       <div className="welcome-hero">
 
+        {/* <div className="d-flex justify-content-between align-items-end">
+          <ThemePalettePicker />
+        </div> */}
+
         {/* ── Top action bar: Today's Offer  +  Theme Picker ── */}
         <div
           className="d-flex justify-content-between align-items-center position-relative"
           style={{ zIndex: 2, gap: '10px', flexWrap: 'wrap' }}
         >
-          <button className="offer-btn" onClick={() => setShowModal(true)}>
+          <button className="offer-btn" title="Only for you" onClick={() => setShowModal(true)}>
             🎁 Today's Offer
           </button>
 
-          <div className="justify-content-between align-items-end">
-            {/* 🎨 Theme Palette Picker Button */}
-            <ThemePalettePicker />
-          </div>
+          {/* ── Opportunity Button ── */}
+          <button
+            className="offer-btn opportunity-btn"
+            title="Income Opportunity"
+            onClick={() => setShowOpportunity(true)}
+            style={{
+              background: 'linear-gradient(90deg, #ff6d00, #ffd600)',
+              color: '#fff',
+              border: 'none',
+              fontWeight: 700,
+              boxShadow: '0 2px 12px rgba(255,109,0,0.35)',
+            }}
+          >
+            💼 Opportunity
+          </button>
+
         </div>
 
         <img src={groceryCart} alt="" className="grocery-img" />
@@ -83,9 +101,11 @@ const WelcomePage = () => {
             <img src={LogBtnIcon} alt="Login / Create Account" className="login-btn-img" />
           </Link>
 
-          <h1 className="hero-title mt-3">
-            {t('Welcome to')} "<Logo />"
-          </h1>
+          <div className="d-flex flex-column align-items-center">
+            <h1 className="align-items-center justify-content-center hero-title">
+              {t('Welcome to')}<Logo />
+            </h1>
+          </div>
           <p
             className="hero-tagline"
             style={{
@@ -128,7 +148,7 @@ const WelcomePage = () => {
       <div className={`cta-section fade-up ${visible ? 'visible' : ''} delay-5`}>
         <p className="cta-text-en">{t("Turn your social presence into a powerful income stream.")}</p>
         <p className="cta-text-mr">तुमची सोशल उपस्थिती कमाईच्या एका जबरदस्त संधीमध्ये रूपांतरित करा.</p>
-        <Link className="cta-join-btn" to="/login">
+        <Link className="cta-join-btn" to="/login" title="Login / Create Account">
           Join SoShoLife Now 🚀
         </Link>
       </div>
@@ -137,6 +157,9 @@ const WelcomePage = () => {
 
       {/* Offer Modal */}
       <ModalContent show={showModal} onClose={() => setShowModal(false)} />
+
+      {/* Opportunity Modal ← new */}
+      <OpportunityModal show={showOpportunity} onClose={() => setShowOpportunity(false)} />
     </div>
   );
 };

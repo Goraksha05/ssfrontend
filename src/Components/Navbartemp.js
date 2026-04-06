@@ -6,7 +6,6 @@ import { useAuth } from "../Context/Authorisation/AuthContext";
 import { useSubscription } from "../Context/Subscription/SubscriptionContext";
 import { useI18n } from "../i18n/i18nContext";           // ← i18nContext hook
 import '@fortawesome/fontawesome-free/css/all.min.css';
-import './Navbar.css';
 import Logo from "./XLogo/logoImage";
 import {
   BadgeCheck,
@@ -219,7 +218,7 @@ export default function Navbartemp({ title, myHome }) {
     <>
       {/* ══════════════════════════════════════════════════════════ NAV */}
       <nav className="navbar-root">
-        <div ref={navbarRef} className="navbar-inner">
+        <div /*ref={navbarRef}*/ className="navbar-inner">
 
           {/* Brand */}
           <Link className="navbar-brand" to="/">
@@ -436,7 +435,7 @@ export default function Navbartemp({ title, myHome }) {
 
         {/* ── Mobile Drawer ── */}
         {!isCollapsed && (
-          <div /*ref={navbarRef}*/ className="navbar-mobile-drawer">
+          <div ref={navbarRef} className="navbar-mobile-drawer">
             {/* Nav links */}
             {[
               { to: "/", icon: Home, label: myHome || t["nav.home"] || "Home" },

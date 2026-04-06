@@ -1,8 +1,11 @@
 // src/components/CustomModal.js
 import React from "react";
 import { Modal, Button } from "react-bootstrap";
+import useScrollLock from "../../hooks/useScrollLock";
 
 const TodayOfferModal = ({ show, onClose, onConfirm, title, children, confirmText }) => {
+    useScrollLock(show);
+
     return (
         <Modal show={show} onHide={onClose} centered>
             <Modal.Header

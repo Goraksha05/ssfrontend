@@ -70,7 +70,6 @@ import {
   revokePreviewUrl,
 }                                from '../../utils/cropImage';
 import CropModal                 from '../../utils/CropModal';
-import './KycVerification.css';
 
 const API_BASE =
   process.env.REACT_APP_BACKEND_URL ||

@@ -13,13 +13,12 @@ const Logo = ({ className = 'bg-transparent rounded py-4 px-2', style = {}, imag
                 <img
                     src={logoImage}
                     alt="SoShoLife Logo"
-                    className="mr-2"
-                    style={{ height: imageSize, width: imageSize }}
+                    style={{ height: 80, width: 70 }}
                 />
                 {/* Brand Name */}
-                <span className="fw-bold" style={{ fontSize: '4rem', color: '#005cbb', textShadow: '2px 2px 2px #ffffff' }}>So</span>
-                <span className="fw-bold" style={{ fontSize: '4rem', color: '#ff4200', textShadow: '2px 2px 2px #ffffff' }}>Sho</span>
-                <span className="fw-bold" style={{ fontSize: '4rem', color: '#005cbb', textShadow: '2px 2px 2px #ffffff' }}>Life</span>
+                <span className="fw-bold" style={{ fontSize: '3.5rem', color: '#005cbb', textShadow: '2px 2px 2px #ffffff' }}>So</span>
+                <span className="fw-bold" style={{ fontSize: '3.5rem', color: '#ff4200', textShadow: '2px 2px 2px #ffffff' }}>Sho</span>
+                <span className="fw-bold" style={{ fontSize: '3.5rem', color: '#005cbb', textShadow: '2px 2px 2px #ffffff' }}>Life</span>
             </span>
         );
     }

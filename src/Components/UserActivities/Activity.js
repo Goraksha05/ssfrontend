@@ -6,7 +6,6 @@ import postContext from '../../Context/Posts/PostContext';
 import { StreakProvider } from '../../Context/Activity/StreakContext';
 import apiRequest from '../../utils/apiRequest';
 import ObtainedRewardsModal from './ObtainedRewardsModal';
-import './Activity.css';
 import RewardsHub from '../Rewards/RewardsHub';
 
 const SERVER_URL = process.env.REACT_APP_SERVER_URL;
