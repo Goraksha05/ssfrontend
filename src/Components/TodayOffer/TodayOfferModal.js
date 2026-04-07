@@ -1,39 +1,48 @@
-// src/components/CustomModal.js
+// src/components/TodayOfferModal.js
 import React from "react";
 import { Modal, Button } from "react-bootstrap";
 import useScrollLock from "../../hooks/useScrollLock";
 
 const TodayOfferModal = ({ show, onClose, onConfirm, title, children, confirmText }) => {
-    useScrollLock(show);
+  useScrollLock(show);
 
-    return (
-        <Modal show={show} onHide={onClose} centered>
-            <Modal.Header
-                closeButton
-                className="justify-content-center border-0"
-                style={{ position: "relative" }}
-            >
-                <Modal.Title className="w-100 text-center mb-0">{title}</Modal.Title>
-            </Modal.Header>
+  return (
+    <Modal show={show} onHide={onClose} centered dialogClassName="tom-dialog">
+      <div className="tom-panel">
+        {/* Animated sparkle bg */}
+        <div className="tom-bg-sparkle" aria-hidden="true">
+          {['✦','✧','⋆','✦','✧'].map((s, i) => (
+            <span key={i} className={`tom-sparkle tom-sparkle-${i + 1}`}>{s}</span>
+          ))}
+        </div>
 
-            <Modal.Body className="text-center"
-                style={{ backgroundColor: '#AAD4FF' }}
-            >
-                {children}
-            </Modal.Body>
+        {/* Header */}
+        <div className="tom-header">
+          <div className="tom-header-badge">🎁 Today's Offer</div>
+          <h2 className="tom-title">{title}</h2>
+          <button className="tom-close" onClick={onClose} aria-label="Close">✕</button>
+        </div>
 
-            <Modal.Footer className="d-flex justify-content-center">
-                <Button variant="secondary" onClick={onClose}>
-                    Close
-                </Button>
-                {onConfirm && (
-                    <Button variant="success" onClick={onConfirm}>
-                        {confirmText || "Confirm"}
-                    </Button>
-                )}
-            </Modal.Footer>
-        </Modal>
-    );
+        {/* Body */}
+        <div className="tom-body">
+          <div className="tom-content-wrap">
+            {children}
+          </div>
+        </div>
+
+        {/* Footer */}
+        <div className="tom-footer">
+          <Button className="tom-btn-cancel" onClick={onClose}>Maybe later</Button>
+          {onConfirm && (
+            <button className="tom-btn-confirm" onClick={onConfirm}>
+              <span className="tom-btn-glow" />
+              {confirmText || 'Claim Offer'} →
+            </button>
+          )}
+        </div>
+      </div>
+    </Modal>
+  );
 };
 
 export default TodayOfferModal;

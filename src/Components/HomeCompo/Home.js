@@ -1,5 +1,7 @@
 // src/components/Posts/Home.js
-import React, { useContext, useEffect, useState, useRef, useCallback } from 'react';
+import React, {
+  useContext, useEffect, useState, useRef, useCallback, useMemo, startTransition,
+} from 'react';
 import { Link } from 'react-router-dom';
 import postContext from '../../Context/Posts/PostContext';
 import HomePosts from './HomePosts';
@@ -52,6 +54,7 @@ function Home() {
   const { tokens } = useTheme();
 
   const [postContent,     setPostContent]     = useState('');
+  const [inputValue,      setInputValue]      = useState(''); // controlled input – avoids reflow on every keystroke
   const [visibility,      setVisibility]      = useState('public');
   const mediaUploadRef = useRef();
   const [communityCount,  setCommunityCount]  = useState(0);
@@ -74,7 +77,15 @@ function Home() {
 
   useScrollLock(showRewardsModal); // Lock scroll when rewards modal is open
 
-  /* ── Fetch user profile ─────────────────────────────────────────────────── */
+  /* ── Debounce textarea → postContent (prevents reflow on every keystroke) ── */
+  useEffect(() => {
+    const id = setTimeout(() => {
+      startTransition(() => setPostContent(inputValue));
+    }, 150);
+    return () => clearTimeout(id);
+  }, [inputValue]);
+
+
   useEffect(() => {
     if (!token || !userId) return;
     let cancelled = false;
@@ -125,34 +136,50 @@ function Home() {
   }, [token, userId]);
 
   /* ── Derived display values ─────────────────────────────────────────────── */
-  const displayGroceryCoupons  = wallet?.totalGroceryCoupons  ?? userData?.totalGroceryCoupons  ?? 0;
-  const displayShares          = wallet?.totalShares          ?? userData?.totalShares          ?? 0;
-  const displayReferralToken   = wallet?.totalReferralToken   ?? userData?.totalReferralToken   ?? 0;
+  const displayGroceryCoupons = useMemo(
+    () => wallet?.totalGroceryCoupons ?? userData?.totalGroceryCoupons ?? 0,
+    [wallet, userData]
+  );
+  const displayShares = useMemo(
+    () => wallet?.totalShares ?? userData?.totalShares ?? 0,
+    [wallet, userData]
+  );
+  const displayReferralToken = useMemo(
+    () => wallet?.totalReferralToken ?? userData?.totalReferralToken ?? 0,
+    [wallet, userData]
+  );
 
   const statsLoading = rewardsLoading && wallet === null;
 
   /* ── Post handlers ──────────────────────────────────────────────────────── */
-  const handleFilesPrepared = (files) => {
+  const handleFilesPrepared = useCallback((files) => {
     if (!postContent.trim() && files.length === 0) {
       toast.error(t['home.write_or_upload'] || 'Please write something or upload media!');
       return;
     }
     addPost(postContent.trim(), visibility, files);
-    setPostContent('');
-    setVisibility('public');
-  };
+    setInputValue('');
+    startTransition(() => {
+      setPostContent('');
+      setVisibility('public');
+    });
+  }, [addPost, postContent, visibility, t]);
 
-  const resetForm = () => {
-    setPostContent('');
-    setVisibility('public');
-  };
+  const resetForm = useCallback(() => {
+    setInputValue('');
+    startTransition(() => {
+      setPostContent('');
+      setVisibility('public');
+    });
+  }, []);
 
   const handleAddPost = useCallback(() => {
     if (mediaUploadRef.current?.hasMedia()) {
       toast.info(t['home.uploading_media'] || '⏳ Uploading media…', {
         toastId: 'post-loading', autoClose: false, closeOnClick: false, draggable: false,
       });
-      mediaUploadRef.current.submitMediaPost();
+      // Defer to next task so toast renders before heavy upload work starts
+      setTimeout(() => mediaUploadRef.current?.submitMediaPost(), 0);
     } else {
       if (!postContent.trim()) {
         toast.error(t['home.write_or_upload'] || 'Please write something or upload media!');
@@ -162,10 +189,13 @@ function Home() {
         toastId: 'post-loading', autoClose: false, closeOnClick: false, draggable: false,
       });
       setHasPostedOnce(true);
-      addPost(postContent.trim(), visibility);
-      resetForm();
+      // Defer addPost so the toast paint completes first — fixes 'message handler' violation
+      setTimeout(() => {
+        addPost(postContent.trim(), visibility);
+        resetForm();
+      }, 0);
     }
-  }, [addPost, postContent, visibility, t]);
+  }, [addPost, postContent, visibility, t, resetForm]);
 
   const handleCancelPost = () => resetForm();
 
@@ -335,8 +365,8 @@ function Home() {
                     className="post-textarea form-control border-0"
                     rows="5"
                     placeholder={t['post_placeholder'] || "What's on your mind?"}
-                    value={postContent}
-                    onChange={e => setPostContent(e.target.value)}
+                    value={inputValue}
+                    onChange={e => setInputValue(e.target.value)}
                     maxLength={5000}
                     style={{
                       /* Only the font is kept as inline — everything else is in Home.css */
@@ -360,11 +390,11 @@ function Home() {
                   <span>{t['home.tip'] || '💡 Tip: Enter for paragraphs.'}</span>
                   <span
                     style={{
-                      color: postContent.length > 4800 ? tokens.danger : tokens.textMuted,
-                      fontWeight: postContent.length > 4800 ? 700 : 400,
+                      color: inputValue.length > 4800 ? tokens.danger : tokens.textMuted,
+                      fontWeight: inputValue.length > 4800 ? 700 : 400,
                     }}
                   >
-                    {postContent.length}/5000
+                    {inputValue.length}/5000
                   </span>
                 </div>
 

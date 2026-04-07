@@ -1,136 +1,110 @@
 // components/ShareModal.js
-import React from 'react';
+import React, { useState } from 'react';
 import { toast } from 'react-toastify';
+import useScrollLock from "../../hooks/useScrollLock";
 import 'react-toastify/dist/ReactToastify.css';
 
-const ShareModal = ({ inviteLink, onClose, title = "Share Referral Link" }) => {
-    const encodedLink = encodeURIComponent(inviteLink);
+const ShareModal = ({ show, inviteLink, onClose, title = 'Share Referral Link' }) => {
+  useScrollLock(show);
+  const encodedLink = encodeURIComponent(inviteLink);
+  const [copied, setCopied] = useState(false);
 
-    const handleShare = (platform) => {
-        try {
-            if (platform === 'native') {
-                if (navigator.share) {
-                    navigator.share({
-                        title: 'Join me on this app!',
-                        text: 'Here’s the invite link:',
-                        url: inviteLink,
-                    }).then(() => {
-                        toast.success('Shared successfully!');
-                        onClose();
-                    }).catch(() => toast.error('Share cancelled or failed.'));
-                    return;
-                } else {
-                    toast.warning('Native sharing not supported.');
-                    return;
-                }
-            }
-
-            let shareUrl = '';
-            switch (platform) {
-                case 'whatsapp':
-                    shareUrl = `https://wa.me/?text=${encodedLink}`;
-                    break;
-                case 'facebook':
-                    shareUrl = `https://www.facebook.com/sharer/sharer.php?u=${encodedLink}`;
-                    break;
-                case 'email':
-                    shareUrl = `mailto:?subject=Join%20me%20on%20this%20app&body=${encodedLink}`;
-                    break;
-                case 'sms':
-                    shareUrl = `sms:?body=${encodedLink}`;
-                    break;
-                case 'clipboard':
-                    navigator.clipboard.writeText(inviteLink);
-                    toast.success('Link copied to clipboard!');
-                    onClose();
-                    return;
-                case 'instagram':
-                    toast.info("Instagram sharing requires app integration.");
-                    return;
-                default:
-                    return;
-            }
-
-            if (shareUrl) {
-                window.open(shareUrl, '_blank');
-                toast.success('Redirecting to share...');
-                onClose();
-            }
-        } catch (err) {
-            toast.error('Failed to share.');
+  const handleShare = (platform) => {
+    try {
+      if (platform === 'clipboard') {
+        navigator.clipboard.writeText(inviteLink);
+        setCopied(true);
+        toast.success('Link copied to clipboard!');
+        setTimeout(() => setCopied(false), 2000);
+        return;
+      }
+      if (platform === 'native') {
+        if (navigator.share) {
+          navigator.share({ title: 'Join me!', text: 'Here\'s my invite link:', url: inviteLink })
+            .then(() => { toast.success('Shared!'); onClose(); })
+            .catch(() => toast.error('Share cancelled.'));
+          return;
         }
-    };
+        toast.warning('Native sharing not supported on this device.');
+        return;
+      }
+      if (platform === 'instagram') { toast.info('Instagram sharing requires the app.'); return; }
 
-    return (
-        <div className="modal show fade d-block" tabIndex="-1" role="dialog" style={{ background: 'rgba(0,0,0,0.5)' }}>
-            <div className="modal-dialog modal-dialog-centered" role="document">
-                <div className="modal-content border-0 shadow-lg rounded-4">
-                    <div className="modal-header border-0">
-                        <h5 className="modal-title fw-bold">
-                            📤 {title}
-                        </h5>
-                        <button type="button" className="btn-close" aria-label="Close" onClick={onClose}></button>
-                    </div>
-                    <div className="modal-body text-center">
-                        <div className="row g-3">
-                            <div className="col-12">
-                                <button onClick={() => handleShare('native')} className="btn btn-outline-primary w-100 py-2">
-                                    <i className="fas fa-share-alt fa-lg me-2"></i> Native Share
-                                </button>
-                            </div>
+      const urls = {
+        whatsapp: `https://wa.me/?text=${encodedLink}`,
+        facebook: `https://www.facebook.com/sharer/sharer.php?u=${encodedLink}`,
+        email: `mailto:?subject=Join%20me%20on%20this%20app&body=${encodedLink}`,
+        sms: `sms:?body=${encodedLink}`,
+      };
+      if (urls[platform]) { window.open(urls[platform], '_blank'); toast.success('Opening…'); onClose(); }
+    } catch { toast.error('Failed to share.'); }
+  };
 
-                            <div className="col-4">
-                                <button onClick={() => handleShare('whatsapp')} className="btn btn-light w-100 shadow-sm">
-                                    <i className="fab fa-whatsapp fa-2x text-success"></i>
-                                    <div className="small mt-1">WhatsApp</div>
-                                </button>
-                            </div>
+  const platforms = [
+    { id: 'whatsapp', label: 'WhatsApp', emoji: '💬', color: '#25d366', bg: 'rgba(37,211,102,0.12)' },
+    { id: 'facebook', label: 'Facebook', emoji: '👥', color: '#1877f2', bg: 'rgba(24,119,242,0.12)' },
+    { id: 'email', label: 'Email', emoji: '✉️', color: '#f59e0b', bg: 'rgba(245,158,11,0.12)' },
+    { id: 'sms', label: 'SMS', emoji: '📱', color: '#ef4444', bg: 'rgba(239,68,68,0.12)' },
+    { id: 'instagram', label: 'Instagram', emoji: '📸', color: '#e1306c', bg: 'rgba(225,48,108,0.12)' },
+    { id: 'native', label: 'More…', emoji: '↗️', color: '#8b5cf6', bg: 'rgba(139,92,246,0.12)' },
+  ];
 
-                            <div className="col-4">
-                                <button onClick={() => handleShare('facebook')} className="btn btn-light w-100 shadow-sm">
-                                    <i className="fab fa-facebook fa-2x text-primary"></i>
-                                    <div className="small mt-1">Facebook</div>
-                                </button>
-                            </div>
+  return (
+    <div className="shm-overlay" onClick={(e) => e.target === e.currentTarget && onClose()}>
+      <div className="shm-panel" role="dialog" aria-modal="true">
 
-                            <div className="col-4">
-                                <button onClick={() => handleShare('email')} className="btn btn-light w-100 shadow-sm">
-                                    <i className="fas fa-envelope fa-2x text-warning"></i>
-                                    <div className="small mt-1">Email</div>
-                                </button>
-                            </div>
+        {/* Decorative top strip */}
+        <div className="shm-accent-bar" />
 
-                            <div className="col-4">
-                                <button onClick={() => handleShare('sms')} className="btn btn-light w-100 shadow-sm">
-                                    <i className="fas fa-sms fa-2x text-danger"></i>
-                                    <div className="small mt-1">SMS</div>
-                                </button>
-                            </div>
-
-                            <div className="col-4">
-                                <button onClick={() => handleShare('clipboard')} className="btn btn-light w-100 shadow-sm">
-                                    <i className="fas fa-link fa-2x text-secondary"></i>
-                                    <div className="small mt-1">Copy</div>
-                                </button>
-                            </div>
-
-                            <div className="col-4">
-                                <button onClick={() => handleShare('instagram')} className="btn btn-light w-100 shadow-sm">
-                                    <i className="fab fa-instagram fa-2x text-danger"></i>
-                                    <div className="small mt-1">Instagram</div>
-                                </button>
-                            </div>
-                        </div>
-                    </div>
-                    <div className="modal-footer border-0">
-                        <button type="button" className="btn btn-outline-secondary w-100" onClick={onClose}>
-                            Cancel
-                        </button>
-                    </div>
-                </div>
+        {/* Header */}
+        <div className="shm-header">
+          <div className="shm-header-left">
+            <div className="shm-header-icon">📤</div>
+            <div>
+              <h2 className="shm-title">{title}</h2>
+              <p className="shm-subtitle">Pick a platform to share your link</p>
             </div>
+          </div>
+          <button className="shm-close" onClick={onClose} aria-label="Close">✕</button>
         </div>
-    );
+
+        {/* Link preview */}
+        <div className="shm-link-preview">
+          <div className="shm-link-icon">🔗</div>
+          <div className="shm-link-text">{inviteLink}</div>
+          <button
+            className={`shm-copy-btn ${copied ? 'shm-copy-done' : ''}`}
+            onClick={() => handleShare('clipboard')}
+          >
+            {copied ? '✓ Copied' : 'Copy'}
+          </button>
+        </div>
+
+        {/* Platform grid */}
+        <div className="shm-body">
+          <p className="shm-section-label">Share via</p>
+          <div className="shm-grid">
+            {platforms.map((p) => (
+              <button
+                key={p.id}
+                className="shm-platform-btn"
+                onClick={() => handleShare(p.id)}
+                style={{ '--platform-color': p.color, '--platform-bg': p.bg }}
+              >
+                <span className="shm-platform-emoji">{p.emoji}</span>
+                <span className="shm-platform-label">{p.label}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Footer */}
+        <div className="shm-footer">
+          <button className="shm-cancel-btn" onClick={onClose}>Cancel</button>
+        </div>
+      </div>
+    </div>
+  );
 };
 
 export default ShareModal;

@@ -2,170 +2,102 @@ import React, { useState } from 'react';
 import Modal from 'react-bootstrap/Modal';
 import { getInitials } from '../../utils/getInitials';
 import { Search, Users } from 'lucide-react';
+import useScrollLock from "../../hooks/useScrollLock";
 
 const FollowersModal = ({ show, onClose, users, title }) => {
+  useScrollLock(users.length > 0 && show && true, show);
   const [search, setSearch] = useState('');
 
   const filtered = users.filter((user) => {
     const userInfo = user.user_id || user;
-    const name = (userInfo.name || '').toLowerCase();
-    return name.includes(search.toLowerCase());
+    return (userInfo.name || '').toLowerCase().includes(search.toLowerCase());
   });
 
   return (
-    <Modal show={show} onHide={onClose} size="sm" centered>
-      <Modal.Header closeButton style={{ borderBottom: '1px solid #f1f5f9', padding: '16px 20px' }}>
-        <Modal.Title style={{ fontFamily: 'Plus Jakarta Sans, sans-serif', fontSize: '16px', fontWeight: 800, color: '#0f172a' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <Users size={18} style={{ color: '#6366f1' }} />
-            {title}
-            <span style={{
-              marginLeft: 4,
-              fontSize: 12,
-              fontWeight: 700,
-              background: '#e0e7ff',
-              color: '#6366f1',
-              padding: '2px 8px',
-              borderRadius: 20,
-            }}>
-              {users.length}
-            </span>
-          </div>
-        </Modal.Title>
-      </Modal.Header>
+    <Modal show={show} onHide={onClose} size="sm" centered dialogClassName="flm-dialog">
+      <div className="flm-panel">
 
-      <Modal.Body style={{ padding: '16px 20px', fontFamily: 'Plus Jakarta Sans, sans-serif' }}>
+        {/* Header */}
+        <div className="flm-header">
+          <div className="flm-header-left">
+            <div className="flm-header-icon">
+              <Users size={16} />
+            </div>
+            <div>
+              <h2 className="flm-title">{title}</h2>
+              <span className="flm-count-badge">{users.length}</span>
+            </div>
+          </div>
+          <button className="flm-close" onClick={onClose} aria-label="Close">✕</button>
+        </div>
+
         {/* Search */}
         {users.length > 4 && (
-          <div style={{
-            position: 'relative',
-            marginBottom: 14,
-          }}>
-            <Search size={14} style={{
-              position: 'absolute',
-              left: 12,
-              top: '50%',
-              transform: 'translateY(-50%)',
-              color: '#94a3b8',
-            }} />
+          <div className="flm-search-wrap">
+            <Search size={13} className="flm-search-icon" />
             <input
-              type="text"
-              placeholder="Search..."
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              style={{
-                width: '100%',
-                padding: '8px 12px 8px 34px',
-                border: '1.5px solid #e2e8f0',
-                borderRadius: 10,
-                fontSize: 13,
-                fontFamily: 'Plus Jakarta Sans, sans-serif',
-                color: '#0f172a',
-                background: '#f8fafc',
-                outline: 'none',
-                boxSizing: 'border-box',
-              }}
+              type="text" className="flm-search-input"
+              placeholder="Search by name…"
+              value={search} onChange={(e) => setSearch(e.target.value)}
             />
+            {search && (
+              <button className="flm-search-clear" onClick={() => setSearch('')}>✕</button>
+            )}
           </div>
         )}
 
-        {filtered.length === 0 ? (
-          <div style={{ textAlign: 'center', padding: '32px 0', color: '#94a3b8' }}>
-            <Users size={32} style={{ marginBottom: 8, opacity: 0.4 }} />
-            <p style={{ margin: 0, fontSize: 14, fontWeight: 600 }}>
-              {search ? 'No results found' : `No ${title.toLowerCase()} yet`}
-            </p>
-          </div>
-        ) : (
-          <ul style={{ listStyle: 'none', padding: 0, margin: 0, display: 'flex', flexDirection: 'column', gap: 8 }}>
-            {filtered.map((user, index) => {
-              const userInfo = user.user_id || user;
-              const avatarUrl = user.profileavatar?.URL || userInfo.profileavatar?.URL;
-              const name = userInfo.name || 'Unknown';
-              const initials = getInitials(name);
+        {/* List */}
+        <div className="flm-body">
+          {filtered.length === 0 ? (
+            <div className="flm-empty">
+              <div className="flm-empty-icon">
+                <Users size={28} />
+              </div>
+              <p className="flm-empty-text">
+                {search ? 'No results found' : `No ${title.toLowerCase()} yet`}
+              </p>
+            </div>
+          ) : (
+            <ul className="flm-list">
+              {filtered.map((user, index) => {
+                const userInfo = user.user_id || user;
+                const avatarUrl = user.profileavatar?.URL || userInfo.profileavatar?.URL;
+                const name = userInfo.name || 'Unknown';
+                const initials = getInitials(name);
+                const hue = name.split('').reduce((a, c) => a + c.charCodeAt(0), 0) % 360;
 
-              return (
-                <li
-                  key={userInfo._id || index}
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 12,
-                    padding: '10px 12px',
-                    borderRadius: 12,
-                    background: '#f8fafc',
-                    transition: 'background 0.15s ease',
-                    cursor: 'default',
-                  }}
-                  onMouseEnter={e => e.currentTarget.style.background = '#f0f0ff'}
-                  onMouseLeave={e => e.currentTarget.style.background = '#f8fafc'}
-                >
-                  {/* Avatar */}
-                  <div style={{ position: 'relative', flexShrink: 0 }}>
-                    {avatarUrl ? (
-                      <img
-                        src={avatarUrl}
-                        alt={name}
-                        style={{
-                          width: 42,
-                          height: 42,
-                          borderRadius: '50%',
-                          objectFit: 'cover',
-                          border: '2px solid #e0e7ff',
-                        }}
-                        onError={e => {
-                          e.target.style.display = 'none';
-                          e.target.nextSibling.style.display = 'flex';
-                        }}
-                      />
-                    ) : null}
-                    <div style={{
-                      width: 42,
-                      height: 42,
-                      borderRadius: '50%',
-                      background: 'linear-gradient(135deg, #6366f1, #8b5cf6)',
-                      display: avatarUrl ? 'none' : 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      color: '#fff',
-                      fontWeight: 800,
-                      fontSize: 15,
-                      flexShrink: 0,
-                    }}>
-                      {initials}
+                return (
+                  <li key={userInfo._id || index} className="flm-item">
+                    <div className="flm-avatar-wrap">
+                      {avatarUrl ? (
+                        <img
+                          src={avatarUrl} alt={name} className="flm-avatar-img"
+                          onError={(e) => { e.target.style.display = 'none'; e.target.nextSibling.style.display = 'flex'; }}
+                        />
+                      ) : null}
+                      <div
+                        className="flm-avatar-fallback"
+                        style={{ display: avatarUrl ? 'none' : 'flex', background: `hsl(${hue},55%,52%)` }}
+                      >
+                        {initials}
+                      </div>
                     </div>
-                  </div>
+                    <div className="flm-item-info">
+                      <p className="flm-item-name">{name}</p>
+                      <p className="flm-item-handle">@{name.toLowerCase().replace(/\s+/g, '')}</p>
+                    </div>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </div>
 
-                  {/* Name */}
-                  <div>
-                    <p style={{ margin: 0, fontWeight: 700, fontSize: 14, color: '#0f172a' }}>{name}</p>
-                    <p style={{ margin: 0, fontSize: 12, color: '#94a3b8', fontWeight: 500 }}>@{name.toLowerCase().replace(/\s+/g, '')}</p>
-                  </div>
-                </li>
-              );
-            })}
-          </ul>
-        )}
-      </Modal.Body>
-
-      <Modal.Footer style={{ borderTop: '1px solid #f1f5f9', padding: '12px 20px' }}>
-        <button
-          onClick={onClose}
-          style={{
-            padding: '8px 20px',
-            background: '#f1f5f9',
-            border: 'none',
-            borderRadius: 20,
-            fontFamily: 'Plus Jakarta Sans, sans-serif',
-            fontSize: 13,
-            fontWeight: 700,
-            color: '#64748b',
-            cursor: 'pointer',
-          }}
-        >
-          Close
-        </button>
-      </Modal.Footer>
+        {/* Footer */}
+        <div className="flm-footer">
+          <button className="flm-close-btn" onClick={onClose}>Close</button>
+        </div>
+      </div>
     </Modal>
   );
 };

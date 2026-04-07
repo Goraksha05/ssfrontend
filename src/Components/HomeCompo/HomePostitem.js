@@ -45,11 +45,12 @@ function PostItem({ post, deletePost, toggleLikePost }) {
   /* ── Auth ───────────────────────────────────────────────────────────────── */
   const token = localStorage.getItem('token');
   const decoded = token ? jwtDecode(token) : null;
-  const userId = decoded?.user?.id;
+  const userId = decoded?.user?.id || decoded?.id || decoded?._id;
 
   const author = post.user_id ?? {};
   const isAuthorVerified = !!author?.subscription?.active;
-  const isOwnPost = userId === author._id;
+  // const isOwnPost = userId === author._id;
+  const isOwnPost = String(userId) === String(author._id);
   const isLiked = post.likes?.includes(userId);
 
   /* ── State ──────────────────────────────────────────────────────────────── */

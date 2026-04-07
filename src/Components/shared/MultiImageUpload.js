@@ -1,12 +1,33 @@
 import React, { useState, useCallback, useEffect } from 'react';
 import Cropper from 'react-easy-crop';
-import getCroppedImg from './CropModal'; // Utility to crop image blob
+import getCroppedImg from '../../utils/CropModal'; // Utility to crop image blob
 
 
 const aspectRatios = [
-  { label: '1:1', value: 1 },
-  { label: '4:3', value: 4 / 3 },
-  { label: '16:9', value: 16 / 9 },
+  // --- Square ---
+  { label: '1 : 1', value: 1, ariaLabel: 'Square' },
+
+  // --- Landscape (Common) ---
+  { label: '4 : 3', value: 4 / 3, ariaLabel: 'Four by three' },
+  { label: '3 : 2', value: 3 / 2, ariaLabel: 'Three by two' },
+  { label: '16 : 9', value: 16 / 9, ariaLabel: 'Sixteen by nine' },
+  { label: '21 : 9', value: 21 / 9, ariaLabel: 'Ultra wide' },
+
+  // --- Portrait (Mobile / Social) ---
+  { label: '3 : 4', value: 3 / 4, ariaLabel: 'Three by four' },
+  { label: '2 : 3', value: 2 / 3, ariaLabel: 'Two by three' },
+  { label: '9 : 16', value: 9 / 16, ariaLabel: 'Vertical video' },
+
+  // --- Social Media Specific ---
+  { label: '4 : 5', value: 4 / 5, ariaLabel: 'Instagram portrait' },
+  { label: '1.91 : 1', value: 1.91, ariaLabel: 'Facebook cover' },
+
+  // --- Cinematic / Advanced ---
+  { label: '2 : 1', value: 2 / 1, ariaLabel: 'Panorama' },
+  { label: '2.35 : 1', value: 2.35, ariaLabel: 'Cinematic widescreen' },
+
+  // --- Free ---
+  { label: 'Free', value: undefined, ariaLabel: 'Free form' },
 ];
 
 const MultiImageCropUpload = ({ onImagesCropped }) => {
