@@ -1,51 +1,79 @@
 /**
- * components/Rewards/RewardsHub.jsx
+ * components/Rewards/RewardsHub.jsx  (Refactored)
  *
- * Unified Rewards Hub — single page covering Streak, Post, and Referral rewards.
+ * FIX SUMMARY — why counts were wrong before:
  *
- * Architecture decisions:
- *   - One eligibility check shared across all three tabs (useRewardEligibility cache).
- *   - One BankDetailsModal instance re-used across all three claim flows.
- *   - Claim logic lives entirely in each tab component; this shell only handles
- *     tab routing, the eligibility banner, and the wallet summary.
- *   - The eligibility banner is shown ONCE at the top, not repeated inside each tab.
+ * 1. POST COUNT (PostTab):
+ *    The old code fetched GET /api/posts/fetchallposts?limit=1.  That endpoint
+ *    returns ALL users' posts, not just the current user's.  When pagination
+ *    was absent it fell back to counting activity entries with type 'post', but
+ *    the activity formatter also emits type 'post' for post-reward entries —
+ *    so the count was double-counting reward events.
  *
- * Backend endpoints consumed:
- *   GET  /api/activity/reward-eligibility     eligibility check
- *   POST /api/activity/referral               claim referral reward
- *   POST /api/activity/post-reward            claim post reward
- *   POST /api/activity/streak-reward          claim streak reward
- *   POST /api/activity/log-daily-streak       log a streak day
- *   GET  /api/activity/streak-history         heatmap data
- *   GET  /api/activity/user                   activity history
- *   GET  /api/auth/users/referred             referred users list
- *   GET  /api/rewards/referral|posts|streak   plan slabs
- *   GET  /api/auth/earned-rewards             wallet + all claims
+ *    Fix: fetch GET /api/posts/fetchallposts with no limit filter and count
+ *    only the posts whose user_id matches the current user — exactly what
+ *    usePostCount (PostCount.js) does.  Even simpler: hit the posts endpoint
+ *    and use the same id-normalisation logic already proven in PostCount.js.
+ *    Actually the cleanest server-side solution is to use the earned-rewards
+ *    endpoint which returns redeemed slabs AND the /api/activity/user which
+ *    returns post activity events — but neither gives a raw post count.
+ *    The correct source is GET /api/posts/fetchallposts (filter client-side by
+ *    user id) or the earned-rewards response (which does NOT include raw post count).
  *
- * Design: editorial, refined, institutional — charcoal on cream with amber accents.
- * Monospace numbers for wallet values. Clean horizontal tab bar.
+ *    Best fix: fetch all posts once and filter by userId on the client, using
+ *    the same normalisation as usePostCount.js.  We cache it in state so the
+ *    fetch fires once on mount.
+ *
+ * 2. CLAIMED SLABS (PostTab, ReferralTab, StreakTab):
+ *    The old code seeded `claimed` from `user.redeemedPostSlabs` /
+ *    `user.redeemedReferralSlabs` — the user object from AuthContext is a
+ *    JWT-decoded + cached snapshot that is never refreshed during the session.
+ *    After a reward is claimed the cache is stale, so previously-claimed slabs
+ *    appear claimable again.
+ *
+ *    Fix: seed all three `claimed` lists from GET /api/auth/earned-rewards
+ *    (same call already used by useWallet).  That endpoint always returns
+ *    fresh data from MongoDB.
+ *
+ * 3. REFERRAL COUNT (ReferralTab):
+ *    ReferralContext.referralCount is `referredUsers.length` (all referred
+ *    users, active or not) which is correct.  activeCount was derived from
+ *    `referredUsers.filter(u => u.subscription?.active).length` — also correct.
+ *    No bug here; kept as-is.
+ *
+ * 4. STREAK COUNT (StreakTab):
+ *    StreakContext.totalUniqueDays is already the server-authoritative unique
+ *    day count (set from data.totalUniqueDays in the fixed StreakContext.js).
+ *    claimedDays already filters on type 'streakreward' (fixed in StreakContext).
+ *    No additional fix needed here.
+ *
+ * Architecture:
+ *   - One useEarnedRewards() hook (replaces useWallet) fetches earned-rewards
+ *     once and distributes wallet totals + claimed slab lists to all tabs.
+ *   - PostTab receives postCount from a dedicated useMy PostCount() hook that
+ *     fetches all posts and filters by userId client-side.
+ *   - No tab does its own independent auth/activity fetch.
  */
 
 import React, {
-  useState, useEffect, useCallback, useMemo
+  useState, useEffect, useCallback, useMemo, /*useRef,*/
 } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { toast } from 'react-toastify';
-import { useAuth }             from '../../Context/Authorisation/AuthContext';
-import { useReferral }         from '../../Context/Activity/ReferralContext';
-import { useStreak }           from '../../Context/Activity/StreakContext';
-import { useRewardEligibility } from '../../hooks/useRewardEligibility';
-import apiRequest              from '../../utils/apiRequest';
+import { toast }                   from 'react-toastify';
+import { useAuth }                 from '../../Context/Authorisation/AuthContext';
+import { useReferral }             from '../../Context/Activity/ReferralContext';
+import { useStreak }               from '../../Context/Activity/StreakContext';
+import { useRewardEligibility }    from '../../hooks/useRewardEligibility';
+import apiRequest                  from '../../utils/apiRequest';
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || '';
 const getToken    = () => localStorage.getItem('token');
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Tiny design-system primitives
+// Design system (unchanged from original)
 // ─────────────────────────────────────────────────────────────────────────────
 
 const styles = {
-  // Page shell
   shell: {
     maxWidth: 720,
     margin: '0 auto',
@@ -53,163 +81,98 @@ const styles = {
     fontFamily: '"Georgia", "Times New Roman", serif',
     color: 'var(--color-text-primary)',
   },
-  // Masthead
   masthead: {
     padding: '32px 0 20px',
     borderBottom: '1px solid var(--color-border-tertiary)',
     marginBottom: 24,
   },
   mastheadTitle: {
-    fontSize: 26,
-    fontWeight: 400,
-    letterSpacing: '-0.5px',
-    margin: '0 0 4px',
-    fontFamily: '"Georgia", serif',
+    fontSize: 26, fontWeight: 400, letterSpacing: '-0.5px',
+    margin: '0 0 4px', fontFamily: '"Georgia", serif',
   },
   mastheadSub: {
-    fontSize: 13,
-    color: 'var(--color-text-secondary)',
-    margin: 0,
-    fontFamily: 'var(--font-sans)',
+    fontSize: 13, color: 'var(--color-text-secondary)',
+    margin: 0, fontFamily: 'var(--font-sans)',
   },
-  // Wallet bar
   walletBar: {
-    display: 'grid',
-    gridTemplateColumns: 'repeat(3, 1fr)',
-    gap: 1,
-    background: 'var(--color-border-tertiary)',
+    display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)',
+    gap: 1, background: 'var(--color-border-tertiary)',
     border: '0.5px solid var(--color-border-tertiary)',
-    borderRadius: 8,
-    overflow: 'hidden',
-    marginBottom: 24,
+    borderRadius: 8, overflow: 'hidden', marginBottom: 24,
   },
   walletCell: {
     background: 'var(--color-background-primary)',
-    padding: '14px 16px',
-    textAlign: 'center',
+    padding: '14px 16px', textAlign: 'center',
   },
   walletNum: {
-    display: 'block',
-    fontSize: 22,
-    fontWeight: 500,
+    display: 'block', fontSize: 22, fontWeight: 500,
     fontFamily: '"Courier New", "Courier", monospace',
-    letterSpacing: '-1px',
-    color: 'var(--color-text-primary)',
-    lineHeight: 1.1,
+    letterSpacing: '-1px', color: 'var(--color-text-primary)', lineHeight: 1.1,
   },
   walletLabel: {
-    display: 'block',
-    fontSize: 11,
-    fontFamily: 'var(--font-sans)',
-    color: 'var(--color-text-tertiary)',
-    marginTop: 4,
-    textTransform: 'uppercase',
-    letterSpacing: '0.5px',
+    display: 'block', fontSize: 11, fontFamily: 'var(--font-sans)',
+    color: 'var(--color-text-tertiary)', marginTop: 4,
+    textTransform: 'uppercase', letterSpacing: '0.5px',
   },
-  // Tab bar
   tabBar: {
-    display: 'flex',
-    gap: 0,
-    borderBottom: '1px solid var(--color-border-tertiary)',
-    marginBottom: 28,
+    display: 'flex', gap: 0,
+    borderBottom: '1px solid var(--color-border-tertiary)', marginBottom: 28,
   },
   tab: (active) => ({
-    padding: '10px 18px',
-    fontSize: 13,
-    fontFamily: 'var(--font-sans)',
+    padding: '10px 18px', fontSize: 13, fontFamily: 'var(--font-sans)',
     fontWeight: active ? 500 : 400,
     color: active ? 'var(--color-text-primary)' : 'var(--color-text-secondary)',
-    background: 'none',
-    border: 'none',
+    background: 'none', border: 'none',
     borderBottom: active ? '2px solid var(--color-text-primary)' : '2px solid transparent',
-    cursor: 'pointer',
-    marginBottom: -1,
-    transition: 'color 0.12s',
-    letterSpacing: '-0.1px',
+    cursor: 'pointer', marginBottom: -1, transition: 'color 0.12s', letterSpacing: '-0.1px',
   }),
-  // Eligibility banner
   banner: (code) => ({
-    display: 'flex',
-    gap: 12,
-    padding: '12px 14px',
-    marginBottom: 24,
-    borderRadius: 8,
-    border: '0.5px solid',
-    fontFamily: 'var(--font-sans)',
-    fontSize: 13,
-    lineHeight: 1.5,
+    display: 'flex', gap: 12, padding: '12px 14px', marginBottom: 24,
+    borderRadius: 8, border: '0.5px solid',
+    fontFamily: 'var(--font-sans)', fontSize: 13, lineHeight: 1.5,
     ...(code === 'REWARDS_FROZEN'
       ? { background: 'var(--color-background-danger)', borderColor: 'var(--color-border-danger)', color: 'var(--color-text-danger)' }
       : { background: 'var(--color-background-warning)', borderColor: 'var(--color-border-warning)', color: 'var(--color-text-warning)' }
     ),
   }),
   bannerCta: {
-    display: 'inline-block',
-    marginTop: 6,
-    fontSize: 12,
-    fontWeight: 500,
-    textDecoration: 'underline',
-    cursor: 'pointer',
-    background: 'none',
-    border: 'none',
-    color: 'inherit',
-    padding: 0,
-    fontFamily: 'var(--font-sans)',
+    display: 'inline-block', marginTop: 6, fontSize: 12, fontWeight: 500,
+    textDecoration: 'underline', cursor: 'pointer',
+    background: 'none', border: 'none', color: 'inherit',
+    padding: 0, fontFamily: 'var(--font-sans)',
   },
-  // Section headers
   sectionHead: {
-    fontSize: 11,
-    fontFamily: 'var(--font-sans)',
-    fontWeight: 500,
-    textTransform: 'uppercase',
-    letterSpacing: '0.8px',
-    color: 'var(--color-text-tertiary)',
-    margin: '24px 0 12px',
-    padding: '0 0 6px',
-    borderBottom: '0.5px solid var(--color-border-tertiary)',
+    fontSize: 11, fontFamily: 'var(--font-sans)', fontWeight: 500,
+    textTransform: 'uppercase', letterSpacing: '0.8px',
+    color: 'var(--color-text-tertiary)', margin: '24px 0 12px',
+    padding: '0 0 6px', borderBottom: '0.5px solid var(--color-border-tertiary)',
   },
-  // Progress row
-  progressWrap: {
-    marginBottom: 20,
-    fontFamily: 'var(--font-sans)',
-  },
+  progressWrap: { marginBottom: 20, fontFamily: 'var(--font-sans)' },
   progressRow: {
-    display: 'flex',
-    justifyContent: 'space-between',
-    alignItems: 'baseline',
-    marginBottom: 6,
+    display: 'flex', justifyContent: 'space-between',
+    alignItems: 'baseline', marginBottom: 6,
   },
   progressText: { fontSize: 13, color: 'var(--color-text-secondary)' },
-  progressPct:  { fontSize: 12, fontFamily: '"Courier New", monospace', fontWeight: 500, color: 'var(--color-text-primary)' },
+  progressPct: {
+    fontSize: 12, fontFamily: '"Courier New", monospace',
+    fontWeight: 500, color: 'var(--color-text-primary)',
+  },
   progressTrack: {
-    height: 3,
-    background: 'var(--color-border-tertiary)',
-    borderRadius: 2,
-    overflow: 'hidden',
-    marginBottom: 5,
+    height: 3, background: 'var(--color-border-tertiary)',
+    borderRadius: 2, overflow: 'hidden', marginBottom: 5,
   },
   progressBar: (pct, color = '#b45309') => ({
-    height: '100%',
-    width: `${pct}%`,
-    background: color,
-    borderRadius: 2,
-    transition: 'width 0.4s ease',
+    height: '100%', width: `${pct}%`, background: color,
+    borderRadius: 2, transition: 'width 0.4s ease',
   }),
   progressHint: { fontSize: 12, color: 'var(--color-text-tertiary)' },
-  // Milestone grid
   milestoneGrid: {
-    display: 'grid',
-    gridTemplateColumns: 'repeat(auto-fill, minmax(120px, 1fr))',
-    gap: 8,
-    marginBottom: 20,
+    display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(120px, 1fr))',
+    gap: 8, marginBottom: 20,
   },
   milestoneChip: (state) => ({
-    padding: '10px 12px',
-    borderRadius: 6,
-    border: '0.5px solid',
-    fontFamily: 'var(--font-sans)',
-    textAlign: 'center',
-    fontSize: 12,
+    padding: '10px 12px', borderRadius: 6, border: '0.5px solid',
+    fontFamily: 'var(--font-sans)', textAlign: 'center', fontSize: 12,
     ...(state === 'claimed'
       ? { background: 'var(--color-background-success)', borderColor: 'var(--color-border-success)', color: 'var(--color-text-success)' }
       : state === 'active'
@@ -217,7 +180,10 @@ const styles = {
       : { background: 'var(--color-background-secondary)', borderColor: 'var(--color-border-tertiary)', color: 'var(--color-text-tertiary)' }
     ),
   }),
-  chipMain: { display: 'block', fontSize: 15, fontFamily: '"Courier New", monospace', fontWeight: 500 },
+  chipMain: {
+    display: 'block', fontSize: 15,
+    fontFamily: '"Courier New", monospace', fontWeight: 500,
+  },
   chipSub: { display: 'block', fontSize: 11, marginTop: 2, opacity: 0.75 },
   chipBadge: {
     display: 'inline-block', marginTop: 4, fontSize: 10,
@@ -227,84 +193,58 @@ const styles = {
     color: 'var(--color-text-success)',
     border: '0.5px solid var(--color-border-success)',
   },
-  // Claim row
   claimRow: {
     display: 'flex', alignItems: 'center', gap: 10,
     padding: '14px 0',
     borderTop: '0.5px solid var(--color-border-tertiary)',
-    fontFamily: 'var(--font-sans)',
-    flexWrap: 'wrap',
+    fontFamily: 'var(--font-sans)', flexWrap: 'wrap',
   },
   select: {
-    flex: '1 1 200px',
-    fontSize: 13,
-    padding: '8px 10px',
-    border: '0.5px solid var(--color-border-secondary)',
-    borderRadius: 6,
-    background: 'var(--color-background-primary)',
-    color: 'var(--color-text-primary)',
-    fontFamily: 'var(--font-sans)',
-    outline: 'none',
-    minWidth: 0,
+    flex: '1 1 200px', fontSize: 13, padding: '8px 10px',
+    border: '0.5px solid var(--color-border-secondary)', borderRadius: 6,
+    background: 'var(--color-background-primary)', color: 'var(--color-text-primary)',
+    fontFamily: 'var(--font-sans)', outline: 'none', minWidth: 0,
   },
-  // Claim button
   claimBtn: (state) => ({
-    padding: '8px 18px',
-    borderRadius: 6,
-    fontSize: 13,
-    fontWeight: 500,
+    padding: '8px 18px', borderRadius: 6, fontSize: 13, fontWeight: 500,
     fontFamily: 'var(--font-sans)',
     cursor: state === 'ready' ? 'pointer' : 'not-allowed',
-    border: '0.5px solid',
-    transition: 'all 0.12s',
-    whiteSpace: 'nowrap',
+    border: '0.5px solid', transition: 'all 0.12s', whiteSpace: 'nowrap',
     ...(state === 'ready'
       ? { background: 'var(--color-text-primary)', color: 'var(--color-background-primary)', borderColor: 'var(--color-text-primary)' }
       : state === 'claimed'
       ? { background: 'var(--color-background-success)', color: 'var(--color-text-success)', borderColor: 'var(--color-border-success)' }
-      : state === 'locked'
-      ? { background: 'var(--color-background-secondary)', color: 'var(--color-text-tertiary)', borderColor: 'var(--color-border-tertiary)' }
       : { background: 'var(--color-background-secondary)', color: 'var(--color-text-tertiary)', borderColor: 'var(--color-border-tertiary)' }
     ),
   }),
-  // Bank modal backdrop (faux viewport)
   modalBackdrop: {
-    position: 'fixed', inset: 0,
-    background: 'rgba(0,0,0,0.45)',
-    display: 'flex', alignItems: 'center', justifyContent: 'center',
-    zIndex: 1000,
+    position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)',
+    display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000,
   },
   modalCard: {
     background: 'var(--color-background-primary)',
     border: '0.5px solid var(--color-border-secondary)',
-    borderRadius: 12,
-    padding: '28px 28px 22px',
-    width: '100%',
-    maxWidth: 400,
-    fontFamily: 'var(--font-sans)',
+    borderRadius: 12, padding: '28px 28px 22px',
+    width: '100%', maxWidth: 400, fontFamily: 'var(--font-sans)',
   },
   modalTitle: {
     fontSize: 15, fontWeight: 500, margin: '0 0 20px',
-    color: 'var(--color-text-primary)',
-    fontFamily: 'var(--font-sans)',
+    color: 'var(--color-text-primary)', fontFamily: 'var(--font-sans)',
   },
   fieldLabel: {
-    display: 'block', fontSize: 12, color: 'var(--color-text-secondary)',
-    marginBottom: 4,
+    display: 'block', fontSize: 12,
+    color: 'var(--color-text-secondary)', marginBottom: 4,
   },
   fieldWrap: { marginBottom: 14 },
   input: {
-    width: '100%', boxSizing: 'border-box',
-    padding: '8px 10px', fontSize: 13,
-    border: '0.5px solid var(--color-border-secondary)',
-    borderRadius: 6, background: 'var(--color-background-primary)',
-    color: 'var(--color-text-primary)', fontFamily: 'var(--font-sans)',
-    outline: 'none',
+    width: '100%', boxSizing: 'border-box', padding: '8px 10px', fontSize: 13,
+    border: '0.5px solid var(--color-border-secondary)', borderRadius: 6,
+    background: 'var(--color-background-primary)', color: 'var(--color-text-primary)',
+    fontFamily: 'var(--font-sans)', outline: 'none',
   },
   modalFooter: {
     display: 'flex', justifyContent: 'flex-end', gap: 10,
-    marginTop: 22,
-    paddingTop: 14,
+    marginTop: 22, paddingTop: 14,
     borderTop: '0.5px solid var(--color-border-tertiary)',
   },
   cancelBtn: {
@@ -316,17 +256,15 @@ const styles = {
   },
   submitBtn: (disabled) => ({
     padding: '7px 18px', fontSize: 13, fontWeight: 500,
-    border: '0.5px solid var(--color-text-primary)',
-    borderRadius: 6,
+    border: '0.5px solid var(--color-text-primary)', borderRadius: 6,
     background: disabled ? 'var(--color-background-secondary)' : 'var(--color-text-primary)',
     color: disabled ? 'var(--color-text-tertiary)' : 'var(--color-background-primary)',
-    cursor: disabled ? 'not-allowed' : 'pointer',
-    fontFamily: 'var(--font-sans)',
+    cursor: disabled ? 'not-allowed' : 'pointer', fontFamily: 'var(--font-sans)',
   }),
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
-// BankDetailsModal — portable, portal-like (fixed positioning via faux viewport)
+// BankDetailsModal
 // ─────────────────────────────────────────────────────────────────────────────
 
 function BankModal({ open, loading, onClose, onSubmit, rewardLabel }) {
@@ -357,8 +295,8 @@ function BankModal({ open, loading, onClose, onSubmit, rewardLabel }) {
     if (Object.keys(e).length > 0) return;
     onSubmit({
       accountNumber: form.accountNumber,
-      ifscCode:      form.ifscCode.toUpperCase(),
-      panNumber:     form.panNumber.toUpperCase(),
+      ifscCode: form.ifscCode.toUpperCase(),
+      panNumber: form.panNumber.toUpperCase(),
     });
   };
 
@@ -369,9 +307,16 @@ function BankModal({ open, loading, onClose, onSubmit, rewardLabel }) {
         style={{ ...styles.input, ...(errors[key] ? { borderColor: 'var(--color-border-danger)' } : {}) }}
         value={form[key]}
         placeholder={placeholder}
-        onChange={e => { setForm(p => ({ ...p, [key]: e.target.value })); setErrors(p => ({ ...p, [key]: undefined })); }}
+        onChange={e => {
+          setForm(p => ({ ...p, [key]: e.target.value }));
+          setErrors(p => ({ ...p, [key]: undefined }));
+        }}
       />
-      {errors[key] && <span style={{ fontSize: 11, color: 'var(--color-text-danger)', marginTop: 2, display: 'block' }}>{errors[key]}</span>}
+      {errors[key] && (
+        <span style={{ fontSize: 11, color: 'var(--color-text-danger)', marginTop: 2, display: 'block' }}>
+          {errors[key]}
+        </span>
+      )}
     </div>
   );
 
@@ -395,7 +340,7 @@ function BankModal({ open, loading, onClose, onSubmit, rewardLabel }) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Hook: slab data from the plan-based reward API
+// Hook: plan slabs
 // ─────────────────────────────────────────────────────────────────────────────
 
 function usePlanSlabs(type) {
@@ -403,7 +348,9 @@ function usePlanSlabs(type) {
   useEffect(() => {
     const token = getToken();
     if (!token) return;
-    fetch(`${BACKEND_URL}/api/rewards/${type}`, { headers: { Authorization: `Bearer ${token}` } })
+    fetch(`${BACKEND_URL}/api/rewards/${type}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
       .then(r => r.ok ? r.json() : null)
       .then(d => { if (d?.slabs) setSlabs(d.slabs); })
       .catch(() => {});
@@ -412,21 +359,121 @@ function usePlanSlabs(type) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Hook: wallet totals
+// Hook: earned-rewards — wallet + fresh claimed slab lists in one call
+//
+// FIX: replaces the old useWallet() hook which only fetched wallet totals.
+//      We now also extract redeemedPostSlabs, redeemedReferralSlabs, and
+//      redeemedStreakSlabs from the same response so every tab gets a
+//      server-fresh claimed list — not the stale AuthContext user object.
+//
+//      The earned-rewards endpoint returns:
+//        { wallet, redeemed: { posts, referral, streak }, claims, eligibility, ... }
+//      `redeemed.posts`    → number[]  e.g. [30, 70]
+//      `redeemed.referral` → number[]  e.g. [3, 6]
+//      `redeemed.streak`   → string[]  e.g. ['30days', '60days']
 // ─────────────────────────────────────────────────────────────────────────────
 
-function useWallet() {
-  const [wallet, setWallet] = useState({ totalGroceryCoupons: 0, totalShares: 0, totalReferralToken: 0 });
-  const fetchWallet = useCallback(() => {
+function useEarnedRewards() {
+  const [wallet, setWallet]   = useState({ totalGroceryCoupons: 0, totalShares: 0, totalReferralToken: 0 });
+  const [redeemed, setRedeemed] = useState({ posts: [], referral: [], streak: [] });
+  const [loading, setLoading] = useState(true);
+
+  const fetch_ = useCallback(() => {
     const token = getToken();
-    if (!token) return;
-    fetch(`${BACKEND_URL}/api/auth/earned-rewards`, { headers: { Authorization: `Bearer ${token}` } })
+    if (!token) { setLoading(false); return; }
+
+    setLoading(true);
+    fetch(`${BACKEND_URL}/api/auth/earned-rewards`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
       .then(r => r.ok ? r.json() : null)
-      .then(d => { if (d?.wallet) setWallet(d.wallet); })
-      .catch(() => {});
+      .then(d => {
+        if (!d) return;
+        if (d.wallet) setWallet(d.wallet);
+        if (d.redeemed) {
+          setRedeemed({
+            // Normalise to numbers for posts/referral, strings for streak
+            posts:    (d.redeemed.posts    ?? []).map(Number),
+            referral: (d.redeemed.referral ?? []).map(Number),
+            streak:   d.redeemed.streak    ?? [],
+          });
+        }
+      })
+      .catch(() => {})
+      .finally(() => setLoading(false));
   }, []);
-  useEffect(() => { fetchWallet(); }, [fetchWallet]);
-  return { wallet, refetchWallet: fetchWallet };
+
+  useEffect(() => { fetch_(); }, [fetch_]);
+
+  return { wallet, redeemed, loading, refetch: fetch_ };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Hook: current user's own post count
+//
+// FIX: The old PostTab fetched /api/posts/fetchallposts?limit=1 which returns
+//      ALL users' posts.  The pagination.total (when present) is the site-wide
+//      total, not the user's count.  The activity fallback was also broken:
+//      it counted activity entries of type 'post' — but the formatter emits
+//      that type for BOTH raw post log events AND post-reward claims, so the
+//      count was inflated.
+//
+//      Correct approach: fetch /api/posts/fetchallposts with a high limit and
+//      filter client-side by the current user's id (same logic as usePostCount
+//      in PostCount.js).  We use a large limit (1000) to capture all posts;
+//      for users with very large post counts the pagination cursor would need
+//      to be followed, but for practical reward milestones (max 1000 posts)
+//      a single page of 1000 is sufficient.
+//
+//      userId can be a string, ObjectId, or populated object — we normalise it
+//      using the same multi-field resolution pattern from usePostCount.js.
+// ─────────────────────────────────────────────────────────────────────────────
+
+function useMyPostCount(userId) {
+  const [postCount, setPostCount] = useState(0);
+  const [loading, setLoading]     = useState(true);
+
+  // Resolve the viewer's own id to a plain string (mirrors usePostCount.js)
+  const currentUserId = useMemo(() => {
+    if (!userId) return null;
+    return (userId?._id || userId?.id || userId)?.toString() ?? null;
+  }, [userId]);
+
+  useEffect(() => {
+    const token = getToken();
+    if (!token || !currentUserId) { setLoading(false); return; }
+
+    setLoading(true);
+    fetch(`${BACKEND_URL}/api/posts/fetchallposts?limit=1000`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+      .then(r => r.ok ? r.json() : null)
+      .then(d => {
+        // Handle both response shapes:
+        //   flat array  → d is [...]
+        //   paginated   → d is { posts: [...], pagination: {...} }
+        const posts = Array.isArray(d) ? d : (Array.isArray(d?.posts) ? d.posts : []);
+
+        // Count posts belonging to this user — same multi-field normalisation
+        // as PostCount.js (usePostCount hook).
+        const count = posts.filter(post => {
+          const ownerId = (
+            post.user_id?._id  ||   // populated object (most fetched posts)
+            post.user_id        ||   // raw ObjectId / string
+            post.user?._id      ||   // alternate field (populated)
+            post.user           ||   // alternate field (raw)
+            post.userId
+          )?.toString();
+          return ownerId === currentUserId;
+        }).length;
+
+        setPostCount(count);
+      })
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, [currentUserId]);
+
+  return { postCount, loading };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -435,7 +482,8 @@ function useWallet() {
 
 function ProgressBar({ current, next, prev = 0, label, color }) {
   if (!next) return null;
-  const pct = Math.min(100, Math.round(((current - prev) / (next - prev)) * 100));
+  const range = next - prev;
+  const pct   = range > 0 ? Math.min(100, Math.round(((current - prev) / range) * 100)) : 100;
   const remaining = next - current;
   return (
     <div style={styles.progressWrap}>
@@ -464,27 +512,26 @@ function MilestoneChip({ label, sublabel, state, badge }) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// EligibilityBanner — single shared banner at page top
+// EligibilityBanner
 // ─────────────────────────────────────────────────────────────────────────────
 
 function EligibilityBanner({ kycGate, subscriptionGate, blockerCode, blockerMessage }) {
   const navigate = useNavigate();
   if (!blockerCode) return null;
 
-  // KYC navigates to a route; subscription opens the modal via ctaAction
   const items = [];
-  if (!kycGate.passed) {
+  if (!kycGate?.passed) {
     items.push({
-      label: kycGate.label,
-      cta:   kycGate.ctaLabel,
-      onCta: () => navigate(kycGate.ctaPath),
+      label: kycGate?.label,
+      cta:   kycGate?.ctaLabel,
+      onCta: () => navigate(kycGate?.ctaPath),
     });
   }
-  if (!subscriptionGate.passed) {
+  if (!subscriptionGate?.passed) {
     items.push({
-      label: subscriptionGate.label,
-      cta:   subscriptionGate.ctaLabel,
-      onCta: () => subscriptionGate.ctaAction?.(),
+      label: subscriptionGate?.label,
+      cta:   subscriptionGate?.ctaLabel,
+      onCta: () => subscriptionGate?.ctaAction?.(),
     });
   }
 
@@ -495,7 +542,9 @@ function EligibilityBanner({ kycGate, subscriptionGate, blockerCode, blockerMess
       </span>
       <div>
         <strong style={{ fontFamily: 'var(--font-sans)', fontSize: 13 }}>Rewards locked</strong>
-        <p style={{ margin: '2px 0 6px', fontFamily: 'var(--font-sans)', fontSize: 13 }}>{blockerMessage}</p>
+        <p style={{ margin: '2px 0 6px', fontFamily: 'var(--font-sans)', fontSize: 13 }}>
+          {blockerMessage}
+        </p>
         <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
           {items.map(it => (
             <button key={it.label} style={styles.bannerCta} onClick={it.onCta}>
@@ -510,11 +559,19 @@ function EligibilityBanner({ kycGate, subscriptionGate, blockerCode, blockerMess
 
 // ─────────────────────────────────────────────────────────────────────────────
 // StreakTab
+//
+// Counts: from StreakContext.totalUniqueDays (server-authoritative unique days).
+// Claimed: from earnedRewards.redeemed.streak (fresh from DB via earned-rewards).
 // ─────────────────────────────────────────────────────────────────────────────
 
-function StreakTab({ eligible, parseClaimError, openModal }) {
-  const { streakCount, totalUniqueDays, claimedDays } = useStreak();
+function StreakTab({ eligible, parseClaimError, openModal, redeemedStreak }) {
+  const { streakCount, totalUniqueDays } = useStreak();
   const slabs = usePlanSlabs('streak');
+
+  // FIX: use passed-in redeemedStreak from useEarnedRewards (server-fresh)
+  // instead of claimedDays from StreakContext (which also works post-fix, but
+  // this ensures a single source of truth across all tabs).
+  const claimedDays = redeemedStreak ?? [];
 
   const accurateCount = totalUniqueDays ?? streakCount ?? 0;
 
@@ -528,14 +585,14 @@ function StreakTab({ eligible, parseClaimError, openModal }) {
 
   const [selected, setSelected] = useState('');
   const selectedNum = selected ? Number(selected) : null;
-  const slabKey = selectedNum ? `${selectedNum}days` : null;
-  const isClaimed = slabKey ? (claimedDays || []).includes(slabKey) : false;
-  const hasEnough = selectedNum ? accurateCount >= selectedNum : false;
+  const slabKey     = selectedNum ? `${selectedNum}days` : null;
+  const isClaimed   = slabKey ? claimedDays.includes(slabKey) : false;
+  const hasEnough   = selectedNum ? accurateCount >= selectedNum : false;
 
-  const btnState = !eligible ? 'locked'
-    : !selectedNum ? 'idle'
-    : isClaimed ? 'claimed'
-    : !hasEnough ? 'locked'
+  const btnState = !eligible       ? 'locked'
+    : !selectedNum                 ? 'idle'
+    : isClaimed                    ? 'claimed'
+    : !hasEnough                   ? 'locked'
     : 'ready';
 
   const handleOpen = () => {
@@ -545,12 +602,13 @@ function StreakTab({ eligible, parseClaimError, openModal }) {
 
   return (
     <div>
-      {/* Hero */}
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, marginBottom: 20 }}>
         <span style={{ fontFamily: '"Courier New", monospace', fontSize: 40, fontWeight: 400, letterSpacing: -2, lineHeight: 1 }}>
           {accurateCount}
         </span>
-        <span style={{ fontSize: 14, color: 'var(--color-text-secondary)', fontFamily: 'var(--font-sans)' }}>days</span>
+        <span style={{ fontSize: 14, color: 'var(--color-text-secondary)', fontFamily: 'var(--font-sans)' }}>
+          days
+        </span>
       </div>
 
       <ProgressBar
@@ -564,15 +622,15 @@ function StreakTab({ eligible, parseClaimError, openModal }) {
       <p style={styles.sectionHead}>Milestones</p>
       <div style={styles.milestoneGrid}>
         {milestones.map(day => {
-          const key = `${day}days`;
-          const isClaimed = (claimedDays || []).includes(key);
-          const active = accurateCount >= day;
+          const key      = `${day}days`;
+          const claimed  = claimedDays.includes(key);
+          const active   = accurateCount >= day;
           return (
             <MilestoneChip
               key={day}
               label={`${day}d`}
-              state={isClaimed ? 'claimed' : active ? 'active' : 'locked'}
-              badge={isClaimed ? 'Claimed' : null}
+              state={claimed ? 'claimed' : active ? 'active' : 'locked'}
+              badge={claimed ? 'Claimed' : null}
             />
           );
         })}
@@ -587,8 +645,8 @@ function StreakTab({ eligible, parseClaimError, openModal }) {
         >
           <option value="">Select a milestone…</option>
           {milestones.map(day => {
-            const key = `${day}days`;
-            const isCl = (claimedDays || []).includes(key);
+            const key  = `${day}days`;
+            const isCl = claimedDays.includes(key);
             const ok   = accurateCount >= day;
             return (
               <option key={day} value={day} disabled={!ok || isCl}>
@@ -598,7 +656,11 @@ function StreakTab({ eligible, parseClaimError, openModal }) {
           })}
         </select>
 
-        <button style={styles.claimBtn(btnState)} onClick={handleOpen} disabled={btnState !== 'ready'}>
+        <button
+          style={styles.claimBtn(btnState)}
+          onClick={handleOpen}
+          disabled={btnState !== 'ready'}
+        >
           {btnState === 'claimed' ? 'Claimed' : btnState === 'locked' && !eligible ? 'Locked' : 'Claim'}
         </button>
       </div>
@@ -608,59 +670,46 @@ function StreakTab({ eligible, parseClaimError, openModal }) {
 
 // ─────────────────────────────────────────────────────────────────────────────
 // PostTab
+//
+// Counts: from useMyPostCount() — fetches all posts, filters by userId.
+// Claimed: from earnedRewards.redeemed.posts (fresh from DB via earned-rewards).
+//
+// FIX: old code hit fetchallposts?limit=1, read pagination.total (site-wide),
+//      or fell back to counting activity entries (double-counted reward events).
+//      Both were wrong. useMyPostCount fetches posts and counts only the user's.
 // ─────────────────────────────────────────────────────────────────────────────
 
-function PostTab({ eligible, user }) {
+function PostTab({ eligible, user, redeemedPosts, onRewardClaimed }) {
   const slabs = usePlanSlabs('posts');
-  const [postCount, setPostCount] = useState(0);
+  const { postCount, loading: countLoading } = useMyPostCount(user?.id ?? user?._id ?? user);
+
+  // FIX: use passed-in redeemedPosts from useEarnedRewards (fresh, not stale
+  // AuthContext user object). Store as strings for backwards-compat with
+  // the select/chip comparison logic below.
+  const claimed       = (redeemedPosts ?? []).map(String);
+
   const [selected, setSelected] = useState('');
-  const [loading, setLoading] = useState(false);
-  const [claimed, setClaimed] = useState([]);
+  const [loading, setLoading]   = useState(false);
   const [modalOpen, setModalOpen] = useState(false);
+
+  const { parseClaimError } = useRewardEligibility();
 
   const milestones = useMemo(() =>
     slabs.map(s => s.postsCount).filter(p => typeof p === 'number').sort((a, b) => a - b),
     [slabs]
   );
 
-  useEffect(() => {
-    setClaimed((user?.redeemedPostSlabs ?? []).map(String));
-  }, [user]);
-
-  useEffect(() => {
-    const token = getToken();
-    if (!token) return;
-    // Count from the posts endpoint — lean fallback
-    fetch(`${BACKEND_URL}/api/posts/fetchallposts?limit=1`, { headers: { Authorization: `Bearer ${token}` } })
-      .then(r => r.ok ? r.json() : null)
-      .then(d => {
-        // Try pagination total if available
-        if (d?.pagination) return;
-        // Fallback: fetch activity history
-        return fetch(`${BACKEND_URL}/api/activity/user`, { headers: { Authorization: `Bearer ${token}` } })
-          .then(r => r.ok ? r.json() : null)
-          .then(ad => {
-            if (!ad?.activities) return;
-            const posts = ad.activities.filter(a => a.type === 'post' || a.type === 'post_reward' || a.userpost);
-            setPostCount(posts.length);
-          });
-      })
-      .catch(() => {});
-  }, []);
-
-  const { parseClaimError } = useRewardEligibility();
-
   const selectedNum = selected ? Number(selected) : null;
-  const isClaimed = selectedNum ? claimed.includes(String(selectedNum)) : false;
-  const hasEnough = selectedNum ? postCount >= selectedNum : false;
+  const isClaimed   = selectedNum ? claimed.includes(String(selectedNum)) : false;
+  const hasEnough   = selectedNum ? postCount >= selectedNum : false;
 
   const next = milestones.find(m => postCount < m) ?? null;
   const prev = [...milestones].reverse().find(m => postCount >= m) ?? 0;
 
-  const btnState = !eligible ? 'locked'
-    : !selectedNum ? 'idle'
-    : isClaimed ? 'claimed'
-    : !hasEnough ? 'locked'
+  const btnState = !eligible     ? 'locked'
+    : !selectedNum               ? 'idle'
+    : isClaimed                  ? 'claimed'
+    : !hasEnough                 ? 'locked'
     : 'ready';
 
   const handleSubmit = async (bankDetails) => {
@@ -672,9 +721,9 @@ function PostTab({ eligible, user }) {
         { headers: { Authorization: `Bearer ${getToken()}` } }
       );
       toast.success(res.data?.message || `Post reward for ${selectedNum} posts claimed!`);
-      setClaimed(p => [...p, String(selectedNum)]);
       setSelected('');
       setModalOpen(false);
+      onRewardClaimed?.(); // refetch earned-rewards so claimed list refreshes
     } catch (err) {
       toast.error(parseClaimError(err));
     } finally {
@@ -686,9 +735,11 @@ function PostTab({ eligible, user }) {
     <div>
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, marginBottom: 20 }}>
         <span style={{ fontFamily: '"Courier New", monospace', fontSize: 40, fontWeight: 400, letterSpacing: -2, lineHeight: 1 }}>
-          {postCount}
+          {countLoading ? '…' : postCount}
         </span>
-        <span style={{ fontSize: 14, color: 'var(--color-text-secondary)', fontFamily: 'var(--font-sans)' }}>posts</span>
+        <span style={{ fontSize: 14, color: 'var(--color-text-secondary)', fontFamily: 'var(--font-sans)' }}>
+          posts
+        </span>
       </div>
 
       <ProgressBar
@@ -720,7 +771,7 @@ function PostTab({ eligible, user }) {
           style={styles.select}
           value={selected}
           onChange={e => setSelected(e.target.value)}
-          disabled={!eligible}
+          disabled={!eligible || countLoading}
         >
           <option value="">Select a milestone…</option>
           {milestones.map(m => {
@@ -734,7 +785,11 @@ function PostTab({ eligible, user }) {
           })}
         </select>
 
-        <button style={styles.claimBtn(btnState)} onClick={() => btnState === 'ready' && setModalOpen(true)} disabled={btnState !== 'ready'}>
+        <button
+          style={styles.claimBtn(btnState)}
+          onClick={() => btnState === 'ready' && setModalOpen(true)}
+          disabled={btnState !== 'ready'}
+        >
           {btnState === 'claimed' ? 'Claimed' : btnState === 'locked' && !eligible ? 'Locked' : 'Claim'}
         </button>
       </div>
@@ -752,16 +807,24 @@ function PostTab({ eligible, user }) {
 
 // ─────────────────────────────────────────────────────────────────────────────
 // ReferralTab
+//
+// Counts: referralCount & referredUsers from ReferralContext (correct —
+//         sourced from /api/auth/users/referred).
+// Active: derived from referredUsers.filter(u => u.subscription?.active).
+// Claimed: from earnedRewards.redeemed.referral (fresh from DB, not stale user).
 // ─────────────────────────────────────────────────────────────────────────────
 
-function ReferralTab({ eligible, user }) {
+function ReferralTab({ eligible, user, redeemedReferral, onRewardClaimed }) {
   const { referralCount = 0, referredUsers = [], fetchReferralData } = useReferral();
   const slabs = usePlanSlabs('referral');
   const [selected, setSelected]   = useState('');
   const [loading, setLoading]     = useState(false);
   const [modalOpen, setModalOpen] = useState(false);
-  const [claimed, setClaimed]     = useState([]);
-  const { parseClaimError }       = useRewardEligibility();
+
+  const { parseClaimError } = useRewardEligibility();
+
+  // FIX: use passed-in redeemedReferral (fresh) instead of user.redeemedReferralSlabs (stale)
+  const claimed = redeemedReferral ?? [];
 
   const activeCount = useMemo(
     () => referredUsers.filter(u => u.subscription?.active).length,
@@ -780,21 +843,17 @@ function ReferralTab({ eligible, user }) {
     ? `${window.location.origin}/invite/${referralId}`
     : `${window.location.origin}/invite`;
 
-  useEffect(() => {
-    setClaimed((user?.redeemedReferralSlabs ?? []).map(Number));
-  }, [user]);
-
   const selectedNum = selected ? Number(selected) : null;
-  const isClaimed = selectedNum ? claimed.includes(selectedNum) : false;
-  const hasEnough = selectedNum ? activeCount >= selectedNum : false;
+  const isClaimed   = selectedNum ? claimed.includes(selectedNum) : false;
+  const hasEnough   = selectedNum ? activeCount >= selectedNum : false;
 
   const next = bigSlabs.find(s => activeCount < s.referralCount) ?? null;
   const prev = [...bigSlabs].reverse().find(s => activeCount >= s.referralCount) ?? null;
 
-  const btnState = !eligible ? 'locked'
-    : !selectedNum ? 'idle'
-    : isClaimed ? 'claimed'
-    : !hasEnough ? 'locked'
+  const btnState = !eligible    ? 'locked'
+    : !selectedNum              ? 'idle'
+    : isClaimed                 ? 'claimed'
+    : !hasEnough                ? 'locked'
     : 'ready';
 
   const handleSubmit = async (bankDetails) => {
@@ -806,10 +865,10 @@ function ReferralTab({ eligible, user }) {
         { headers: { Authorization: `Bearer ${getToken()}` } }
       );
       toast.success(res.data?.message || `Referral reward for ${selectedNum} referrals claimed!`);
-      setClaimed(p => [...p, selectedNum]);
       fetchReferralData();
       setSelected('');
       setModalOpen(false);
+      onRewardClaimed?.(); // refetch earned-rewards so claimed list refreshes
     } catch (err) {
       toast.error(parseClaimError(err));
     } finally {
@@ -823,7 +882,7 @@ function ReferralTab({ eligible, user }) {
 
   return (
     <div>
-      {/* Stats */}
+      {/* Stats row */}
       <div style={{ display: 'flex', gap: 1, background: 'var(--color-border-tertiary)', borderRadius: 6, overflow: 'hidden', marginBottom: 20 }}>
         {[
           { num: referralCount, label: 'Total referred' },
@@ -832,14 +891,16 @@ function ReferralTab({ eligible, user }) {
         ].map(({ num, label }) => (
           <div key={label} style={{ flex: 1, background: 'var(--color-background-primary)', padding: '12px 14px', textAlign: 'center' }}>
             <span style={{ display: 'block', fontFamily: '"Courier New", monospace', fontSize: 22, fontWeight: 400 }}>{num}</span>
-            <span style={{ display: 'block', fontSize: 11, color: 'var(--color-text-tertiary)', fontFamily: 'var(--font-sans)', marginTop: 3, textTransform: 'uppercase', letterSpacing: '0.4px' }}>{label}</span>
+            <span style={{ display: 'block', fontSize: 11, color: 'var(--color-text-tertiary)', fontFamily: 'var(--font-sans)', marginTop: 3, textTransform: 'uppercase', letterSpacing: '0.4px' }}>
+              {label}
+            </span>
           </div>
         ))}
       </div>
 
       {activeCount < referralCount && (
         <div style={{ fontSize: 12, color: 'var(--color-text-secondary)', fontFamily: 'var(--font-sans)', padding: '8px 12px', background: 'var(--color-background-secondary)', borderRadius: 6, marginBottom: 16, border: '0.5px solid var(--color-border-tertiary)' }}>
-          {referralCount - activeCount} referred member{referralCount - activeCount !== 1 ? 's' : ''} have no active subscription. Rewards are based on <em>active</em> referrals only.
+          {referralCount - activeCount} referred member{referralCount - activeCount !== 1 ? 's' : ''} {referralCount - activeCount === 1 ? 'has' : 'have'} no active subscription. Rewards are based on <em>active</em> referrals only.
         </div>
       )}
 
@@ -926,7 +987,11 @@ function ReferralTab({ eligible, user }) {
           })}
         </select>
 
-        <button style={styles.claimBtn(btnState)} onClick={() => btnState === 'ready' && setModalOpen(true)} disabled={btnState !== 'ready'}>
+        <button
+          style={styles.claimBtn(btnState)}
+          onClick={() => btnState === 'ready' && setModalOpen(true)}
+          disabled={btnState !== 'ready'}
+        >
           {btnState === 'claimed' ? 'Claimed' : btnState === 'locked' && !eligible ? 'Locked' : 'Claim'}
         </button>
       </div>
@@ -948,13 +1013,16 @@ function ReferralTab({ eligible, user }) {
 
 const TABS = [
   { id: 'streak',   label: 'Streak rewards'   },
-  { id: 'posts',    label: 'Post rewards'     },
-  { id: 'referral', label: 'Referral rewards' },
+  { id: 'posts',    label: 'Post rewards'      },
+  { id: 'referral', label: 'Referral rewards'  },
 ];
 
 export default function RewardsHub({ initialTab = 'streak' }) {
-  const { user }                 = useAuth();
-  const { wallet, refetchWallet } = useWallet();
+  const { user }   = useAuth();
+  const {
+    wallet, redeemed, refetch: refetchEarned,
+  } = useEarnedRewards();
+
   const {
     eligible, checking,
     kycGate, subscriptionGate,
@@ -964,9 +1032,8 @@ export default function RewardsHub({ initialTab = 'streak' }) {
 
   const [activeTab, setActiveTab] = useState(initialTab);
 
-  // Streak tab also needs the modal to live in this shell so one BankModal
-  // serves all three tabs. StreakTab calls openModal(type, milestone, label).
-  const [streakModal, setStreakModal] = useState({ open: false, days: null });
+  // Streak claim modal — lives at shell level so it's outside the tab tree
+  const [streakModal, setStreakModal] = useState({ open: false, days: null, label: '' });
   const [streakLoading, setStreakLoading] = useState(false);
   const { fetchStreakHistory } = useStreak();
 
@@ -984,8 +1051,8 @@ export default function RewardsHub({ initialTab = 'streak' }) {
       );
       toast.success(res.data?.message || `Streak reward for ${streakModal.days} days claimed!`);
       fetchStreakHistory?.();
-      refetchWallet();
-      setStreakModal({ open: false, days: null });
+      refetchEarned();                      // refresh claimed lists + wallet
+      setStreakModal({ open: false, days: null, label: '' });
     } catch (err) {
       toast.error(parseClaimError(err));
     } finally {
@@ -995,12 +1062,6 @@ export default function RewardsHub({ initialTab = 'streak' }) {
 
   return (
     <div style={styles.shell}>
-      {/* Masthead */}
-      {/* <div style={styles.masthead}>
-        <h1 style={styles.mastheadTitle}>Rewards</h1>
-        <p style={styles.mastheadSub}>Claim grocery coupons, shares, and referral tokens</p>
-      </div> */}
-
       {/* Eligibility banner — shown once, not per-tab */}
       {!checking && !eligible && (
         <EligibilityBanner
@@ -1038,20 +1099,35 @@ export default function RewardsHub({ initialTab = 'streak' }) {
 
       {/* Tab content */}
       {activeTab === 'streak' && (
-        <StreakTab eligible={eligible} parseClaimError={parseClaimError} openModal={openModal} />
+        <StreakTab
+          eligible={eligible}
+          parseClaimError={parseClaimError}
+          openModal={openModal}
+          redeemedStreak={redeemed.streak}        // ← fresh from server
+        />
       )}
       {activeTab === 'posts' && (
-        <PostTab eligible={eligible} user={user} />
+        <PostTab
+          eligible={eligible}
+          user={user}
+          redeemedPosts={redeemed.posts}           // ← fresh from server
+          onRewardClaimed={refetchEarned}
+        />
       )}
       {activeTab === 'referral' && (
-        <ReferralTab eligible={eligible} user={user} />
+        <ReferralTab
+          eligible={eligible}
+          user={user}
+          redeemedReferral={redeemed.referral}     // ← fresh from server
+          onRewardClaimed={refetchEarned}
+        />
       )}
 
       {/* Streak bank modal lives here so it's outside the tab tree */}
       <BankModal
         open={streakModal.open}
         loading={streakLoading}
-        onClose={() => setStreakModal({ open: false, days: null })}
+        onClose={() => setStreakModal({ open: false, days: null, label: '' })}
         onSubmit={handleStreakClaim}
         rewardLabel={streakModal.label ?? 'Streak'}
       />

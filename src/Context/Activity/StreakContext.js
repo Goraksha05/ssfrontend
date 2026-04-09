@@ -26,7 +26,7 @@ import React, { createContext, useContext, useEffect, useState, useCallback } fr
 const StreakContext = createContext();
 export { StreakContext };
 
-const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
+const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || process.env.REACT_APP_SERVER_URL || '';
 
 export const StreakProvider = ({ children }) => {
   const [streakCount,      setStreakCount]      = useState(0);

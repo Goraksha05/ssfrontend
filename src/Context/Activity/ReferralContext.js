@@ -23,7 +23,7 @@ import { jwtDecode } from 'jwt-decode';
 import { emitSignal } from '../../utils/behaviorSDK';
 
 const ReferralContext = createContext();
-const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
+const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || process.env.REACT_APP_SERVER_URL || '';
 
 // ── Module-level helpers ──────────────────────────────────────────────────────
 // Defined outside the component so they are stable references that never
