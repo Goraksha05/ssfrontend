@@ -68,8 +68,8 @@ const resolveUserId = (userInfo) =>
 // ── Provider ───────────────────────────────────────────────────────────────────
 export const AuthProvider = ({ children }) => {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
-  const [user,            setUser]            = useState(null);
-  const [token,           setToken]           = useState(
+  const [user, setUser] = useState(null);
+  const [token, setToken] = useState(
     () => localStorage.getItem('token')
   );
 
@@ -90,8 +90,8 @@ export const AuthProvider = ({ children }) => {
 
         sock.emit('user-online', {
           userId,
-          name:        userInfo.name        ?? '',
-          hometown:    userInfo.hometown     ?? '',
+          name: userInfo.name ?? '',
+          hometown: userInfo.hometown ?? '',
           currentcity: userInfo.currentcity ?? '',
         });
         sock.emit('join-room', userId);
@@ -110,6 +110,24 @@ export const AuthProvider = ({ children }) => {
 
   // ── Logout ────────────────────────────────────────────────────────────────
   const logout = useCallback(() => {
+    try {
+      // ✅ Reset reCAPTCHA (v2 + v3 safety)
+      if (window.grecaptcha) {
+        // Reset all rendered widgets (v2)
+        if (typeof window.grecaptcha.reset === 'function') {
+          window.grecaptcha.reset();
+        }
+
+        // Optional: clear any pending executions (v3 safe guard)
+        if (typeof window.grecaptcha.execute === 'function') {
+          // No direct cancel API, but calling reset ensures state cleanup
+          console.info('[AuthContext] reCAPTCHA reset on logout');
+        }
+      }
+    } catch (err) {
+      console.warn('[AuthContext] reCAPTCHA reset failed:', err);
+    }
+
     const sock = socketRef.current || getSocket();
 
     // FIX: mirror the same id resolution used in setupSocket
@@ -121,16 +139,20 @@ export const AuthProvider = ({ children }) => {
     // Remove only our connect listener before full teardown
     socketRef._offConnect?.();
     disconnectSocket();
-    socketRef.current     = null;
+    socketRef.current = null;
     socketRef._offConnect = null;
 
+    // Clear storage
     ['token', 'User', 'refreshToken', 'notifications'].forEach((k) =>
       localStorage.removeItem(k)
     );
 
+    // Reset state
     setToken(null);
     setIsAuthenticated(false);
     setUser(null);
+
+    console.info('[AuthContext] User logged out + cleanup complete');
   }, [user]);
 
   // ── Auto-restore session on mount ─────────────────────────────────────────
@@ -139,6 +161,16 @@ export const AuthProvider = ({ children }) => {
 
     if (isTokenExpired(token)) {
       console.warn('[AuthContext] Stored token expired — clearing.');
+
+      // ✅ Also reset captcha before logout (important edge case)
+      try {
+        if (window.grecaptcha?.reset) {
+          window.grecaptcha.reset();
+        }
+      } catch (err) {
+        console.warn('[AuthContext] reCAPTCHA reset during auto-expiry failed:', err);
+      }
+
       logout();
       return;
     }
@@ -147,14 +179,29 @@ export const AuthProvider = ({ children }) => {
 
     AuthService.getUser()
       .then((userInfo) => {
-        if (!userInfo) { logout(); return; }
+        if (!userInfo) {
+          logout();
+          return;
+        }
+
         setUser(userInfo);
         setupSocket(userInfo);
       })
       .catch((err) => {
         console.error('[AuthContext] Auto-restore failed:', err);
+
+        // ✅ Ensure captcha cleanup even on failure
+        try {
+          if (window.grecaptcha?.reset) {
+            window.grecaptcha.reset();
+          }
+        } catch (err) {
+          console.warn('[AuthContext] reCAPTCHA reset during auto-expiry failed:', err);
+        }
+
         logout();
       });
+
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []); // intentionally runs once on mount
 
@@ -186,9 +233,9 @@ export const AuthProvider = ({ children }) => {
       // FIX: use the same BACKEND_URL constant as the rest of the file so
       // both env vars always resolve to the same origin.
       fetch(`${BACKEND_URL}/api/activity/log-daily-streak`, {
-        method:  'POST',
+        method: 'POST',
         headers: { Authorization: `Bearer ${cleanToken}` },
-      }).catch(() => {});
+      }).catch(() => { });
 
       await setupSocket(userInfo);
     } catch (err) {

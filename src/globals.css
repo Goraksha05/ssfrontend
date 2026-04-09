@@ -5338,25 +5338,321 @@ body.theme-light .postrewards-claim-label { color: #64748b !important; }
 
 /* ============================================================
    § 70  ENHANCED MEDIA UPLOAD  (EnhancedMediaUpload.js)
+   ─────────────────────────────────────────────────────────
+   Naming convention : emu-* (prefix isolates from Bootstrap
+   and every other component in this file).
+
+   Architecture
+   ────────────
+   • All colour values use CSS custom properties written by
+     ThemeContext at runtime, so every palette (ocean, sunset,
+     forest, royal, rose, midnight) and both modes (dark/light)
+     are covered automatically with no extra rules per palette.
+   • Structural / layout rules are theme-neutral and appear
+     once in the base block below.
+   • body.theme-dark  — explicit overrides where the base rule
+     alone could be ambiguous (matches the pattern used by
+     §§ 57-69 throughout this file).
+   • body.theme-light — mirrors the body.theme-dark block so
+     light mode is equally precise.
    ============================================================ */
 
-body.theme-dark  .media-upload-preview {
-  border-color: var(--border) !important;
-  background: var(--bg-card-alt) !important;
-  color: var(--text-primary) !important;
-}
-body.theme-light .media-upload-preview {
-  border-color: #e0e4ff !important;
-  background: #f8f9ff !important;
-  color: #1a1d3a !important;
+
+/* ── Base (layout + theme-neutral structure) ───────────────── */
+
+.emu-root {
+  font-family: var(--font-sans, 'Nunito', sans-serif);
+  color: var(--text-primary);
+  transition: var(--theme-transition);
 }
 
-body.theme-dark  .media-upload-filename { color: var(--text-muted) !important; }
-body.theme-light .media-upload-filename { color: #64748b !important; }
+/* Drop-zone */
+.emu-dropzone {
+  border: 1.5px dashed var(--border);
+  border-radius: var(--radius-md, 14px);
+  background: var(--bg-card);
+  padding: var(--space-7, 28px) var(--space-5, 20px);
+  text-align: center;
+  cursor: pointer;
+  user-select: none;
+  transition: border-color var(--transition-base, 0.2s ease),
+              background   var(--transition-base, 0.2s ease),
+              box-shadow   var(--transition-base, 0.2s ease);
+}
+.emu-dropzone:hover,
+.emu-dropzone--dragover {
+  border-color: var(--accent);
+  background:   var(--bg-hover);
+  box-shadow:   0 0 0 3px var(--accent-glow);
+}
+.emu-dropzone:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
 
-body.theme-dark  .media-crop-modal-body { background: #0d1117 !important; }
-body.theme-light .media-crop-modal-body { background: #f0f4ff !important; }
+.emu-dropzone-icon {
+  width: 40px;
+  height: 40px;
+  margin: 0 auto 12px;
+  color: var(--text-muted);
+  transition: color var(--transition-base, 0.2s ease);
+}
+.emu-dropzone:hover     .emu-dropzone-icon,
+.emu-dropzone--dragover .emu-dropzone-icon { color: var(--accent); }
 
+.emu-dropzone-label {
+  font-family: var(--font-ui, 'DM Sans', sans-serif);
+  font-size:   var(--text-sm, 12px);
+  font-weight: 600;
+  color: var(--text-secondary);
+  margin-bottom: 4px;
+}
+
+.emu-dropzone-sub {
+  font-family: var(--font-sans, 'Nunito', sans-serif);
+  font-size:   var(--text-xs, 11px);
+  color: var(--text-muted);
+}
+
+/* Browse-files button — mirrors app's .btn-primary glow system (§ 33) */
+.emu-dropzone-btn {
+  margin-top: var(--space-3, 12px);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 18px;
+  border-radius: var(--radius-sm, 8px);
+  background: var(--accent-gradient);
+  border: none;
+  color: #fff;
+  font-family: var(--font-ui, 'DM Sans', sans-serif);
+  font-size:   var(--text-xs, 11px);
+  font-weight: 700;
+  cursor: pointer;
+  /* box-shadow: 0 2px 8px var(--accent-glow); */
+  transition: filter    var(--transition-fast, 0.12s ease),
+              transform var(--transition-fast, 0.12s ease),
+              box-shadow var(--transition-fast, 0.12s ease);
+}
+.emu-dropzone-btn:hover          { filter: brightness(1.12); transform: translateY(-1px); box-shadow: 0 4px 20px var(--accent-glow); }
+.emu-dropzone-btn:active         { transform: translateY(0); }
+.emu-dropzone-btn:focus-visible  { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* File-count pill */
+.emu-count-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: var(--space-3, 12px);
+  padding: 5px 12px;
+  border-radius: var(--radius-full, 9999px);
+  background: var(--bg-hover);
+  border: 1px solid var(--border-subtle);
+  font-family: var(--font-ui, 'DM Sans', sans-serif);
+  font-size:   var(--text-xs, 11px);
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+.emu-count-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  flex-shrink: 0;
+}
+
+/* Media grid */
+.emu-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  gap: var(--space-2, 8px);
+  margin-top: var(--space-3, 12px);
+}
+
+/* Media card */
+.emu-card {
+  position: relative;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius, 14px);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  transition: border-color var(--transition-base, 0.2s ease),
+              box-shadow   var(--transition-base, 0.2s ease),
+              transform    var(--transition-fast, 0.12s ease);
+}
+.emu-card:hover {
+  border-color: var(--accent);
+  box-shadow:   var(--shadow-hover);
+  transform:    translateY(-1px);
+}
+
+/* Thumbnail */
+.emu-card-thumb {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 1;
+  background: var(--bg-card-alt);
+  overflow: hidden;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.emu-card-thumb img,
+.emu-card-thumb video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.emu-card-thumb img                { transition: transform 0.28s ease; }
+.emu-card-thumb:hover img          { transform: scale(1.07); }
+
+/* Video badge */
+.emu-video-badge {
+  position: absolute;
+  top: 6px; left: 6px;
+  background: rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(6px);
+  border-radius: var(--radius-xs, 4px);
+  padding: 2px 6px;
+  font-family: var(--font-ui, 'DM Sans', sans-serif);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: #fff;
+  pointer-events: none;
+}
+
+/* Remove button */
+.emu-remove-btn {
+  position: absolute;
+  top: 5px; right: 5px;
+  width: 22px; height: 22px;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.65);
+  backdrop-filter: blur(4px);
+  border: 1px solid var(--color-danger-border);
+  color: var(--color-danger);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: background   var(--transition-fast, 0.12s ease),
+              border-color var(--transition-fast, 0.12s ease),
+              transform    var(--transition-fast, 0.12s ease);
+}
+.emu-remove-btn:hover        { background: var(--color-danger-bg); border-color: var(--color-danger); transform: scale(1.15); }
+.emu-remove-btn:focus-visible { outline: 2px solid var(--color-danger); outline-offset: 2px; }
+
+/* Card footer */
+.emu-card-footer {
+  padding: 6px 8px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px;
+  background: var(--bg-card-alt);
+  border-top: 1px solid var(--border-subtle);
+  flex-shrink: 0;
+}
+
+.emu-card-name {
+  font-family: var(--font-sans, 'Nunito', sans-serif);
+  font-size:   var(--text-xs, 11px);
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+  min-width: 0;
+}
+
+.emu-card-actions {
+  display: flex;
+  gap: 3px;
+  flex-shrink: 0;
+}
+
+/* Icon action buttons */
+.emu-icon-btn {
+  width: 24px; height: 24px;
+  border-radius: var(--radius-sm, 8px);
+  background: var(--bg-hover);
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  padding: 0;
+  transition: background   var(--transition-fast, 0.12s ease),
+              border-color var(--transition-fast, 0.12s ease),
+              color        var(--transition-fast, 0.12s ease),
+              box-shadow   var(--transition-fast, 0.12s ease);
+}
+.emu-icon-btn:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); background: var(--bg-card-alt); }
+.emu-icon-btn:disabled             { opacity: 0.25; cursor: not-allowed; }
+.emu-icon-btn:focus-visible        { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* Crop button — warning (amber) semantic tokens */
+.emu-icon-btn--crop {
+  color:        var(--color-warning);
+  border-color: var(--color-warning-border);
+  background:   var(--color-warning-bg);
+}
+.emu-icon-btn--crop:hover:not(:disabled) {
+  border-color: var(--color-warning);
+  color:        var(--color-warning);
+  background:   var(--color-warning-bg);
+  box-shadow:   0 0 8px var(--color-warning-border);
+}
+
+
+/* ── Dark mode (explicit, matches § 57-69 pattern) ─────────── */
+
+body.theme-dark .emu-dropzone            { background: var(--bg-card);     border-color: var(--border); }
+body.theme-dark .emu-dropzone:hover,
+body.theme-dark .emu-dropzone--dragover  { background: var(--bg-hover);    border-color: var(--accent); }
+body.theme-dark .emu-dropzone-label      { color: var(--text-secondary); }
+body.theme-dark .emu-dropzone-sub        { color: var(--text-muted); }
+
+body.theme-dark .emu-card                { background: var(--bg-card);     border-color: var(--border); }
+body.theme-dark .emu-card:hover          { border-color: var(--accent);    box-shadow: var(--shadow-hover); }
+body.theme-dark .emu-card-thumb          { background: var(--bg-card-alt); }
+body.theme-dark .emu-card-footer         { background: var(--bg-card-alt); border-top-color: var(--border-subtle); }
+body.theme-dark .emu-card-name           { color: var(--text-muted); }
+
+body.theme-dark .emu-icon-btn            { background: var(--bg-hover);    border-color: var(--border); color: var(--text-secondary); }
+body.theme-dark .emu-icon-btn:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+
+body.theme-dark .emu-remove-btn          { background: rgba(0,0,0,0.65);   border-color: var(--color-danger-border); color: var(--color-danger); }
+body.theme-dark .emu-remove-btn:hover    { background: var(--color-danger-bg); border-color: var(--color-danger); }
+
+body.theme-dark .emu-count-badge         { background: var(--bg-hover);    border-color: var(--border-subtle); color: var(--text-secondary); }
+
+
+/* ── Light mode ─────────────────────────────────────────────── */
+
+body.theme-light .emu-dropzone           { background: var(--bg-card);     border-color: var(--border); }
+body.theme-light .emu-dropzone:hover,
+body.theme-light .emu-dropzone--dragover { background: var(--bg-hover);    border-color: var(--accent); }
+body.theme-light .emu-dropzone-label     { color: var(--text-secondary); }
+body.theme-light .emu-dropzone-sub       { color: var(--text-muted); }
+
+body.theme-light .emu-card               { background: var(--bg-card);     border-color: var(--border); }
+body.theme-light .emu-card:hover         { border-color: var(--accent);    box-shadow: var(--shadow-hover); }
+body.theme-light .emu-card-thumb         { background: var(--bg-card-alt); }
+body.theme-light .emu-card-footer        { background: var(--bg-card-alt); border-top-color: var(--border-subtle); }
+body.theme-light .emu-card-name          { color: var(--text-muted); }
+
+body.theme-light .emu-icon-btn           { background: var(--bg-hover);    border-color: var(--border); color: var(--text-secondary); }
+body.theme-light .emu-icon-btn:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+
+body.theme-light .emu-remove-btn         { background: rgba(255,255,255,0.82); border-color: var(--color-danger-border); color: var(--color-danger); }
+body.theme-light .emu-remove-btn:hover   { background: var(--color-danger-bg); border-color: var(--color-danger); }
+
+body.theme-light .emu-count-badge        { background: var(--bg-hover);    border-color: var(--border-subtle); color: var(--text-secondary); }
 
 /* ============================================================
    § 71  PROFILE PAGE  (Profile.js / Profile.css overrides)
@@ -8018,7 +8314,7 @@ body.palette-midnight .messenger-chat > .chat-wallpaper-vignette {
   align-items: center;
   justify-content: center;
   gap: 6px;
-  box-shadow: 0 4px 14px var(--accent-glow);
+  /* box-shadow: 0 4px 14px var(--accent-glow); */
   transition: transform 0.18s, box-shadow 0.18s, opacity 0.18s;
 }
 

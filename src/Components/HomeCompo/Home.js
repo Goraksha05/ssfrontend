@@ -15,7 +15,8 @@ import MessageScroller from '../TodayOffer/MessageScroller';
 import { useI18n } from '../../i18n/i18nContext';
 import EnhancedMediaUpload from './EnhancedMediaUpload';
 import ObtainedRewardsModal from '../UserActivities/ObtainedRewardsModal';
-import AddFileIcon from '../../Assets/AddMedia.png';
+import CropModal from '../../utils/CropModal';
+// import AddFileIcon from '../../Assets/AddMedia.png';
 import { useTheme } from '../../Context/ThemeUI/ThemeContext';
 import { useScrollLock } from '../../hooks/useScrollLock';
 
@@ -62,6 +63,10 @@ function Home() {
   const [showRewardsModal, setShowRewardsModal] = useState(false);
   const [hasPostedOnce,   setHasPostedOnce]   = useState(false);
 
+  // ── Crop modal state (lifted from EnhancedMediaUpload) ──────────────────
+  // cropPayload is null when closed, or an object with all CropModal props.
+  const [cropPayload, setCropPayload] = useState(null);
+
   const token  = localStorage.getItem('token');
   const userId = token ? jwtDecode(token)?.user?.id : '';
 
@@ -75,7 +80,8 @@ function Home() {
   const [userData,   setUserData]   = useState(null);
   const [inviteLink, setInviteLink] = useState(''); // eslint-disable-line no-unused-vars
 
-  useScrollLock(showRewardsModal); // Lock scroll when rewards modal is open
+  // Lock scroll when rewards modal OR crop modal is open
+  useScrollLock(showRewardsModal || !!cropPayload);
 
   /* ── Debounce textarea → postContent (prevents reflow on every keystroke) ── */
   useEffect(() => {
@@ -216,6 +222,13 @@ function Home() {
     setShowRewardsModal(false);
     fetchWallet();
   }, [fetchWallet]);
+
+  /* ── Crop modal handlers (rendered here, driven by EnhancedMediaUpload) ── */
+  // EnhancedMediaUpload calls onCropRequest(payload) to open,
+  // and onCropRequest(null) to close. We simply store it in state.
+  const handleCropRequest = useCallback((payload) => {
+    setCropPayload(payload);
+  }, []);
 
   /* ════════════════════════════════════════════════════════════════════════ */
   return (
@@ -374,7 +387,7 @@ function Home() {
                     }}
                   />
 
-                  <button
+                  {/* <button
                     type="button"
                     aria-label="Add media or file"
                     title="Add media or file"
@@ -382,7 +395,7 @@ function Home() {
                     onClick={() => mediaUploadRef.current?.openFilePicker()}
                   >
                     <img src={AddFileIcon} alt="Add media" />
-                  </button>
+                  </button> */}
                 </div>
 
                 {/* Char count row */}
@@ -404,6 +417,7 @@ function Home() {
                     ref={mediaUploadRef}
                     postContent={postContent}
                     onFilesPrepared={handleFilesPrepared}
+                    onCropRequest={handleCropRequest}
                   />
                 </div>
 
@@ -476,6 +490,28 @@ function Home() {
 
         <ToastContainer position="top-right" autoClose={3000} />
       </main>
+
+      {/*
+        ── CropModal rendered at Home root level ──────────────────────────────
+        Mounted outside the scrollable feed DOM so position:fixed backdrops
+        and body scroll-lock work cleanly with no scroll-bleed into the page.
+        cropPayload is null when no crop is active (modal renders nothing).
+      */}
+      {cropPayload && (
+        <CropModal
+          image={cropPayload.image}
+          onClose={cropPayload.onClose}
+          onApply={cropPayload.onApply}
+          crop={cropPayload.crop}
+          setCrop={cropPayload.setCrop}
+          zoom={cropPayload.zoom}
+          setZoom={cropPayload.setZoom}
+          onCropComplete={cropPayload.onCropComplete}
+          initialAspect={1}
+          applying={cropPayload.applying}
+          title="Crop Image"
+        />
+      )}
     </div>
   );
 }

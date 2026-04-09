@@ -27,7 +27,7 @@ import RedGlossyBtn from '../../Assets/RedGlossy.png';
 //   onExpire  — called with no args when token expires (2 min)
 const CaptchaWidget = ({ widgetId, onVerify, onExpire }) => {
     const containerRef = useRef(null);
-    const renderedRef  = useRef(false);
+    const renderedRef = useRef(false);
 
     useEffect(() => {
         if (renderedRef.current) return;
@@ -40,11 +40,11 @@ const CaptchaWidget = ({ widgetId, onVerify, onExpire }) => {
             }
             try {
                 window.grecaptcha.render(containerRef.current, {
-                    sitekey:            process.env.REACT_APP_RECAPTCHA_V2_SITE_KEY,
-                    callback:           onVerify,
+                    sitekey: process.env.REACT_APP_RECAPTCHA_V2_SITE_KEY,
+                    callback: onVerify,
                     'expired-callback': onExpire,
-                    theme:              'light',
-                    size:               'normal',
+                    theme: 'light',
+                    size: 'normal',
                 });
                 renderedRef.current = true;
             } catch (err) {
@@ -74,6 +74,7 @@ const CaptchaWidget = ({ widgetId, onVerify, onExpire }) => {
 // Wraps grecaptcha.execute() in a Promise with a timeout guard.
 // Returns the token string or null on failure.
 const executeV3 = (action) => {
+    // if (!localStorage.getItem('token')) return;
     return new Promise((resolve) => {
         const siteKey = process.env.REACT_APP_RECAPTCHA_V3_SITE_KEY;
         if (!siteKey) {
@@ -116,17 +117,17 @@ const LogSignNewModel = () => {
     // ── Hybrid captcha state ──────────────────────────────────────────────────
     // captchaMode: "v3" → invisible, attempt first
     //              "v2" → checkbox, shown only after backend fallback signal
-    const [loginCaptchaMode,  setLoginCaptchaMode]  = useState('v3');
+    const [loginCaptchaMode, setLoginCaptchaMode] = useState('v3');
     const [signupCaptchaMode, setSignupCaptchaMode] = useState('v3');
 
     // v2 tokens — only populated when the v2 widget is shown and user checks box
-    const [loginV2Token,  setLoginV2Token]  = useState('');
+    const [loginV2Token, setLoginV2Token] = useState('');
     const [signupV2Token, setSignupV2Token] = useState('');
 
-    const onLoginV2Verify   = useCallback((token) => setLoginV2Token(token),  []);
-    const onLoginV2Expire   = useCallback(() => setLoginV2Token(''),           []);
-    const onSignupV2Verify  = useCallback((token) => setSignupV2Token(token), []);
-    const onSignupV2Expire  = useCallback(() => setSignupV2Token(''),          []);
+    const onLoginV2Verify = useCallback((token) => setLoginV2Token(token), []);
+    const onLoginV2Expire = useCallback(() => setLoginV2Token(''), []);
+    const onSignupV2Verify = useCallback((token) => setSignupV2Token(token), []);
+    const onSignupV2Expire = useCallback(() => setSignupV2Token(''), []);
 
     const [loginData, setLoginData] = useState({ identifier: '', password: '' });
     const [signupData, setSignupData] = useState({
@@ -181,7 +182,7 @@ const LogSignNewModel = () => {
 
             if (loginCaptchaMode === 'v3') {
                 captchaToken = await executeV3('login');
-                captchaType  = 'v3';
+                captchaType = 'v3';
                 if (!captchaToken) {
                     // v3 script not loaded — degrade gracefully to v2
                     setLoginCaptchaMode('v2');
@@ -191,7 +192,7 @@ const LogSignNewModel = () => {
                 }
             } else {
                 captchaToken = loginV2Token;
-                captchaType  = 'v2';
+                captchaType = 'v2';
             }
 
             const response = isAdminLogin
@@ -249,7 +250,7 @@ const LogSignNewModel = () => {
 
             if (signupCaptchaMode === 'v3') {
                 captchaToken = await executeV3('signup');
-                captchaType  = 'v3';
+                captchaType = 'v3';
                 if (!captchaToken) {
                     setSignupCaptchaMode('v2');
                     toast.info('Please complete the security check below.');
@@ -258,7 +259,7 @@ const LogSignNewModel = () => {
                 }
             } else {
                 captchaToken = signupV2Token;
-                captchaType  = 'v2';
+                captchaType = 'v2';
             }
 
             const result = await AuthService.signup({
@@ -303,6 +304,16 @@ const LogSignNewModel = () => {
         if (isLogin) setLoginData(prev => ({ ...prev, [name]: value }));
         else setSignupData(prev => ({ ...prev, [name]: value }));
     };
+
+    useEffect(() => {
+        return () => {
+            try {
+                if (window.grecaptcha?.reset) {
+                    window.grecaptcha.reset();
+                }
+            } catch { }
+        };
+    }, []);
 
     return (
         <div className="rl-root">

@@ -1,4 +1,19 @@
 // src/components/Posts/HomePostitem.js
+//
+// FIX 1: fullMediaUrl now guards against undefined/null/empty url values so
+//         it never calls .startsWith() on a non-string and never returns a
+//         broken URL like "https://api.sosholife.comundefined".
+//
+// FIX 2: The media render block now handles items whose type is 'file' or
+//         whose type could not be determined (e.g. right after upload before
+//         the server normalises it) by falling back to a download link instead
+//         of silently returning null and hiding the attachment from the user.
+//
+// FIX 3: Added a mimeType-based fallback to the type guard so that the
+//         immediately-prepended post (which still carries mimeType from the
+//         Multer file object before Mongoose strips it) is rendered correctly
+//         without waiting for the re-fetch.
+
 import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { jwtDecode } from 'jwt-decode';
 import VerifiedBadge from '../Common/VerifiedBadge';
@@ -10,7 +25,41 @@ import { useScrollLock } from '../../hooks/useScrollLock';
 
 /* ─── Utility ─────────────────────────────────────────────────────────────── */
 const baseUrl = process.env.REACT_APP_BACKEND_URL || 'https://api.sosholife.com';
-const fullMediaUrl = (url) => (url.startsWith('http') ? url : `${baseUrl}${url}`);
+
+/**
+ * FIX 1: Guard against undefined/null/empty url before calling .startsWith().
+ * Returns null for unusable values so callers can skip rendering.
+ */
+const fullMediaUrl = (url) => {
+  if (!url || typeof url !== 'string' || url.trim() === '') return null;
+  return url.startsWith('http') ? url : `${baseUrl}${url}`;
+};
+
+/**
+ * FIX 3: Resolve the effective media type from a media item object.
+ * Checks `type` first (schema field), then `mimeType` (present on the
+ * immediately-returned document before Mongoose strips non-schema fields),
+ * then falls back to URL extension sniffing.
+ */
+const resolveMediaType = (item) => {
+  if (!item) return null;
+
+  const t = item.type;
+  if (t === 'image' || t === 'video' || t === 'file') return t;
+
+  // mimeType is present on the locally-prepended post right after upload
+  const mime = item.mimeType || '';
+  if (mime.startsWith('image/')) return 'image';
+  if (mime.startsWith('video/')) return 'video';
+  if (mime) return 'file'; // any other mime type → treat as download
+
+  // Last resort: extension sniff
+  const url = (item.url || '').toLowerCase();
+  if (/\.(jpg|jpeg|png|gif|webp|bmp|svg)(\?|$)/.test(url)) return 'image';
+  if (/\.(mp4|mov|avi|mkv|webm|m4v)(\?|$)/.test(url)) return 'video';
+
+  return 'file';
+};
 
 const timeAgo = (date) => {
   const s = Math.floor((Date.now() - new Date(date)) / 1000);
@@ -33,8 +82,6 @@ function PostItem({ post, deletePost, toggleLikePost }) {
   /* ── Theme ──────────────────────────────────────────────────────────────── */
   const { tokens } = useTheme();
 
-  /* Pull a small set of per-theme values that are still needed for
-     dynamic inline styles (gradient fade, accent colour overrides etc.) */
   const dynamicStyles = {
     textFadeBg: tokens.bgCard,
     accentColor: tokens.accent,
@@ -49,7 +96,6 @@ function PostItem({ post, deletePost, toggleLikePost }) {
 
   const author = post.user_id ?? {};
   const isAuthorVerified = !!author?.subscription?.active;
-  // const isOwnPost = userId === author._id;
   const isOwnPost = String(userId) === String(author._id);
   const isLiked = post.likes?.includes(userId);
 
@@ -162,15 +208,19 @@ function PostItem({ post, deletePost, toggleLikePost }) {
 
   /* ── Derived ─────────────────────────────────────────────────────────────── */
   const isLong = post.post && post.post.length > 240;
-  const mediaItems = post.media || [];
+
+  // FIX 1 + FIX 2: filter out items with no usable URL upfront so the grid
+  // count and class assignment are based only on actually-renderable items.
+  const mediaItems = (post.media || []).filter(item => {
+    if (!item) return false;
+    const src = fullMediaUrl(item.url);
+    return src !== null; // drop items whose URL cannot be resolved
+  });
+
   const gridClass = mediaItems.length === 1 ? 'single'
     : mediaItems.length === 2 ? 'pair'
       : 'trio';
 
-  // Lock page scroll while the Profile Modal is open.
-  // useScrollLock is reference-counted at module level, so multiple PostItem
-  // instances and other modals (e.g. CommentsModal) can all call this safely —
-  // the page only unlocks once every consumer has released its lock.
   useScrollLock(showProfileModal);
 
   const openProfile = () => {
@@ -255,7 +305,6 @@ function PostItem({ post, deletePost, toggleLikePost }) {
             style={{ maxHeight: expanded ? 'none' : isLong ? '7em' : 'none' }}
           >
             {post.post}
-            {/* Gradient fade when collapsed */}
             {!expanded && isLong && (
               <div
                 className="text-fade"
@@ -277,22 +326,28 @@ function PostItem({ post, deletePost, toggleLikePost }) {
       {mediaItems.length > 0 && (
         <div className={`post-media-grid ${gridClass}`}>
           {mediaItems.map((item, idx) => {
+            // FIX 1: fullMediaUrl already guarded; mediaItems only contains
+            // items with a valid URL so src is guaranteed to be a string here.
             const src = fullMediaUrl(item.url);
 
-            if (item.type === 'image') {
+            // FIX 3: use resolveMediaType so mimeType-only items (just-uploaded
+            // posts before re-fetch) are also rendered correctly.
+            const mediaType = resolveMediaType(item);
+
+            if (mediaType === 'image') {
               return (
                 <img
                   key={idx}
                   src={src}
-                  alt={`Post ${idx + 1}`}
+                  alt={`Post media ${idx + 1}`}
                   className="post-media-img"
                   loading="lazy"
-                  onError={e => { e.target.style.display = 'none'; }}
+                  onError={e => { e.currentTarget.style.display = 'none'; }}
                 />
               );
             }
 
-            if (item.type === 'video') {
+            if (mediaType === 'video') {
               return (
                 <div key={idx} className="post-video-wrap portrait">
                   <video
@@ -303,10 +358,50 @@ function PostItem({ post, deletePost, toggleLikePost }) {
                     className="post-video"
                     onClick={() => handleVideoClick(idx)}
                     aria-label={`Post video ${idx + 1}`}
+                    onError={e => { e.currentTarget.style.display = 'none'; }}
                   >
-                    <source src={src} type={item.mimeType || 'video/mp4'} />
+                    {/* FIX 3: prefer explicit mimeType when available, then
+                        infer from extension, fall back to video/mp4 */}
+                    <source
+                      src={src}
+                      type={
+                        item.mimeType ||
+                        (/\.webm(\?|$)/i.test(src) ? 'video/webm'
+                          : /\.mov(\?|$)/i.test(src) ? 'video/quicktime'
+                          : 'video/mp4')
+                      }
+                    />
                   </video>
                 </div>
+              );
+            }
+
+            // FIX 2: 'file' type or unresolved — render a download link so the
+            // attachment is visible rather than silently hidden.
+            if (mediaType === 'file') {
+              const fileName = src.split('/').pop() || 'attachment';
+              return (
+                <a
+                  key={idx}
+                  href={src}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="post-file-link"
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 8,
+                    padding: '10px 14px',
+                    borderRadius: 8,
+                    background: dynamicStyles.textFadeBg,
+                    color: dynamicStyles.accentColor,
+                    textDecoration: 'none',
+                    fontSize: 14,
+                    margin: '4px 0',
+                  }}
+                >
+                  📎 {fileName}
+                </a>
               );
             }
 
@@ -365,11 +460,6 @@ function PostItem({ post, deletePost, toggleLikePost }) {
         />
       )}
 
-      {/* Conditional render (not just show={bool}) is intentional:
-          ProfileModal must unmount when closed so useScrollLock's useEffect
-          cleanup fires and releases its slot in the reference counter.
-          An always-mounted modal with show=false would never trigger cleanup,
-          leaving lockCount permanently incremented and the page stuck locked. */}
       {showProfileModal && (
         <ProfileModal
           userId={selectedUserId}
