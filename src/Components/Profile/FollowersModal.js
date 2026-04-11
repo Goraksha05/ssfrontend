@@ -1,11 +1,20 @@
+/**
+ * FollowersModal.js
+ *
+ * CHANGE: Replaced useScrollLock() with useRegisterModal() from ModalContext.
+ * Scroll locking is now handled centrally — no risk of lock/unlock race conditions.
+ */
+
 import React, { useState } from 'react';
 import Modal from 'react-bootstrap/Modal';
 import { getInitials } from '../../utils/getInitials';
 import { Search, Users } from 'lucide-react';
-import useScrollLock from "../../hooks/useScrollLock";
+import { useRegisterModal } from '../../Context/ModalContext';
 
 const FollowersModal = ({ show, onClose, users, title }) => {
-  useScrollLock(users.length > 0 && show && true, show);
+  // Central scroll lock — replaces: useScrollLock(users.length > 0 && show && true, show)
+  useRegisterModal(show && users.length > 0);
+
   const [search, setSearch] = useState('');
 
   const filtered = users.filter((user) => {
@@ -72,19 +81,27 @@ const FollowersModal = ({ show, onClose, users, title }) => {
                       {avatarUrl ? (
                         <img
                           src={avatarUrl} alt={name} className="flm-avatar-img"
-                          onError={(e) => { e.target.style.display = 'none'; e.target.nextSibling.style.display = 'flex'; }}
+                          onError={(e) => {
+                            e.target.style.display = 'none';
+                            e.target.nextSibling.style.display = 'flex';
+                          }}
                         />
                       ) : null}
                       <div
                         className="flm-avatar-fallback"
-                        style={{ display: avatarUrl ? 'none' : 'flex', background: `hsl(${hue},55%,52%)` }}
+                        style={{
+                          display: avatarUrl ? 'none' : 'flex',
+                          background: `hsl(${hue},55%,52%)`,
+                        }}
                       >
                         {initials}
                       </div>
                     </div>
                     <div className="flm-item-info">
                       <p className="flm-item-name">{name}</p>
-                      <p className="flm-item-handle">@{name.toLowerCase().replace(/\s+/g, '')}</p>
+                      <p className="flm-item-handle">
+                        @{name.toLowerCase().replace(/\s+/g, '')}
+                      </p>
                     </div>
                   </li>
                 );

@@ -1,41 +1,8 @@
 // src/Context/NotificationContext.js
-//
-// Single source of truth for ALL client-side notification state.
-//
-// Exposes:
-//   unreadCount    — server-fetched on mount, incremented by socket events
-//   notifications  — live real-time arrivals (newest-first, capped at 50)
-//   markAllRead()  — optimistic update + PUT /api/notifications/mark-all-read
-//   markOneRead()  — optimistic update + PUT /api/notifications/:id/read
-//   refresh()      — re-fetches unread count from server (call after panel load)
-//   pushEnabled    — web-push subscription status
-//   enablePush()   — subscribe to web push
-//   disablePush()  — unsubscribe from web push
-//   pushError      — last push error message
-//
-// ── Consumer map ──────────────────────────────────────────────────────────────
-//   NotificationsPanel   → unreadCount, notifications, markAllRead, markOneRead, refresh
-//   NotificationPopup    → unreadCount, notifications, markAllRead, markOneRead
-//   NotificationSettings → pushEnabled, pushError, enablePush, disablePush
-//   Navbartemp / Header  → unreadCount  (bell badge ONLY — do not put other state here)
-//
-// FIXES:
-//   1. Listener leak: when the socket was not ready at mount time, the delayed
-//      attach() stored `offFn` in its closure but the cleanup returned to React
-//      was `() => clearTimeout(t)` — which never called offFn after the timer
-//      fired. On unmount between the mount and the 1.5 s retry the listener
-//      would be registered but never removed.
-//      Fix: use a shared mutable ref (`offRef`) so whichever path registers the
-//      listener — immediate or delayed — the single cleanup function returned to
-//      React always calls the correct teardown.
 
-import {
-  createContext,
-  useContext,
-  useState,
-  useEffect,
-  useCallback,
-  useRef,
+import React, {
+  createContext, useContext, useState, useEffect,
+  useCallback, useRef, useMemo,
 } from 'react';
 import { toast } from 'react-toastify';
 import apiRequest from '../utils/apiRequest';
@@ -44,56 +11,134 @@ import { onSocketEvent, getSocket } from '../WebSocket/WebSocketClient';
 
 const NotificationContext = createContext(null);
 
+const BACKEND_URL =
+  process.env.REACT_APP_SERVER_URL  ??
+  process.env.REACT_APP_BACKEND_URL ??
+  '';
+const HISTORY_PAGE_SIZE = 10;
+const LIVE_CACHE_MAX    = 50;   // cap on real-time arrivals held in memory
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+const getToken = () => localStorage.getItem('token');
+
+/** Convert a notifications array to Map<_id, notification> */
+const toMap = (arr) => new Map(arr.map((n) => [n._id, n]));
+
+// ─────────────────────────────────────────────────────────────────────────────
+
 export const NotificationProvider = ({ children }) => {
-  const [unreadCount,   setUnreadCount]   = useState(0);
-  const [notifications, setNotifications] = useState([]);
-  const [pushEnabled,   setPushEnabled]   = useState(false);
-  const [pushError,     setPushError]     = useState('');
+  // notifMap: Map<_id, notification> — single source of truth
+  const [notifMap,        setNotifMap]        = useState(new Map());
+  const [unreadCount,     setUnreadCount]     = useState(0);
+  const [loadingHistory,  setLoadingHistory]  = useState(false);
+  const [historyPage,     setHistoryPage]     = useState(1);
+  const [hasMore,         setHasMore]         = useState(true);
+  const [pushEnabled,     setPushEnabled]     = useState(false);
+  const [pushError,       setPushError]       = useState('');
 
-  // Track seen IDs to deduplicate across reconnects
-  const seenIdsRef = useRef(new Set());
+  // Expose sorted array for consumers (newest-first, memoised)
+  const notifications = useMemo(
+    () => [...notifMap.values()].sort(
+      (a, b) => new Date(b.createdAt) - new Date(a.createdAt)
+    ),
+    [notifMap]
+  );
 
-  // ── Fetch initial unread count from server ────────────────────────────────
+  // ── Socket listener cleanup reference ────────────────────────────────────
+  const offRef = useRef(null);
+
+  // ── Fetch unread count ────────────────────────────────────────────────────
   const refresh = useCallback(async () => {
     try {
-      if (!localStorage.getItem('token')) return;
-      const res = await apiRequest.get('/api/notifications/unread-count');
+      if (!getToken()) return;
+      const res = await apiRequest.get(
+        `${BACKEND_URL}/api/notifications/unread-count`,
+        { headers: { Authorization: `Bearer ${getToken()}` } }
+      );
       setUnreadCount(res?.data?.unreadCount ?? 0);
     } catch (err) {
-      // Non-fatal — badge stays at 0 on failure
-      console.debug('[NotificationContext] refresh unread-count failed:', err?.message);
+      console.debug('[NotificationContext] refresh unread-count:', err?.message);
     }
   }, []);
 
-  // Fetch on mount when a token is present
+  // ── Fetch paginated notification history ──────────────────────────────────
+  /**
+   * @param {boolean} [reset=false]  Start from page 1 (e.g. after markAllRead)
+   */
+  const fetchHistory = useCallback(async (reset = false) => {
+    const token = getToken();
+    if (!token || loadingHistory) return;
+
+    const page = reset ? 1 : historyPage;
+    setLoadingHistory(true);
+    try {
+      const res = await apiRequest.get(
+        `${BACKEND_URL}/api/notifications?page=${page}&limit=${HISTORY_PAGE_SIZE}`,
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+
+      const fetched  = Array.isArray(res.data?.data) ? res.data.data : [];
+      const total    = res.data?.totalPages ?? 1;
+      const hasNext  = page < total;
+
+      setHasMore(hasNext);
+      setHistoryPage(hasNext ? page + 1 : page);
+      setUnreadCount(res.data?.unreadCount ?? 0);
+
+      setNotifMap((prev) => {
+        const base = reset ? new Map() : new Map(prev);
+        toMap(fetched).forEach((n, id) => base.set(id, n));
+        return base;
+      });
+    } catch (err) {
+      console.error('[NotificationContext] fetchHistory:', err?.message);
+    } finally {
+      setLoadingHistory(false);
+    }
+  }, [historyPage, loadingHistory]);
+
+  // ── Initial load ──────────────────────────────────────────────────────────
   useEffect(() => {
-    if (localStorage.getItem('token')) refresh();
-  }, [refresh]);
+    if (getToken()) {
+      refresh();
+      fetchHistory(true);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // once on mount
+
+  // ── Check browser push permission on mount ────────────────────────────────
+  useEffect(() => {
+    if ('Notification' in window) {
+      setPushEnabled(window.Notification.permission === 'granted');
+    }
+  }, []);
 
   // ── Real-time socket listener ─────────────────────────────────────────────
-  //
-  // FIX: use a ref to hold the teardown function so both the immediate-attach
-  // path and the delayed-retry path point to the same cleanup slot.
-  // Previously the cleanup closure captured `offFn` at declaration time
-  // (always `() => {}`), so the listener registered by the delayed setTimeout
-  // was never cleaned up when the component unmounted during the 1.5 s window.
+  // Uses an offRef so both the immediate and delayed attach paths share one
+  // cleanup slot — preventing listener leaks on unmount during the retry window.
   useEffect(() => {
-    // Holds the unsubscribe function once a listener is successfully registered.
-    const offRef = { current: null };
-    let timerId  = null;
+    let timerId = null;
 
     const handleNotification = (payload) => {
-      // Deduplicate by _id (handles re-emit on reconnect)
-      if (payload._id && seenIdsRef.current.has(payload._id)) return;
-      if (payload._id) seenIdsRef.current.add(payload._id);
+      if (!payload?._id) return;
 
-      // Prepend to live list, cap at 50
-      setNotifications((prev) => [payload, ...prev].slice(0, 50));
+      setNotifMap((prev) => {
+        if (prev.has(payload._id)) return prev; // already seen
+        const next = new Map(prev);
+        next.set(payload._id, { ...payload, isRead: false });
+        // Evict oldest entries if we exceed the live cache cap
+        if (next.size > LIVE_CACHE_MAX) {
+          const oldest = [...next.entries()].sort(
+            ([, a], [, b]) => new Date(a.createdAt) - new Date(b.createdAt)
+          )[0]?.[0];
+          if (oldest) next.delete(oldest);
+        }
+        return next;
+      });
 
-      // Increment badge
       setUnreadCount((c) => c + 1);
 
-      // Toast — only if the tab is visible
       if (document.visibilityState !== 'hidden') {
         toast.info(payload.message || 'New notification', {
           autoClose: 4_000,
@@ -105,70 +150,129 @@ export const NotificationProvider = ({ children }) => {
     const attach = () => {
       const sock = getSocket();
       if (!sock) return false;
-
-      // Store teardown in the ref so the cleanup below always reaches it
+      offRef.current?.();
       offRef.current = onSocketEvent('notification', handleNotification);
+
+      // Re-sync unread count on reconnect (may have missed deliveries offline)
+      const onReconnect = () => refresh();
+      sock.on('connect', onReconnect);
+      const prevOff = offRef.current;
+      offRef.current = () => {
+        prevOff?.();
+        sock.off('connect', onReconnect);
+      };
       return true;
     };
 
     if (!attach()) {
-      // Socket not ready yet — retry once after a brief delay.
-      // The cleanup function returned to React will cancel the timer AND
-      // remove the listener regardless of which path registered it.
       timerId = setTimeout(attach, 1_500);
     }
 
     return () => {
       if (timerId !== null) clearTimeout(timerId);
-      // Call teardown if the listener was registered (immediately or delayed)
       offRef.current?.();
+      offRef.current = null;
     };
-  }, []); // single mount — listener swap on reconnect handled by onSocketEvent
+  }, [refresh]);
 
-  // ── Reset state on logout (storage event cross-tab + same-tab) ───────────
+  // ── Reset state on logout (cross-tab storage event) ───────────────────────
   useEffect(() => {
     const handler = () => {
       if (!localStorage.getItem('token')) {
-        seenIdsRef.current = new Set();
-        setNotifications([]);
+        setNotifMap(new Map());
         setUnreadCount(0);
+        setHistoryPage(1);
+        setHasMore(true);
       }
     };
     window.addEventListener('storage', handler);
     return () => window.removeEventListener('storage', handler);
   }, []);
 
-  // ── Mark all notifications as read ───────────────────────────────────────
+  // ── Mark all read ─────────────────────────────────────────────────────────
   const markAllRead = useCallback(async () => {
+    const prevCount = unreadCount;
     // Optimistic
     setUnreadCount(0);
-    setNotifications((prev) => prev.map((n) => ({ ...n, isRead: true })));
+    setNotifMap((prev) => {
+      const next = new Map(prev);
+      next.forEach((n, k) => next.set(k, { ...n, isRead: true }));
+      return next;
+    });
     try {
-      await apiRequest.put('/api/notifications/mark-all-read');
+      await apiRequest.put(
+        `${BACKEND_URL}/api/notifications/mark-all-read`,
+        {},
+        { headers: { Authorization: `Bearer ${getToken()}` } }
+      );
     } catch (err) {
-      console.error('[NotificationContext] markAllRead failed:', err?.message);
-      refresh(); // re-sync from server on failure
+      console.error('[NotificationContext] markAllRead:', err?.message);
+      setUnreadCount(prevCount);
+      refresh();
     }
-  }, [refresh]);
+  }, [unreadCount, refresh]);
 
-  // ── Mark one notification as read ─────────────────────────────────────────
+  // ── Mark one read ─────────────────────────────────────────────────────────
   const markOneRead = useCallback(async (id) => {
+    const n = notifMap.get(id);
+    if (!n || n.isRead) return;
+
     // Optimistic
-    setNotifications((prev) =>
-      prev.map((n) => (n._id === id ? { ...n, isRead: true } : n))
-    );
+    setNotifMap((prev) => {
+      const next = new Map(prev);
+      next.set(id, { ...n, isRead: true });
+      return next;
+    });
     setUnreadCount((c) => Math.max(0, c - 1));
+
     try {
-      await apiRequest.put(`/api/notifications/${id}/read`);
+      await apiRequest.put(
+        `${BACKEND_URL}/api/notifications/${id}/read`,
+        {},
+        { headers: { Authorization: `Bearer ${getToken()}` } }
+      );
     } catch (err) {
-      console.error('[NotificationContext] markOneRead failed:', err?.message);
+      console.error('[NotificationContext] markOneRead:', err?.message);
+      // Rollback
+      setNotifMap((prev) => {
+        const next = new Map(prev);
+        next.set(id, n);
+        return next;
+      });
+      setUnreadCount((c) => c + 1);
+    }
+  }, [notifMap]);
+
+  // ── Remove one notification from local state ──────────────────────────────
+  const removeNotification = useCallback((id) => {
+    setNotifMap((prev) => {
+      const next = new Map(prev);
+      const n = next.get(id);
+      next.delete(id);
+      if (n && !n.isRead) setUnreadCount((c) => Math.max(0, c - 1));
+      return next;
+    });
+  }, []);
+
+  // ── Clear all (delete via API + reset local state) ────────────────────────
+  const clearAll = useCallback(async () => {
+    setNotifMap(new Map());
+    setUnreadCount(0);
+    try {
+      await apiRequest.post(
+        `${BACKEND_URL}/api/notifications/cleanup`,
+        {},
+        { headers: { Authorization: `Bearer ${getToken()}` } }
+      );
+    } catch (err) {
+      console.error('[NotificationContext] clearAll:', err?.message);
       refresh();
     }
   }, [refresh]);
 
   // ── Push helpers ──────────────────────────────────────────────────────────
   const enablePush = useCallback(async () => {
-    const token = localStorage.getItem('token');
+    const token = getToken();
     if (!token) { setPushError('Not authenticated'); return; }
     try {
       await subscribeForPush(token);
@@ -182,7 +286,7 @@ export const NotificationProvider = ({ children }) => {
   }, []);
 
   const disablePush = useCallback(async () => {
-    const token = localStorage.getItem('token');
+    const token = getToken();
     try {
       if (token) await unsubscribeFromPush(token);
       setPushEnabled(false);
@@ -192,22 +296,33 @@ export const NotificationProvider = ({ children }) => {
     }
   }, []);
 
+  // ── Stable context value ──────────────────────────────────────────────────
+  const value = useMemo(() => ({
+    notifications,
+    notifMap,
+    unreadCount,
+    setUnreadCount,
+    loadingHistory,
+    hasMore,
+    pushEnabled,
+    pushError,
+    refresh,
+    fetchHistory,
+    markAllRead,
+    markOneRead,
+    removeNotification,
+    clearAll,
+    enablePush,
+    disablePush,
+  }), [
+    notifications, notifMap, unreadCount, loadingHistory, hasMore,
+    pushEnabled, pushError,
+    refresh, fetchHistory, markAllRead, markOneRead,
+    removeNotification, clearAll, enablePush, disablePush,
+  ]);
+
   return (
-    <NotificationContext.Provider
-      value={{
-        unreadCount,
-        setUnreadCount,
-        notifications,
-        setNotifications,
-        pushEnabled,
-        pushError,
-        enablePush,
-        disablePush,
-        markAllRead,
-        markOneRead,
-        refresh,
-      }}
-    >
+    <NotificationContext.Provider value={value}>
       {children}
     </NotificationContext.Provider>
   );

@@ -1,104 +1,287 @@
 // src/Context/ChatContext.js
 //
-// ── Fixes in this version ────────────────────────────────────────────────────
+// Production improvements over previous version:
 //
-// FIX 1 — receive_message listener had no chatId guard
-//   The original listener blindly appended every socket message regardless of
-//   which chat was open. This caused messages from other chats to pollute the
-//   active chat's message list.
-//   Fix: the listener reads `selectedChatIdRef.current` (a ref so no dep-array
-//   churn) and only appends when the message belongs to the currently open chat.
+//   PERF-1  Message history is fetched from the REST API when a chat is
+//           selected (selectChat). The previous version relied solely on socket
+//           events, so messages from before the session were invisible.
 //
-// FIX 2 — messages not cleared when switching chats
-//   Switching chats left stale messages visible for a flash before the new fetch
-//   resolved. Fix: setSelectedChat is wrapped in a selectChat helper that clears
-//   messages synchronously before setting the new chat.
+//   PERF-2  Cursor-based message pagination: loadMoreMessages() fetches older
+//           messages using the `before` cursor param (timestamp of the oldest
+//           loaded message). hasMoreMessages and loadingMessages are exposed.
 //
-// FIX 3 — isSocketReady passed as a function reference, not a boolean value
-//   `isSocketReady` from WebSocketClient is a function: `() => boolean`.
-//   The context was exposing it as `isReady: isSocketReady`, which meant
-//   consumers that checked `isReady` as a boolean always saw `true` (functions
-//   are always truthy). This made the "socket is ready" guard useless.
-//   Fix: expose `isReady` as a getter function so consumers call `isReady()`
-//   to get the live boolean, and document this clearly.
+//   PERF-3  AbortController cancels stale message fetches when the user
+//           switches chats before the previous fetch resolves.
 //
-// NOTE: The root cause of listeners never being registered (socket null at
-//       mount time) is fixed in WebSocketClient.js — the pending-subscription
-//       queue ensures onSocketEvent() works even before initializeSocket()
-//       completes.
+//   DX-1    messageMap: Map<_id, message> for O(1) de-duplication and in-place
+//           updates (read receipts, reactions, edits) without a full array scan.
+//
+//   DX-2    markChatRead() calls PUT /api/chat/mark-read/:chatId so the
+//           server unread count is zeroed when the user opens a conversation.
+//
+//   DX-3    typing state is keyed by userId (Map) so group chats show multiple
+//           typing indicators correctly.
+//
+//   DX-4    updateMessage() patches a single message in-place (reactions,
+//           edits, soft deletes) without rebuilding the full array.
+//
+//   RELIABILITY-1  Socket listeners re-register on 'connect' (reconnect).
+//
+//   CORRECTNESS-1  chatId guard preserved from previous fix: incoming socket
+//                  messages are only appended when they belong to the open chat.
 
-import {
+import React, {
   createContext, useContext, useState,
-  useEffect, useCallback, useRef,
+  useEffect, useCallback, useRef, useMemo,
 } from 'react';
-import { onSocketEvent, safeEmit, isSocketReady } from '../WebSocket/WebSocketClient';
+import { onSocketEvent, safeEmit, isSocketReady, getSocket } from '../WebSocket/WebSocketClient';
 import apiRequest from '../utils/apiRequest';
 
-const ChatContext = createContext();
+const ChatContext = createContext(null);
+
+const BACKEND_URL =
+  process.env.REACT_APP_SERVER_URL  ??
+  process.env.REACT_APP_BACKEND_URL ??
+  '';
+const MESSAGES_PAGE_SIZE = 50;
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+const getToken = () => localStorage.getItem('token');
+
+// ─────────────────────────────────────────────────────────────────────────────
 
 export const ChatProvider = ({ children }) => {
-  const [selectedChat, setSelectedChat] = useState(null);
-  const [messages, setMessages] = useState([]);
-  const [isTyping, setIsTyping] = useState(false);
+  const [selectedChat,     setSelectedChat]     = useState(null);
+  const [messages,         setMessages]         = useState([]);
+  const [messageMap,       setMessageMap]       = useState(new Map());
+  const [typingUsers,      setTypingUsers]       = useState(new Map()); // userId → true
+  const [loadingMessages,  setLoadingMessages]  = useState(false);
+  const [hasMoreMessages,  setHasMoreMessages]  = useState(false);
+  const [messageCursor,    setMessageCursor]    = useState(null); // ISO date string
 
-  // Ref that always holds the currently-open chat's _id as a string.
-  // Using a ref (not state) means the socket listener registered below
-  // never needs to be recreated — it reads the ref at event time.
+  // Stable ref of the currently-open chat ID (avoids socket dep-array churn)
   const selectedChatIdRef = useRef(null);
   useEffect(() => {
     selectedChatIdRef.current = selectedChat?._id?.toString() ?? null;
   }, [selectedChat?._id]);
 
-  // ── Incoming messages ────────────────────────────────────────────────────
-  //
-  // Registered once on mount. WebSocketClient queues this subscription if the
-  // socket isn't ready yet and flushes it once the connection is established.
-  
-  useEffect(() => {
-    const off = onSocketEvent('receive_message', ({ fromUserId, message }) => {
-      if (!message) return;
+  // AbortController for message fetches
+  const fetchAbortRef = useRef(null);
 
-      // Only append if this message belongs to the currently open chat.
-      // ChatList handles sidebar updates for messages in other chats.
-      const msgChatId = message.chatId?.toString();
-      if (msgChatId && selectedChatIdRef.current && msgChatId !== selectedChatIdRef.current) {
-        return;
+  // ── Sync messages array ↔ messageMap ────────────────────────────────────
+  const syncMessages = useCallback((msgs) => {
+    setMessages(msgs);
+    setMessageMap(new Map(msgs.map((m) => [m._id, m])));
+  }, []);
+
+  // ── fetchMessages (for the currently selected chat) ──────────────────────
+  const fetchMessages = useCallback(async (chatId, before = null) => {
+    if (!chatId) return;
+    const token = getToken();
+    if (!token) return;
+
+    fetchAbortRef.current?.abort();
+    const controller = new AbortController();
+    fetchAbortRef.current = controller;
+
+    setLoadingMessages(true);
+    try {
+      let url = `${BACKEND_URL}/api/message/${chatId}?limit=${MESSAGES_PAGE_SIZE}`;
+      if (before) url += `&before=${before}`;
+
+      const { data } = await apiRequest.get(url, {
+        headers: { Authorization: `Bearer ${token}` },
+        signal: controller.signal,
+      });
+
+      const fetched = Array.isArray(data) ? data : [];
+
+      if (!before) {
+        // First page — replace state
+        syncMessages(fetched);
+      } else {
+        // Subsequent page — prepend (deduplicated)
+        setMessages((prev) => {
+          const existingIds = new Set(prev.map((m) => m._id));
+          const newItems = fetched.filter((m) => !existingIds.has(m._id));
+          const combined = [...newItems, ...prev];
+          setMessageMap(new Map(combined.map((m) => [m._id, m])));
+          return combined;
+        });
       }
 
-      setMessages((prev) => {
-        const exists = prev.some(m => m._id === message._id);
-        if (exists) return prev;
-        return [...prev, message];
+      // Cursor = createdAt of the oldest message fetched
+      const oldest = fetched[0]?.createdAt ?? null;
+      setMessageCursor(oldest);
+      setHasMoreMessages(fetched.length === MESSAGES_PAGE_SIZE);
+    } catch (err) {
+      if (err.name === 'CanceledError' || err.name === 'AbortError') return;
+      console.error('[ChatContext] fetchMessages:', err);
+    } finally {
+      setLoadingMessages(false);
+    }
+  }, [syncMessages]);
+
+  // ── loadMoreMessages (older history) ─────────────────────────────────────
+  const loadMoreMessages = useCallback(async () => {
+    if (!selectedChat?._id || !hasMoreMessages || loadingMessages || !messageCursor) return;
+    await fetchMessages(selectedChat._id, messageCursor);
+  }, [selectedChat?._id, hasMoreMessages, loadingMessages, messageCursor, fetchMessages]);
+
+  // ── selectChat: clear stale state and fetch fresh messages ───────────────
+  const selectChat = useCallback(async (chat) => {
+    // Cancel any previous fetch
+    fetchAbortRef.current?.abort();
+
+    // Reset synchronously — no flash of old messages
+    syncMessages([]);
+    setTypingUsers(new Map());
+    setHasMoreMessages(false);
+    setMessageCursor(null);
+    setSelectedChat(chat);
+
+    if (chat?._id) {
+      await fetchMessages(chat._id);
+      // Mark as read on the server
+      markChatRead(chat._id);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fetchMessages, syncMessages]);
+
+  // ── markChatRead ──────────────────────────────────────────────────────────
+  const markChatRead = useCallback((chatId) => {
+    const token = getToken();
+    if (!token || !chatId) return;
+    apiRequest
+      .put(`${BACKEND_URL}/api/chat/mark-read/${chatId}`, {}, {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      .catch((err) => console.debug('[ChatContext] markChatRead:', err?.message));
+  }, []);
+
+  // ── updateMessage: patch a single message in-place ───────────────────────
+  const updateMessage = useCallback((id, patch) => {
+    setMessages((prev) => {
+      const updated = prev.map((m) => (m._id === id ? { ...m, ...patch } : m));
+      setMessageMap(new Map(updated.map((m) => [m._id, m])));
+      return updated;
+    });
+  }, []);
+
+  // ── appendMessage: add a new message (dedup by _id) ─────────────────────
+  const appendMessage = useCallback((msg) => {
+    if (!msg?._id) return;
+    setMessages((prev) => {
+      if (prev.some((m) => m._id === msg._id)) return prev;
+      const updated = [...prev, msg];
+      setMessageMap(new Map(updated.map((m) => [m._id, m])));
+      return updated;
+    });
+  }, []);
+
+  // ── Socket: incoming messages ─────────────────────────────────────────────
+  useEffect(() => {
+    const off = onSocketEvent('receive_message', ({ message }) => {
+      if (!message) return;
+      const msgChatId = message.chatId?.toString();
+      if (
+        msgChatId &&
+        selectedChatIdRef.current &&
+        msgChatId !== selectedChatIdRef.current
+      ) {
+        // Message belongs to a different chat — don't pollute the active view
+        return;
+      }
+      appendMessage(message);
+    });
+    return off;
+  }, [appendMessage]);
+
+  // ── Socket: read receipts ─────────────────────────────────────────────────
+  useEffect(() => {
+    const off = onSocketEvent('message-read', ({ messageId, readBy }) => {
+      if (!messageId) return;
+      updateMessage(messageId, {
+        seenBy: [...(messageMap.get(messageId)?.seenBy ?? []), readBy],
       });
     });
     return off;
-  }, []); // single mount — socket subscription is stable via the queue fix
+  }, [messageMap, updateMessage]);
 
-  // ── Typing events ────────────────────────────────────────────────────────
+  // ── Socket: message edits ─────────────────────────────────────────────────
+  useEffect(() => {
+    const off = onSocketEvent('message-edited', ({ messageId, newText, editedAt }) => {
+      if (!messageId) return;
+      updateMessage(messageId, { text: newText, isEdited: true, editedAt });
+    });
+    return off;
+  }, [updateMessage]);
+
+  // ── Socket: message deletions ─────────────────────────────────────────────
+  useEffect(() => {
+    const off = onSocketEvent('message-deleted', ({ messageId, type }) => {
+      if (!messageId) return;
+      if (type === 'everyone') {
+        updateMessage(messageId, { isDeleted: true, text: null, mediaUrl: null });
+      }
+    });
+    return off;
+  }, [updateMessage]);
+
+  // ── Socket: reactions ─────────────────────────────────────────────────────
+  useEffect(() => {
+    const off = onSocketEvent('reaction-added', ({ messageId, userId, emoji }) => {
+      if (!messageId) return;
+      const existing = messageMap.get(messageId);
+      if (!existing) return;
+      const filtered = (existing.reactions ?? []).filter(
+        (r) => r.userId !== userId
+      );
+      updateMessage(messageId, {
+        reactions: emoji ? [...filtered, { userId, emoji }] : filtered,
+      });
+    });
+    return off;
+  }, [messageMap, updateMessage]);
+
+  // ── Socket: typing indicators ─────────────────────────────────────────────
   useEffect(() => {
     const offStart = onSocketEvent('user-typing', ({ fromUserId, chatId }) => {
-      // Scope to the currently open chat only
       if (chatId && selectedChatIdRef.current && chatId !== selectedChatIdRef.current) return;
-      setIsTyping(true);
+      setTypingUsers((prev) => new Map([...prev, [fromUserId, true]]));
     });
     const offStop = onSocketEvent('user-stop-typing', ({ fromUserId, chatId }) => {
       if (chatId && selectedChatIdRef.current && chatId !== selectedChatIdRef.current) return;
-      setIsTyping(false);
+      setTypingUsers((prev) => {
+        const next = new Map(prev);
+        next.delete(fromUserId);
+        return next;
+      });
     });
     return () => { offStart(); offStop(); };
-  }, []); // single mount — reads ref inside handlers
-
-  // ── selectChat: clear stale messages before switching ─────────────────────
-  //
-  // Wraps the raw setSelectedChat so callers get clean state on every switch.
-  // ChatList calls this instead of setSelectedChat directly.
-  const selectChat = useCallback((chat) => {
-    setMessages([]);      // clear immediately — no flash of old messages
-    setIsTyping(false);   // reset typing indicator for new chat
-    setSelectedChat(chat);
   }, []);
 
-  // ── Send message ─────────────────────────────────────────────────────────
+  // ── Socket: re-register on reconnect ─────────────────────────────────────
+  useEffect(() => {
+    const socket = getSocket();
+    if (!socket) return;
+    const onReconnect = () => {
+      // Re-fetch messages for the current chat to catch anything missed
+      if (selectedChatIdRef.current) {
+        fetchMessages(selectedChatIdRef.current);
+      }
+    };
+    socket.on('connect', onReconnect);
+    return () => socket.off('connect', onReconnect);
+  }, [fetchMessages]);
+
+  // ── Cleanup on unmount ────────────────────────────────────────────────────
+  useEffect(() => {
+    return () => { fetchAbortRef.current?.abort(); };
+  }, []);
+
+  // ── Emit helpers ──────────────────────────────────────────────────────────
   const sendMessage = useCallback(({ toUserId, content, chatId, type = 'text' }) => {
     if (!toUserId || !content) return;
     safeEmit('send_message', {
@@ -107,44 +290,61 @@ export const ChatProvider = ({ children }) => {
     });
   }, []);
 
-  // ── Emit typing indicator ─────────────────────────────────────────────────
   const emitTyping = useCallback(({ toUserId, chatId, isTyping: typing }) => {
     safeEmit(typing ? 'typing' : 'stop-typing', { toUserId, chatId });
   }, []);
 
-  // ── File upload ───────────────────────────────────────────────────────────
   const uploadFile = useCallback(async (formData) => {
     try {
       const res = await apiRequest.post('/api/upload/chat', formData);
       return res.data?.url ?? null;
     } catch (err) {
-      console.error('[ChatContext] Upload failed:', err);
+      console.error('[ChatContext] uploadFile:', err);
       return null;
     }
   }, []);
 
+  // ── Derived: typingUserIds as sorted array for stable rendering ───────────
+  const typingUserIds = useMemo(
+    () => [...typingUsers.keys()],
+    [typingUsers]
+  );
+
+  const isTyping = typingUsers.size > 0;
+
+  // ── Stable context value ──────────────────────────────────────────────────
+  const value = useMemo(() => ({
+    selectedChat,
+    messages,
+    messageMap,
+    typingUsers,
+    typingUserIds,
+    isTyping,
+    loadingMessages,
+    hasMoreMessages,
+    // API
+    selectChat,
+    setSelectedChat: selectChat,   // backward-compat alias
+    setMessages,
+    updateMessage,
+    appendMessage,
+    loadMoreMessages,
+    markChatRead,
+    sendMessage,
+    emitTyping,
+    uploadFile,
+    isReady: isSocketReady,        // callable: isReady() → boolean
+  }), [
+    selectedChat, messages, messageMap,
+    typingUsers, typingUserIds, isTyping,
+    loadingMessages, hasMoreMessages,
+    selectChat, updateMessage, appendMessage,
+    loadMoreMessages, markChatRead,
+    sendMessage, emitTyping, uploadFile,
+  ]);
+
   return (
-    <ChatContext.Provider
-      value={{
-        selectedChat,
-        // Expose both the raw setter (for ChatWindow's internal use) and the
-        // safe wrapper. ChatList should use setSelectedChat which now points
-        // to selectChat.
-        setSelectedChat: selectChat,
-        messages,
-        setMessages,
-        selectChat,
-        isTyping,
-        setIsTyping,
-        sendMessage,
-        emitTyping,
-        uploadFile,
-        // FIX: expose as a callable function, not as a raw function reference
-        // treated as a boolean. Consumers must call isReady() to get the live
-        // boolean value: `const ready = isReady();`
-        isReady: isSocketReady,
-      }}
-    >
+    <ChatContext.Provider value={value}>
       {children}
     </ChatContext.Provider>
   );

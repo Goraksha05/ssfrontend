@@ -1,13 +1,22 @@
 // src/components/TodayOffer/MessageScroller.js
-import React, { useState, useEffect } from "react";
+import React, { useCallback, useEffect } from "react";
 import { Button } from "react-bootstrap";
 import ModalContent from "./ModalContent";
+import TodayOfferModal from "./TodayOfferModal";
+import { useModal } from "../../Context/ModalContext";
 
 const MessageScroller = () => {
-  const [showModal, setShowModal] = useState(false);
+  const { openModal } = useModal();
 
-  const handleOpen = () => setShowModal(true);
-  const handleClose = () => setShowModal(false);
+  const openOfferModal = useCallback(() => {
+    openModal(TodayOfferModal, {
+      title: "🎁 Today’s Offer",
+      children: <ModalContent />,
+      onConfirm: () => {
+        alert("Offer claimed! 🎉");
+      },
+    });
+  },[openModal]);
 
   // Auto-popup once daily
   useEffect(() => {
@@ -15,10 +24,10 @@ const MessageScroller = () => {
     const lastShown = localStorage.getItem("offerModalShown");
 
     if (lastShown !== today) {
-      setShowModal(true);
+      openOfferModal();
       localStorage.setItem("offerModalShown", today);
     }
-  }, []);
+  }, [openOfferModal]);
 
   const message1 =
     "🔔 Welcome to SOSHOLIFE! 🎉 Invite your friends and earn rewards. Don’t miss out!";
@@ -36,7 +45,7 @@ const MessageScroller = () => {
           fontSize: "1rem",
           border: "1px solid rgba(255, 38, 0, 1)",
         }}
-        onClick={handleOpen}
+        onClick={openOfferModal}
       >
         Special Offer for You
       </Button>
@@ -85,9 +94,6 @@ const MessageScroller = () => {
           }
         `}</style>
       </div>
-
-      {/* Offer Modal */}
-      <ModalContent show={showModal} onClose={handleClose} />
     </>
   );
 };

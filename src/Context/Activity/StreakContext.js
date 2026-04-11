@@ -1,165 +1,259 @@
 // src/Context/Activity/StreakContext.js
-//
-// FIXES:
-//   1. fetchStreakHistory double-wrapped already-shaped objects.
-//      The backend GET /api/activity/streak-history returns:
-//        { streakDates: [{ date: "2024-01-01", count: 2 }, ...], totalUniqueDays: N }
-//      The old code mapped each element as `{ date: new Date(element), count: 1 }`,
-//      treating the whole object as if it were a raw date string. This lost the
-//      server's count value and produced `{ date: Invalid Date, count: 1 }`.
-//      Fix: read `entry.date` and `entry.count` from the already-shaped objects.
-//
-//   2. fetchClaimedStreakSlabs filtered on `act.type === 'streak'` but the
-//      backend activity formatter returns `type: 'streakreward'` for streak
-//      reward claims. The filter always produced an empty array so `claimedDays`
-//      was always `[]`, making every already-claimed milestone appear claimable.
-//      Fix: filter on `act.type === 'streakreward'`.
-//
-//   3. streakCount was set to `formatted.length` (the number of date entries
-//      in the response array) rather than `totalUniqueDays` returned by the
-//      backend. The backend deduplicates by calendar day server-side, so its
-//      value is the authoritative count.
-//      Fix: use `data.totalUniqueDays ?? formatted.length` as the count.
 
-import React, { createContext, useContext, useEffect, useState, useCallback } from 'react';
+import React, {
+  createContext, useContext, useEffect,
+  useState, useCallback, useRef, useMemo,
+} from 'react';
+import apiRequest from '../../utils/apiRequest';
 
-const StreakContext = createContext();
+const StreakContext = createContext(null);
+const CACHE_TTL = 60 * 1000;     // ⬅️ 60 seconds
 export { StreakContext };
 
-const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || process.env.REACT_APP_SERVER_URL || '';
+const BACKEND_URL =
+  process.env.REACT_APP_BACKEND_URL ||
+  process.env.REACT_APP_SERVER_URL  ||
+  '';
+
+const REWARD_MILESTONES = [
+  30, 60, 90, 120, 150, 180, 210, 240, 270, 300, 330, 360,
+];
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+const getToken = () => localStorage.getItem('token');
+
+/**
+ * Convert numeric days to the canonical slab key used by the backend:
+ *   90 → "90days"
+ */
+const toSlabKey = (days) => `${Number(days)}days`;
+
+/**
+ * Extract numeric days from a slab key:
+ *   "90days" → 90
+*/
+const fromSlabKey = (key) => parseInt(String(key), 10);
+
+// ─────────────────────────────────────────────────────────────────────────────
 
 export const StreakProvider = ({ children }) => {
-  const [streakCount,      setStreakCount]      = useState(0);
-  const [streakDates,      setStreakDates]       = useState([]);
-  const [claimedDays,      setClaimedDays]       = useState([]);
-  const [rewardMilestones] = useState([30, 60, 90, 120, 150, 180, 210, 240, 270, 300, 330, 360]);
-  const [message,          setMessage]           = useState('');
+  const [streakCount,    setStreakCount]    = useState(0);   // unique streak days
+  const [streakDates,    setStreakDates]    = useState([]);  // [{ date: Date, count: N }]
+  const [claimedKeys,    setClaimedKeys]   = useState(new Set()); // Set<slabKey>
+  const [claimStatus,    setClaimStatus]   = useState({});  // { [slabKey]: 'idle'|'claiming'|'success'|'error' }
+  const [loading,        setLoading]       = useState(false);
+  const [error,          setError]         = useState(null);
+  const [lastError,      setLastError]     = useState(null); // per-action error message
 
-  // Read token inside each callback to avoid stale closure when token changes
-  const getToken = () => localStorage.getItem('token');
+  const abortRef    = useRef(null);
+  const fetchingRef = useRef(false);
 
-  const safeJson = async (res) => {
+  const lastFetchRef = useRef(0);   // ⬅️ ADD THIS
+
+  // ── Fetch all streak data in one parallel batch ───────────────────────────
+  const fetchAll = useCallback(async () => {
+  const token = getToken();
+  // ✅ TTL CACHE GUARD
+  const now = Date.now();
+    if (now - lastFetchRef.current < CACHE_TTL) return; // skip duplicate calls
+
+    if (!token || fetchingRef.current) return;
+
+    abortRef.current?.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
+
+    fetchingRef.current = true;
+    setLoading(true);
+    setError(null);
+
     try {
-      return await res.json();
-    } catch (e) {
-      const text = await res.text().catch(() => '');
-      console.error('❌ JSON parse failed:', text);
-      return {};
+      const [historyResult, activityResult] = await Promise.allSettled([
+        apiRequest.get(`${BACKEND_URL}/api/activity/streak-history`, {
+          headers: { Authorization: `Bearer ${token}` },
+          signal: controller.signal,
+        }),
+        apiRequest.get(`${BACKEND_URL}/api/activity/user`, {
+          headers: { Authorization: `Bearer ${token}` },
+          signal: controller.signal,
+        }),
+      ]);
+
+      // ── Streak history ────────────────────────────────────────────────────
+      if (historyResult.status === 'fulfilled') {
+        const data = historyResult.value.data;
+        const formatted = Array.isArray(data?.streakDates)
+          ? data.streakDates.map((entry) => ({
+              date:  new Date(entry.date),
+              count: entry.count ?? 1,
+            }))
+          : [];
+        setStreakDates(formatted);
+        // Server's totalUniqueDays is the authoritative streak count
+        setStreakCount(data?.totalUniqueDays ?? formatted.length);
+      } else if (historyResult.reason?.name !== 'CanceledError' &&
+                 historyResult.reason?.name !== 'AbortError') {
+        console.error('[StreakContext] streak-history:', historyResult.reason);
+        setError('Failed to load streak history.');
+      }
+
+      // ── Claimed slabs ─────────────────────────────────────────────────────
+      // Activity type 'streakreward' marks a claimed slab; 'streak' is a raw daily log.
+      if (activityResult.status === 'fulfilled') {
+        const activities = activityResult.value.data?.activities;
+        const claimed = Array.isArray(activities)
+          ? activities
+              .filter((act) => act.type === 'streakreward' && act.streakslab)
+              .map((act) => act.streakslab)
+          : [];
+        setClaimedKeys(new Set(claimed));
+      } else if (activityResult.reason?.name !== 'CanceledError' &&
+                 activityResult.reason?.name !== 'AbortError') {
+        console.error('[StreakContext] activity/user:', activityResult.reason);
+      }
+      // ✅ UPDATE LAST FETCH TIME ON SUCCESS
+      lastFetchRef.current = Date.now();
+    } finally {
+      setLoading(false);
+      fetchingRef.current = false;
     }
-  };
+  }, []); // stable — reads token fresh on every call
 
-  const apiRequest = useCallback(async (method, path, options = {}) => {
-    const token = getToken();
-    const headers = {
-      'Content-Type': 'application/json',
-      Authorization:  `Bearer ${token}`,
-      ...(options.headers || {}),
-    };
-
-    const res = await fetch(`${BACKEND_URL}${path}`, {
-      method,
-      headers,
-      ...options,
-    });
-    return res;
-  }, []); // no token dep — reads fresh from localStorage each call
-
-  // ── Fetch streak history ──────────────────────────────────────────────────
-  //
-  // Backend response shape:
-  //   { streakDates: [{ date: "YYYY-MM-DD", count: N }, ...], totalUniqueDays: N }
-  const fetchStreakHistory = useCallback(async () => {
-    if (!getToken()) return;
-    try {
-      const res  = await apiRequest('GET', '/api/activity/streak-history');
-      const data = await safeJson(res);
-
-      // FIX 1: entries are already shaped { date, count } — read their fields
-      // rather than treating the whole object as a date string.
-      const formatted = Array.isArray(data.streakDates)
-        ? data.streakDates.map((entry) => ({
-            date:  new Date(entry.date),
-            count: entry.count ?? 1,
-          }))
-        : [];
-
-      setStreakDates(formatted);
-
-      // FIX 3: prefer the server's authoritative unique-day count
-      setStreakCount(data.totalUniqueDays ?? formatted.length);
-    } catch (err) {
-      console.error('Failed to fetch streak history:', err);
-    }
-  }, [apiRequest]);
-
-  // ── Fetch claimed streak slabs ────────────────────────────────────────────
-  //
-  // Backend activity formatter returns type 'streakreward' (not 'streak') for
-  // streak reward claim activity documents.
-  const fetchClaimedStreakSlabs = useCallback(async () => {
-    if (!getToken()) return;
-    try {
-      const res  = await apiRequest('GET', '/api/activity/user');
-      const data = await safeJson(res);
-
-      // FIX 2: the activity formatter sets type to 'streakreward' for claimed
-      // streak reward slabs — 'streak' is used for raw daily streak log entries.
-      const claimed = Array.isArray(data.activities)
-        ? data.activities
-            .filter((act) => act.type === 'streakreward' && act.streakslab)
-            .map((act) => act.streakslab)
-        : [];
-
-      setClaimedDays(claimed);
-    } catch (err) {
-      console.error('Failed to fetch claimed streaks:', err);
-    }
-  }, [apiRequest]);
-
-  // ── Claim streak reward ───────────────────────────────────────────────────
-  //
-  // Backend accepts streakslab as "90days" or the number 90.
-  // We send the "90days" string form to match the Activity schema enum.
-  const claimStreakReward = useCallback(async (streakDay) => {
-    if (!getToken() || !streakDay) return;
-    try {
-      const res = await apiRequest('POST', '/api/activity/streak-reward', {
-        body: JSON.stringify({ streakslab: `${streakDay}days` }),
-      });
-
-      const data = await safeJson(res);
-      if (!res.ok) throw new Error(data.message || 'Claim failed');
-
-      setMessage(data.message || '✅ Reward claimed!');
-      await fetchClaimedStreakSlabs();
-    } catch (err) {
-      console.error('Error claiming streak reward:', err);
-      setMessage('❌ Failed to claim streak reward');
-    }
-  }, [apiRequest, fetchClaimedStreakSlabs]);
-
+  const hasFetchedRef = useRef(false);
   useEffect(() => {
-    fetchStreakHistory();
-    fetchClaimedStreakSlabs();
-  }, [fetchStreakHistory, fetchClaimedStreakSlabs]);
+    if (hasFetchedRef.current) return;   // ✅ prevent double call
+    hasFetchedRef.current = true;
+
+    fetchAll();
+
+    return () => {
+      abortRef.current?.abort();
+    };
+  }, [fetchAll]);
+
+  // ── logDailyStreak ────────────────────────────────────────────────────────
+  const logDailyStreak = useCallback(async () => {
+    const token = getToken();
+    if (!token) return { success: false, message: 'Not authenticated' };
+    try {
+      const res = await apiRequest.post(
+        `${BACKEND_URL}/api/activity/log-daily-streak`,
+        {},
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      // Refetch so the heatmap and count update
+      await fetchAll();
+      return { success: true, message: res.data?.message };
+    } catch (err) {
+      const msg = err.response?.data?.message || 'Failed to log streak.';
+      return { success: false, message: msg };
+    }
+  }, [fetchAll]);
+
+  // ── claimStreakReward (optimistic) ────────────────────────────────────────
+  /**
+   * @param {number} days  e.g. 90
+   */
+  const claimStreakReward = useCallback(async (days) => {
+    const token   = getToken();
+    const slabKey = toSlabKey(days);
+    if (!token || claimedKeys.has(slabKey)) return;
+
+    // Optimistic update
+    setClaimedKeys((prev) => new Set([...prev, slabKey]));
+    setClaimStatus((prev) => ({ ...prev, [slabKey]: 'claiming' }));
+    setLastError(null);
+
+    try {
+      const res = await apiRequest.post(
+        `${BACKEND_URL}/api/activity/streak-reward`,
+        { streakslab: slabKey },
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      setClaimStatus((prev) => ({ ...prev, [slabKey]: 'success' }));
+      return { success: true, data: res.data };
+    } catch (err) {
+      // Rollback optimistic update
+      setClaimedKeys((prev) => {
+        const next = new Set(prev);
+        next.delete(slabKey);
+        return next;
+      });
+      setClaimStatus((prev) => ({ ...prev, [slabKey]: 'error' }));
+      const msg = err.response?.data?.message || 'Failed to claim streak reward.';
+      setLastError(msg);
+      return { success: false, message: msg };
+    }
+  }, [claimedKeys]);
+
+  // ── Computed values ───────────────────────────────────────────────────────
+
+  // isClaimed(days) — O(1) Set lookup
+  const isClaimed = useCallback(
+    (days) => claimedKeys.has(toSlabKey(days)),
+    [claimedKeys]
+  );
+
+  // claimedDays — array form for consumers that need to iterate
+  const claimedDays = useMemo(
+    () => [...claimedKeys].map(fromSlabKey).filter((d) => !isNaN(d)),
+    [claimedKeys]
+  );
+
+  // First unclaimed milestone that the user has reached
+  const nextMilestone = useMemo(
+    () => REWARD_MILESTONES.find(
+      (m) => !claimedKeys.has(toSlabKey(m)) && streakCount >= m
+    ) ?? REWARD_MILESTONES.find((m) => !claimedKeys.has(toSlabKey(m))) ?? null,
+    [claimedKeys, streakCount]
+  );
+
+  // Progress (0–100) toward the next unclaimed milestone
+  const progressToNextMilestone = useMemo(() => {
+    if (!nextMilestone) return 100;
+    const prev = REWARD_MILESTONES[REWARD_MILESTONES.indexOf(nextMilestone) - 1] ?? 0;
+    const range = nextMilestone - prev;
+    const done  = Math.max(0, streakCount - prev);
+    return Math.min(100, Math.round((done / range) * 100));
+  }, [nextMilestone, streakCount]);
+
+  // ── Stable context value ──────────────────────────────────────────────────
+  const value = useMemo(() => ({
+    streakCount,
+    totalUniqueDays:          streakCount,
+    streakDates,
+    claimedDays,
+    claimedKeys,
+    isClaimed,
+    claimStatus,
+    nextMilestone,
+    progressToNextMilestone,
+    rewardMilestones:         REWARD_MILESTONES,
+    loading,
+    error,
+    lastError,
+    fetchStreakHistory:        fetchAll,
+    fetchStreakData:           fetchAll,
+    fetchAll,
+    logDailyStreak,
+    claimStreakReward,
+  }), [
+    streakCount, streakDates, claimedDays, claimedKeys,
+    isClaimed, claimStatus, nextMilestone, progressToNextMilestone,
+    loading, error, lastError,
+    fetchAll, logDailyStreak, claimStreakReward,
+  ]);
 
   return (
-    <StreakContext.Provider
-      value={{
-        streakCount,
-        totalUniqueDays: streakCount, // streakCount IS the unique-day count (set from data.totalUniqueDays)
-        streakDates,
-        claimedDays,
-        fetchStreakHistory,
-        fetchStreakData: fetchStreakHistory, // alias consumed by DailyStreak after a claim
-        claimStreakReward,
-        message,
-        rewardMilestones,
-      }}
-    >
+    <StreakContext.Provider value={value}>
       {children}
     </StreakContext.Provider>
   );
 };
 
-export const useStreak = () => useContext(StreakContext);
+export const useStreak = () => {
+  const ctx = useContext(StreakContext);
+  if (!ctx) throw new Error('useStreak must be used within a StreakProvider');
+  return ctx;
+};

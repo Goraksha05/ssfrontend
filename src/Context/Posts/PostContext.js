@@ -1,7 +1,11 @@
-import { createContext } from "react";
+import { createContext, useContext } from 'react';
 
+const PostContext = createContext(null);
 
-const postContext = createContext();
+export const usePost = () => {
+  const ctx = useContext(PostContext);
+  if (!ctx) throw new Error('usePost must be used within a PostState provider');
+  return ctx;
+};
 
-
-export default postContext;
+export default PostContext;

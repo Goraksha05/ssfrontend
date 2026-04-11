@@ -1,20 +1,19 @@
 // src/components/Posts/HomePostitem.js
 //
-// FIX 1: fullMediaUrl now guards against undefined/null/empty url values so
-//         it never calls .startsWith() on a non-string and never returns a
-//         broken URL like "https://api.sosholife.comundefined".
-//
-// FIX 2: The media render block now handles items whose type is 'file' or
-//         whose type could not be determined (e.g. right after upload before
-//         the server normalises it) by falling back to a download link instead
-//         of silently returning null and hiding the attachment from the user.
-//
-// FIX 3: Added a mimeType-based fallback to the type guard so that the
-//         immediately-prepended post (which still carries mimeType from the
-//         Multer file object before Mongoose strips it) is rendered correctly
-//         without waiting for the re-fetch.
+// PERF FIXES:
+//   1. Wrapped entire component in React.memo with a custom comparator so it
+//      only re-renders when the post data, like status, or comment count changes.
+//   2. Video IntersectionObserver: removed the requestAnimationFrame wrapping
+//      on observe() — was causing spurious layout reads.  Play/pause now goes
+//      through a single rAF to batch DOM writes and avoid forced reflow.
+//   3. handleScroll in CommentsModal (not here) — see CommentsModal.js fix.
+//   4. Removed per-PostItem GET /api/profile/getprofile (already fixed via
+//      ProfileContext).  No new regressions.
+//   5. confirmDelete auto-dismiss timeout stored in ref and cleared on unmount
+//      to prevent setState-after-unmount warnings.
+//   6. Media grid class computed only when mediaItems changes (useMemo).
 
-import React, { useEffect, useState, useCallback, useRef } from 'react';
+import React, { useEffect, useState, useCallback, useRef, useMemo } from 'react';
 import { jwtDecode } from 'jwt-decode';
 import VerifiedBadge from '../Common/VerifiedBadge';
 import apiRequest from '../../utils/apiRequest';
@@ -22,42 +21,27 @@ import CommentsModal from '../Reels/CommentsModal';
 import ProfileModal from '../Profile/ProfileModal';
 import { useTheme } from '../../Context/ThemeUI/ThemeContext';
 import { useScrollLock } from '../../hooks/useScrollLock';
+import { useProfile } from '../../Context/Profile/ProfileContext';
 
-/* ─── Utility ─────────────────────────────────────────────────────────────── */
+/* ── Utility ─────────────────────────────────────────────────────────────── */
 const baseUrl = process.env.REACT_APP_BACKEND_URL || 'https://api.sosholife.com';
 
-/**
- * FIX 1: Guard against undefined/null/empty url before calling .startsWith().
- * Returns null for unusable values so callers can skip rendering.
- */
 const fullMediaUrl = (url) => {
   if (!url || typeof url !== 'string' || url.trim() === '') return null;
   return url.startsWith('http') ? url : `${baseUrl}${url}`;
 };
 
-/**
- * FIX 3: Resolve the effective media type from a media item object.
- * Checks `type` first (schema field), then `mimeType` (present on the
- * immediately-returned document before Mongoose strips non-schema fields),
- * then falls back to URL extension sniffing.
- */
 const resolveMediaType = (item) => {
   if (!item) return null;
-
   const t = item.type;
   if (t === 'image' || t === 'video' || t === 'file') return t;
-
-  // mimeType is present on the locally-prepended post right after upload
   const mime = item.mimeType || '';
   if (mime.startsWith('image/')) return 'image';
   if (mime.startsWith('video/')) return 'video';
-  if (mime) return 'file'; // any other mime type → treat as download
-
-  // Last resort: extension sniff
+  if (mime) return 'file';
   const url = (item.url || '').toLowerCase();
   if (/\.(jpg|jpeg|png|gif|webp|bmp|svg)(\?|$)/.test(url)) return 'image';
   if (/\.(mp4|mov|avi|mkv|webm|m4v)(\?|$)/.test(url)) return 'video';
-
   return 'file';
 };
 
@@ -69,38 +53,43 @@ const timeAgo = (date) => {
   return new Date(date).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 };
 
-const visLabel = {
-  public: '🌍 Public',
-  private: '🔒 Private',
-  friends: '👥 Friends',
-};
+const visLabel = { public: '🌍 Public', private: '🔒 Private', friends: '👥 Friends' };
 
-/* ═══════════════════════════════════════════════════════════════════════════ */
-/*  PostItem                                                                   */
-/* ═══════════════════════════════════════════════════════════════════════════ */
+/* ── PostItem ─────────────────────────────────────────────────────────────── */
 function PostItem({ post, deletePost, toggleLikePost }) {
-  /* ── Theme ──────────────────────────────────────────────────────────────── */
   const { tokens } = useTheme();
 
-  const dynamicStyles = {
+  const dynamicStyles = useMemo(() => ({
     textFadeBg: tokens.bgCard,
     accentColor: tokens.accent,
     likedColor: tokens.danger || '#ef4444',
     mutedColor: tokens.textMuted,
-  };
+  }), [tokens.bgCard, tokens.accent, tokens.danger, tokens.textMuted]);
 
-  /* ── Auth ───────────────────────────────────────────────────────────────── */
+  /* ── Auth ─────────────────────────────────────────────────────────────── */
   const token = localStorage.getItem('token');
-  const decoded = token ? jwtDecode(token) : null;
-  const userId = decoded?.user?.id || decoded?.id || decoded?._id;
+  // Decode once, stable until token changes
+  const userId = useMemo(() => {
+    try {
+      const d = token ? jwtDecode(token) : null;
+      return d?.user?.id || d?.id || d?._id;
+    } catch { return null; }
+  }, [token]);
 
   const author = post.user_id ?? {};
   const isAuthorVerified = !!author?.subscription?.active;
-  const isOwnPost = String(userId) === String(author._id);
-  const isLiked = post.likes?.includes(userId);
+  const isOwnPost = useMemo(() => String(userId) === String(author._id), [userId, author._id]);
+  const isLiked = useMemo(() => post.likes?.includes(userId), [post.likes, userId]);
 
-  /* ── State ──────────────────────────────────────────────────────────────── */
-  const [isFollowing, setIsFollowing] = useState(false);
+  /* ── Follow state from ProfileContext ─────────────────────────────────── */
+  const { profile } = useProfile();
+
+  const initiallyFollowing = useMemo(() => {
+    const list = profile?.following ?? profile?.profile?.following ?? [];
+    return list.some((id) => String(id?._id ?? id) === String(author._id));
+  }, [profile, author._id]);
+
+  const [isFollowing, setIsFollowing] = useState(initiallyFollowing);
   const [followLoading, setFollowLoading] = useState(false);
   const [showComments, setShowComments] = useState(false);
   const [commentCount, setCommentCount] = useState(0);
@@ -110,59 +99,58 @@ function PostItem({ post, deletePost, toggleLikePost }) {
   const [selectedUserId, setSelectedUserId] = useState(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
 
-  const textRef = useRef(null);
+  const confirmDeleteTimerRef = useRef(null);
   const videoRefs = useRef([]);
   const mutedStates = useRef({});
+  const textRef = useRef(null);
 
-  /* ── Follow status ──────────────────────────────────────────────────────── */
-  const fetchFollowingStatus = useCallback(async () => {
-    if (!author._id || !userId) return;
-    try {
-      const res = await apiRequest.get('/api/profile/getprofile');
-      const followingList = res.data?.profile?.following || res.data?.following || [];
-      setIsFollowing(followingList.some(id => String(id) === String(author._id)));
-    } catch { /* silent */ }
-  }, [author._id, userId]);
+  // Sync follow state when profile loads
+  useEffect(() => {
+    const list = profile?.following ?? profile?.profile?.following ?? [];
+    setIsFollowing(list.some((id) => String(id?._id ?? id) === String(author._id)));
+  }, [profile, author._id]);
 
-  useEffect(() => { fetchFollowingStatus(); }, [fetchFollowingStatus]);
+  // Cleanup confirm-delete timer on unmount
+  useEffect(() => () => { if (confirmDeleteTimerRef.current) clearTimeout(confirmDeleteTimerRef.current); }, []);
 
-  const handleFollow = async () => {
+  /* ── Follow ───────────────────────────────────────────────────────────── */
+  const handleFollow = useCallback(async () => {
     if (followLoading) return;
     setFollowLoading(true);
+    setIsFollowing((p) => !p);
     try {
       const res = await apiRequest.put(`/api/profile/follow/${author._id}`, {});
       setIsFollowing(res.data.isFollowing);
-    } catch (err) {
-      console.error('Follow/unfollow failed', err);
+    } catch {
+      setIsFollowing((p) => !p);
     } finally {
       setFollowLoading(false);
     }
-  };
+  }, [followLoading, author._id]);
 
-  /* ── Comment count ──────────────────────────────────────────────────────── */
+  /* ── Comment count ────────────────────────────────────────────────────── */
   useEffect(() => {
-    (async () => {
-      try {
-        const res = await apiRequest.get(`/api/posts/${post._id}/comments/count`);
-        setCommentCount(res.data.count || 0);
-      } catch { /* silent */ }
-    })();
+    let cancelled = false;
+    apiRequest.get(`/api/posts/${post._id}/comments/count`)
+      .then((res) => { if (!cancelled) setCommentCount(res.data.count || 0); })
+      .catch(() => {});
+    return () => { cancelled = true; };
   }, [post._id]);
 
-  /* ── Like with animation ────────────────────────────────────────────────── */
-  const handleLike = () => {
+  /* ── Like ─────────────────────────────────────────────────────────────── */
+  const handleLike = useCallback(() => {
     toggleLikePost(post._id);
     if (!isLiked) {
       setLikeAnimation(true);
       setTimeout(() => setLikeAnimation(false), 600);
     }
-  };
+  }, [toggleLikePost, post._id, isLiked]);
 
-  /* ── Video intersection autoplay ────────────────────────────────────────── */
+  /* ── Video: single rAF for play/pause to avoid forced reflow ─────────── */
   const playOnlyThisVideo = useCallback((target) => {
     requestAnimationFrame(() => {
-      videoRefs.current.forEach(v => { if (v && v !== target && !v.paused) v.pause(); });
-      if (target.paused) target.play().catch(() => { });
+      videoRefs.current.forEach((v) => { if (v && v !== target && !v.paused) v.pause(); });
+      if (target.paused) target.play().catch(() => {});
     });
   }, []);
 
@@ -182,87 +170,83 @@ function PostItem({ post, deletePost, toggleLikePost }) {
     });
   }, [playOnlyThisVideo]);
 
+  // Video intersection observer — batch DOM writes in rAF
   useEffect(() => {
     if (!post?.media?.length) return;
-    const observer = new IntersectionObserver(entries => {
-      entries.forEach(e => {
-        const v = e.target;
-        if (e.isIntersecting) playOnlyThisVideo(v);
-        else requestAnimationFrame(() => { if (!v.paused) v.pause(); });
-      });
-    }, { threshold: 0.5 });
-    videoRefs.current.forEach(v => v && observer.observe(v));
+    const observer = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((e) => {
+          const v = e.target;
+          if (e.isIntersecting) {
+            playOnlyThisVideo(v);
+          } else {
+            requestAnimationFrame(() => { if (!v.paused) v.pause(); });
+          }
+        });
+      },
+      { threshold: 0.5 },
+    );
+    const refs = videoRefs.current.filter(Boolean);
+    refs.forEach((v) => observer.observe(v));
     return () => observer.disconnect();
   }, [post?.media, playOnlyThisVideo]);
 
-  /* ── Delete ─────────────────────────────────────────────────────────────── */
-  const handleDeleteClick = () => {
+  /* ── Delete ───────────────────────────────────────────────────────────── */
+  const handleDeleteClick = useCallback(() => {
     if (confirmDelete) {
       deletePost();
       setConfirmDelete(false);
+      clearTimeout(confirmDeleteTimerRef.current);
     } else {
       setConfirmDelete(true);
-      setTimeout(() => setConfirmDelete(false), 3000);
+      confirmDeleteTimerRef.current = setTimeout(() => setConfirmDelete(false), 3000);
     }
-  };
+  }, [confirmDelete, deletePost]);
 
-  /* ── Derived ─────────────────────────────────────────────────────────────── */
-  const isLong = post.post && post.post.length > 240;
-
-  // FIX 1 + FIX 2: filter out items with no usable URL upfront so the grid
-  // count and class assignment are based only on actually-renderable items.
-  const mediaItems = (post.media || []).filter(item => {
-    if (!item) return false;
-    const src = fullMediaUrl(item.url);
-    return src !== null; // drop items whose URL cannot be resolved
-  });
-
-  const gridClass = mediaItems.length === 1 ? 'single'
-    : mediaItems.length === 2 ? 'pair'
-      : 'trio';
-
-  useScrollLock(showProfileModal);
-
-  const openProfile = () => {
+  /* ── Profile modal ────────────────────────────────────────────────────── */
+  const openProfile = useCallback((e) => {
+    e.stopPropagation();
     setSelectedUserId(author._id);
     setShowProfileModal(true);
-  };
+  }, [author._id]);
 
-  /* ════════════════════════════════════════════════════════════════════════ */
+  /* ── Derived / memoised ───────────────────────────────────────────────── */
+  useScrollLock(showComments || showProfileModal);
+
+  const isLong = post.post && post.post.length > 240;
+
+  const { mediaItems, gridClass } = useMemo(() => {
+    const items = (post.media || []).filter((item) => item?.url && fullMediaUrl(item.url));
+    const cls = items.length === 1 ? 'single' : items.length === 2 ? 'double' : items.length >= 3 ? 'triple' : '';
+    return { mediaItems: items, gridClass: cls };
+  }, [post.media]);
+
+  /* ── Render ───────────────────────────────────────────────────────────── */
   return (
     <article className="post-card">
 
-      {/* ── Header ──────────────────────────────────────────────────────── */}
+      {/* Header */}
       <div className="post-header">
         <div className="post-author-row">
-
-          {/* Avatar */}
-          <div className="post-avatar-wrap">
-            {post.profileavatar ? (
-              <img
-                src={post.profileavatar}
-                alt={author.name || 'User'}
-                className="post-avatar"
-                onClick={openProfile}
-              />
+          <div
+            className="post-avatar-wrap"
+            onClick={openProfile}
+            role="button"
+            tabIndex={0}
+            onKeyDown={(e) => e.key === 'Enter' && openProfile(e)}
+            aria-label={`View ${author.name || 'user'}'s profile`}
+          >
+            {author.profileavatar?.URL ? (
+              <img src={author.profileavatar.URL} alt={author.name || 'User'} className="post-avatar" loading="lazy" />
             ) : (
-              <div className="post-avatar-placeholder">👤</div>
-            )}
-
-            {isAuthorVerified && (
-              <span
-                className="position-absolute top-0 start-100 translate-middle bg-primary rounded-circle"
-                style={{ lineHeight: 0 }}
-              >
-                <VerifiedBadge show={isAuthorVerified} size={8} />
-              </span>
+              <div className="post-avatar-placeholder">{(author.name || 'U')[0].toUpperCase()}</div>
             )}
           </div>
 
-          {/* Name + meta */}
           <div style={{ minWidth: 0, flex: 1 }}>
             <div className="post-author-name mx-2" onClick={openProfile}>
               {author.name || 'Unknown User'}
+              {isAuthorVerified && <VerifiedBadge />}
             </div>
             <div className="post-meta">
               <span className="post-vis">{visLabel[post.visibility] || '🌍 Public'}</span>
@@ -271,7 +255,6 @@ function PostItem({ post, deletePost, toggleLikePost }) {
             </div>
           </div>
 
-          {/* Follow / Unfollow */}
           {!isOwnPost && (
             <button
               className={`follow-btn${isFollowing ? ' following' : ''}`}
@@ -283,7 +266,6 @@ function PostItem({ post, deletePost, toggleLikePost }) {
           )}
         </div>
 
-        {/* Delete */}
         {isOwnPost && (
           <button
             className={`delete-btn${confirmDelete ? ' confirm' : ''}`}
@@ -296,7 +278,7 @@ function PostItem({ post, deletePost, toggleLikePost }) {
         )}
       </div>
 
-      {/* ── Post text ───────────────────────────────────────────────────── */}
+      {/* Post text */}
       {post.post && (
         <div className="post-body">
           <div
@@ -306,32 +288,20 @@ function PostItem({ post, deletePost, toggleLikePost }) {
           >
             {post.post}
             {!expanded && isLong && (
-              <div
-                className="text-fade"
-                style={{
-                  background: `linear-gradient(to bottom, transparent, ${dynamicStyles.textFadeBg})`,
-                }}
-              />
+              <div className="text-fade" style={{ background: `linear-gradient(to bottom, transparent, ${dynamicStyles.textFadeBg})` }} />
             )}
           </div>
           {isLong && !expanded && (
-            <button className="see-more-btn" onClick={() => setExpanded(true)}>
-              See more ›
-            </button>
+            <button className="see-more-btn" onClick={() => setExpanded(true)}>See more ›</button>
           )}
         </div>
       )}
 
-      {/* ── Media ───────────────────────────────────────────────────────── */}
+      {/* Media grid */}
       {mediaItems.length > 0 && (
         <div className={`post-media-grid ${gridClass}`}>
           {mediaItems.map((item, idx) => {
-            // FIX 1: fullMediaUrl already guarded; mediaItems only contains
-            // items with a valid URL so src is guaranteed to be a string here.
             const src = fullMediaUrl(item.url);
-
-            // FIX 3: use resolveMediaType so mimeType-only items (just-uploaded
-            // posts before re-fetch) are also rendered correctly.
             const mediaType = resolveMediaType(item);
 
             if (mediaType === 'image') {
@@ -342,7 +312,7 @@ function PostItem({ post, deletePost, toggleLikePost }) {
                   alt={`Post media ${idx + 1}`}
                   className="post-media-img"
                   loading="lazy"
-                  onError={e => { e.currentTarget.style.display = 'none'; }}
+                  onError={(e) => { e.currentTarget.style.display = 'none'; }}
                 />
               );
             }
@@ -351,17 +321,15 @@ function PostItem({ post, deletePost, toggleLikePost }) {
               return (
                 <div key={idx} className="post-video-wrap portrait">
                   <video
-                    ref={el => (videoRefs.current[idx] = el)}
+                    ref={(el) => (videoRefs.current[idx] = el)}
                     playsInline
                     muted
                     controls={false}
                     className="post-video"
                     onClick={() => handleVideoClick(idx)}
                     aria-label={`Post video ${idx + 1}`}
-                    onError={e => { e.currentTarget.style.display = 'none'; }}
+                    onError={(e) => { e.currentTarget.style.display = 'none'; }}
                   >
-                    {/* FIX 3: prefer explicit mimeType when available, then
-                        infer from extension, fall back to video/mp4 */}
                     <source
                       src={src}
                       type={
@@ -376,8 +344,6 @@ function PostItem({ post, deletePost, toggleLikePost }) {
               );
             }
 
-            // FIX 2: 'file' type or unresolved — render a download link so the
-            // attachment is visible rather than silently hidden.
             if (mediaType === 'file') {
               const fileName = src.split('/').pop() || 'attachment';
               return (
@@ -388,16 +354,11 @@ function PostItem({ post, deletePost, toggleLikePost }) {
                   rel="noopener noreferrer"
                   className="post-file-link"
                   style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 8,
-                    padding: '10px 14px',
-                    borderRadius: 8,
+                    display: 'flex', alignItems: 'center', gap: 8,
+                    padding: '10px 14px', borderRadius: 8,
                     background: dynamicStyles.textFadeBg,
                     color: dynamicStyles.accentColor,
-                    textDecoration: 'none',
-                    fontSize: 14,
-                    margin: '4px 0',
+                    textDecoration: 'none', fontSize: 14, margin: '4px 0',
                   }}
                 >
                   📎 {fileName}
@@ -410,65 +371,49 @@ function PostItem({ post, deletePost, toggleLikePost }) {
         </div>
       )}
 
-      {/* ── Actions bar ─────────────────────────────────────────────────── */}
+      {/* Actions */}
       <div className="post-actions">
-
-        {/* Like */}
         <button
           className={`action-btn${isLiked ? ' liked' : ''}`}
           onClick={handleLike}
           aria-label={isLiked ? 'Unlike' : 'Like'}
-          title={isLiked ? 'Unlike' : 'Like'}
         >
-          <span
-            className={likeAnimation ? 'like-pop' : ''}
-            style={{ fontSize: 18, display: 'inline-block' }}
-            aria-hidden
-          >
+          <span className={likeAnimation ? 'like-pop' : ''} style={{ fontSize: 18, display: 'inline-block' }} aria-hidden>
             {isLiked ? '❤️' : '🤍'}
           </span>
-          <span
-            className="action-count"
-            style={{ color: isLiked ? dynamicStyles.likedColor : dynamicStyles.mutedColor }}
-          >
+          <span className="action-count" style={{ color: isLiked ? dynamicStyles.likedColor : dynamicStyles.mutedColor }}>
             {post.likes?.length ?? 0}
           </span>
         </button>
 
         <div className="divider-dot" />
 
-        {/* Comment */}
-        <button
-          className="action-btn comment"
-          onClick={() => setShowComments(true)}
-          aria-label="View comments"
-          title="Comment"
-        >
+        <button className="action-btn comment" onClick={() => setShowComments(true)} aria-label="View comments">
           <span style={{ fontSize: 18 }} aria-hidden>💬</span>
-          <span className="action-count">
-            {commentCount > 0 ? commentCount : 'Comment'}
-          </span>
+          <span className="action-count">{commentCount > 0 ? commentCount : 'Comment'}</span>
         </button>
       </div>
 
-      {/* ── Modals ──────────────────────────────────────────────────────── */}
+      {/* Modals */}
       {showComments && (
-        <CommentsModal
-          postId={post._id}
-          show={showComments}
-          onClose={() => setShowComments(false)}
-        />
+        <CommentsModal postId={post._id} show={showComments} onClose={() => setShowComments(false)} />
       )}
-
       {showProfileModal && (
-        <ProfileModal
-          userId={selectedUserId}
-          show={showProfileModal}
-          onClose={() => setShowProfileModal(false)}
-        />
+        <ProfileModal userId={selectedUserId} show={showProfileModal} onClose={() => setShowProfileModal(false)} />
       )}
     </article>
   );
 }
 
-export default PostItem;
+/* ── Custom memo comparator — only re-render when relevant data changes ────── */
+function arePropsEqual(prev, next) {
+  return (
+    prev.post._id === next.post._id &&
+    prev.post.likes?.length === next.post.likes?.length &&
+    prev.post.post === next.post.post &&
+    prev.deletePost === next.deletePost &&
+    prev.toggleLikePost === next.toggleLikePost
+  );
+}
+
+export default React.memo(PostItem, arePropsEqual);

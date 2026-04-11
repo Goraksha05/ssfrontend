@@ -6,6 +6,8 @@ import Logo from './XLogo/Logo';
 import groceryCart from '../Assets/grocery-cart.png';
 import { useTranslation } from 'react-i18next';
 import LogBtnIcon from '../Assets/LoginCreateAccount.png';
+import { useModal } from '../Context/ModalContext';
+import TodayOfferModal from './TodayOffer/TodayOfferModal';
 import ModalContent from './TodayOffer/ModalContent';
 // import ThemePalettePicker from './Theme/ThemePalettePicker';
 import { useTheme } from '../Context/ThemeUI/ThemeContext';
@@ -48,10 +50,11 @@ const FEATURES = [
 
 const WelcomePage = () => {
   const { t } = useTranslation();
-  const [showModal, setShowModal] = useState(false);
+  // const [showModal, setShowModal] = useState(false);
   const [showOpportunity, setShowOpportunity] = useState(false);
   const [visible, setVisible] = useState(false);
   const { isDark } = useTheme();
+  const { openModal } = useModal();
 
   useEffect(() => {
     const timer = setTimeout(() => setVisible(true), 100);
@@ -72,7 +75,19 @@ const WelcomePage = () => {
           className="d-flex justify-content-between align-items-center position-relative"
           style={{ zIndex: 2, gap: '10px', flexWrap: 'wrap' }}
         >
-          <button className="offer-btn" title="Only for you" onClick={() => setShowModal(true)}>
+          <button
+            className="offer-btn"
+            title="Only for you"
+            onClick={() =>
+              openModal(TodayOfferModal, {
+                title: "Today's Special Offer 🎁",
+                children: <ModalContent />,
+                onConfirm: () => {
+                  alert("Offer claimed! 🎉");
+                },
+              })
+            }
+          >
             🎁 Today's Offer
           </button>
 
@@ -156,7 +171,7 @@ const WelcomePage = () => {
       <div style={{ height: '1.5rem' }} />
 
       {/* Offer Modal */}
-      <ModalContent show={showModal} onClose={() => setShowModal(false)} />
+      {/* <ModalContent show={showModal} onClose={() => setShowModal(false)} /> */}
 
       {/* Opportunity Modal ← new */}
       <OpportunityModal show={showOpportunity} onClose={() => setShowOpportunity(false)} />

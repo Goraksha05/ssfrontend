@@ -2,23 +2,22 @@
 import React, {
   useContext, useEffect, useState, useRef, useCallback, useMemo, startTransition,
 } from 'react';
-import { Link } from 'react-router-dom';
-import postContext from '../../Context/Posts/PostContext';
-import HomePosts from './HomePosts';
-import { jwtDecode } from 'jwt-decode';
+import { Link }             from 'react-router-dom';
+import postContext          from '../../Context/Posts/PostContext';
+import HomePosts            from './HomePosts';
+import { jwtDecode }        from 'jwt-decode';
 import { ToastContainer, toast } from 'react-toastify';
-import apiRequest from '../../utils/apiRequest';
-import AllFriends from '../Friendship/AllFriends';
-import FriendRequest from '../Friendship/FriendRequest';
-import Suggestion from '../Friendship/Suggestion';
-import MessageScroller from '../TodayOffer/MessageScroller';
-import { useI18n } from '../../i18n/i18nContext';
-import EnhancedMediaUpload from './EnhancedMediaUpload';
+import apiRequest           from '../../utils/apiRequest';
+import AllFriends           from '../Friendship/AllFriends';
+import FriendRequest        from '../Friendship/FriendRequest';
+import Suggestion           from '../Friendship/Suggestion';
+import MessageScroller      from '../TodayOffer/MessageScroller';
+import { useI18n }          from '../../i18n/i18nContext';
+import EnhancedMediaUpload  from './EnhancedMediaUpload';
 import ObtainedRewardsModal from '../UserActivities/ObtainedRewardsModal';
-import CropModal from '../../utils/CropModal';
-// import AddFileIcon from '../../Assets/AddMedia.png';
-import { useTheme } from '../../Context/ThemeUI/ThemeContext';
-import { useScrollLock } from '../../hooks/useScrollLock';
+import CropModal            from '../../utils/CropModal';
+import { useTheme }         from '../../Context/ThemeUI/ThemeContext';
+import { useScrollLock }    from '../../hooks/useScrollLock';
 
 const SERVER_URL = process.env.REACT_APP_SERVER_URL;
 
@@ -55,16 +54,13 @@ function Home() {
   const { tokens } = useTheme();
 
   const [postContent,     setPostContent]     = useState('');
-  const [inputValue,      setInputValue]      = useState(''); // controlled input – avoids reflow on every keystroke
+  const [inputValue,      setInputValue]      = useState('');
   const [visibility,      setVisibility]      = useState('public');
   const mediaUploadRef = useRef();
   const [communityCount,  setCommunityCount]  = useState(0);
   const [postSuccess,     setPostSuccess]     = useState(false);
   const [showRewardsModal, setShowRewardsModal] = useState(false);
   const [hasPostedOnce,   setHasPostedOnce]   = useState(false);
-
-  // ── Crop modal state (lifted from EnhancedMediaUpload) ──────────────────
-  // cropPayload is null when closed, or an object with all CropModal props.
   const [cropPayload, setCropPayload] = useState(null);
 
   const token  = localStorage.getItem('token');
@@ -72,25 +68,35 @@ function Home() {
 
   const { t } = useI18n();
 
-  /* ── Earned rewards wallet ───────────────────────────────────────────────── */
   const [wallet,         setWallet]         = useState(null);
   const [rewardsLoading, setRewardsLoading] = useState(false);
-
-  /* ── Basic user info ────────────────────────────────────────────────────── */
   const [userData,   setUserData]   = useState(null);
   const [inviteLink, setInviteLink] = useState(''); // eslint-disable-line no-unused-vars
 
-  // Lock scroll when rewards modal OR crop modal is open
-  useScrollLock(showRewardsModal || !!cropPayload);
+  // ── FIX: Two independent scroll lock calls instead of one combined boolean.
+  //
+  // OLD (broken):
+  //   const isHomeModalOpen = Boolean(showRewardsModal) || Boolean(cropPayload);
+  //   useScrollLock(isHomeModalOpen);
+  //
+  // WHY IT WAS BROKEN:
+  //   If showRewardsModal closed first, isHomeModalOpen went false and
+  //   unlockScroll() fired — even though cropPayload was still open.
+  //   The hook's lockCount dropped to 0 prematurely, unlocking the page.
+  //
+  // FIX: Each modal registers its own slot in the reference counter.
+  //   lockCount increments to 2 when both are open.
+  //   It only reaches 0 (and unlocks) when both have closed independently.
+  useScrollLock(Boolean(showRewardsModal));
+  useScrollLock(Boolean(cropPayload));
 
-  /* ── Debounce textarea → postContent (prevents reflow on every keystroke) ── */
+  /* ── Debounce textarea → postContent ─────────────────────────────────────── */
   useEffect(() => {
     const id = setTimeout(() => {
       startTransition(() => setPostContent(inputValue));
     }, 150);
     return () => clearTimeout(id);
   }, [inputValue]);
-
 
   useEffect(() => {
     if (!token || !userId) return;
@@ -114,7 +120,6 @@ function Home() {
     return () => { cancelled = true; };
   }, [token, userId]);
 
-  /* ── Fetch earned-rewards wallet ────────────────────────────────────────── */
   const fetchWallet = useCallback(async () => {
     if (!token) return;
     setRewardsLoading(true);
@@ -132,7 +137,6 @@ function Home() {
 
   useEffect(() => { fetchWallet(); }, [fetchWallet]);
 
-  /* ── Community count ────────────────────────────────────────────────────── */
   useEffect(() => {
     if (!token || !userId) return;
     apiRequest
@@ -141,7 +145,6 @@ function Home() {
       .catch(err => console.error('[Home] community count failed:', err));
   }, [token, userId]);
 
-  /* ── Derived display values ─────────────────────────────────────────────── */
   const displayGroceryCoupons = useMemo(
     () => wallet?.totalGroceryCoupons ?? userData?.totalGroceryCoupons ?? 0,
     [wallet, userData]
@@ -157,7 +160,6 @@ function Home() {
 
   const statsLoading = rewardsLoading && wallet === null;
 
-  /* ── Post handlers ──────────────────────────────────────────────────────── */
   const handleFilesPrepared = useCallback((files) => {
     if (!postContent.trim() && files.length === 0) {
       toast.error(t['home.write_or_upload'] || 'Please write something or upload media!');
@@ -184,7 +186,6 @@ function Home() {
       toast.info(t['home.uploading_media'] || '⏳ Uploading media…', {
         toastId: 'post-loading', autoClose: false, closeOnClick: false, draggable: false,
       });
-      // Defer to next task so toast renders before heavy upload work starts
       setTimeout(() => mediaUploadRef.current?.submitMediaPost(), 0);
     } else {
       if (!postContent.trim()) {
@@ -195,7 +196,6 @@ function Home() {
         toastId: 'post-loading', autoClose: false, closeOnClick: false, draggable: false,
       });
       setHasPostedOnce(true);
-      // Defer addPost so the toast paint completes first — fixes 'message handler' violation
       setTimeout(() => {
         addPost(postContent.trim(), visibility);
         resetForm();
@@ -223,9 +223,6 @@ function Home() {
     fetchWallet();
   }, [fetchWallet]);
 
-  /* ── Crop modal handlers (rendered here, driven by EnhancedMediaUpload) ── */
-  // EnhancedMediaUpload calls onCropRequest(payload) to open,
-  // and onCropRequest(null) to close. We simply store it in state.
   const handleCropRequest = useCallback((payload) => {
     setCropPayload(payload);
   }, []);
@@ -343,10 +340,7 @@ function Home() {
 
             {/* ── Invite + Obtained Rewards ── */}
             <div className="home-invite-row mt-2 mb-2">
-              <Link
-                to="/invitaion"
-                className="home-invite-btn"
-              >
+              <Link to="/invitaion" className="home-invite-btn">
                 {t['home.invite_link'] || 'Invite Link'}
               </Link>
               <button
@@ -361,7 +355,6 @@ function Home() {
             <section className="mb-2" data-aos="fade-up">
               <div className="post-composer">
 
-                {/* Visibility selector */}
                 <select
                   className="post-visibility-select"
                   value={visibility}
@@ -372,7 +365,6 @@ function Home() {
                   <option value="friends">{t['home.friends'] || '👥 Friends'}</option>
                 </select>
 
-                {/* Textarea */}
                 <div className="post-textarea-wrap">
                   <textarea
                     className="post-textarea form-control border-0"
@@ -381,24 +373,10 @@ function Home() {
                     value={inputValue}
                     onChange={e => setInputValue(e.target.value)}
                     maxLength={5000}
-                    style={{
-                      /* Only the font is kept as inline — everything else is in Home.css */
-                      fontFamily: "'Merriweather', serif",
-                    }}
+                    style={{ fontFamily: "'Merriweather', serif" }}
                   />
-
-                  {/* <button
-                    type="button"
-                    aria-label="Add media or file"
-                    title="Add media or file"
-                    className="post-media-icon-btn"
-                    onClick={() => mediaUploadRef.current?.openFilePicker()}
-                  >
-                    <img src={AddFileIcon} alt="Add media" />
-                  </button> */}
                 </div>
 
-                {/* Char count row */}
                 <div className="post-char-row">
                   <span>{t['home.tip'] || '💡 Tip: Enter for paragraphs.'}</span>
                   <span
@@ -411,7 +389,6 @@ function Home() {
                   </span>
                 </div>
 
-                {/* Media upload component */}
                 <div className="mb-3 mt-1">
                   <EnhancedMediaUpload
                     ref={mediaUploadRef}
@@ -421,7 +398,6 @@ function Home() {
                   />
                 </div>
 
-                {/* Action buttons */}
                 <div className="post-action-row">
                   <button
                     className="post-cancel-btn"
@@ -480,9 +456,8 @@ function Home() {
             </div>
           </div>
 
-        </div>{/* end row */}
+        </div>
 
-        {/* ObtainedRewardsModal */}
         <ObtainedRewardsModal
           show={showRewardsModal}
           onClose={handleRewardsModalClose}
@@ -491,12 +466,6 @@ function Home() {
         <ToastContainer position="top-right" autoClose={3000} />
       </main>
 
-      {/*
-        ── CropModal rendered at Home root level ──────────────────────────────
-        Mounted outside the scrollable feed DOM so position:fixed backdrops
-        and body scroll-lock work cleanly with no scroll-bleed into the page.
-        cropPayload is null when no crop is active (modal renders nothing).
-      */}
       {cropPayload && (
         <CropModal
           image={cropPayload.image}

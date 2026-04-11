@@ -1,12 +1,23 @@
+/**
+ * ForgotPasswordModal.js
+ *
+ * CHANGE: Added useRegisterModal(show) for central scroll lock management.
+ * Previously this modal had NO scroll lock at all — added now for consistency.
+ */
+
 import React, { useState, useEffect } from 'react';
 import Modal from 'react-bootstrap/Modal';
 import Button from 'react-bootstrap/Button';
 import { toast, ToastContainer } from 'react-toastify';
 import 'react-toastify/dist/ReactToastify.css';
+import { useRegisterModal } from '../../Context/ModalContext';
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 
 const ForgotPasswordModal = ({ show, onClose }) => {
+  // Now participates in the central scroll lock system
+  useRegisterModal(show);
+
   const [step, setStep] = useState(1);
   const [phone, setPhone] = useState('');
   const [otp, setOtp] = useState('');
@@ -50,56 +61,44 @@ const ForgotPasswordModal = ({ show, onClose }) => {
 
   const sendOTP = async () => {
     try {
-      console.log("Sending OTP for:", phone)
       const otpRes = await fetch(`${BACKEND_URL}/api/otp/send-for-reset`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ phone }),
       });
       const otpData = await otpRes.json();
-      console.log("OTP response:", otpData);
-
       if (otpData.success) {
-        toast.success("OTP sent successfully!");
+        toast.success('OTP sent successfully!');
         setTimeLeft(300);
         setOtpExpired(false);
       } else {
-        toast.error("Failed to send OTP: " + otpData.message);
+        toast.error('Failed to send OTP: ' + otpData.message);
       }
     } catch (err) {
-      console.error("Network or server error in sendOTP:", err);
-      toast.error("Network error while sending OTP.");
+      toast.error('Network error while sending OTP.');
     }
   };
 
   const verifyPhoneAndSendOTP = async () => {
     if (!/^\d{10}$/.test(phone)) {
-      toast.error("Enter a valid 10-digit phone number.");
+      toast.error('Enter a valid 10-digit phone number.');
       return;
     }
-
     try {
-      console.log("Sending /check-phone for:", phone);
       const res = await fetch(`${BACKEND_URL}/api/auth/check-phone`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ phone }),
       });
-
       const data = await res.json();
-      console.log("Phone check response:", data);
-
       if (!data.success) {
-        toast.error("Phone not registered.");
+        toast.error('Phone not registered.');
         return;
       }
-
-      console.log("Phone verified. Sending OTP now...");
       await sendOTP();
       setStep(2);
     } catch (err) {
-      console.error("verifyPhoneAndSendOTP error:", err);
-      toast.error("Server error verifying phone.");
+      toast.error('Server error verifying phone.');
     }
   };
 
@@ -111,53 +110,54 @@ const ForgotPasswordModal = ({ show, onClose }) => {
 
   const verifyOTP = async () => {
     if (otpExpired) return;
-
     try {
       const res = await fetch(`${BACKEND_URL}/api/otp/verify`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ phone, otpCode: otp }),
       });
-
       const data = await res.json();
       if (data.success) {
-        toast.success("OTP verified. Proceed to reset password.");
+        toast.success('OTP verified. Proceed to reset password.');
         setStep(3);
       } else {
-        toast.error("Invalid OTP.");
+        toast.error('Invalid OTP.');
       }
     } catch (err) {
-      toast.error("Server error verifying OTP.");
+      toast.error('Server error verifying OTP.');
     }
   };
 
   const submitNewPassword = async () => {
     if (newPassword !== confirmPassword) {
-      toast.error("Passwords do not match.");
+      toast.error('Passwords do not match.');
       return;
     }
-
-    if (newPassword.length < 5 || !/[A-Z]/.test(newPassword) || !/\d/.test(newPassword)) {
-      toast.error("Password must be at least 5 characters, include a capital letter and a number.");
+    if (
+      newPassword.length < 5 ||
+      !/[A-Z]/.test(newPassword) ||
+      !/\d/.test(newPassword)
+    ) {
+      toast.error(
+        'Password must be at least 5 characters, include a capital letter and a number.'
+      );
       return;
     }
-
     try {
       const res = await fetch(`${BACKEND_URL}/api/auth/reset-password-with-otp`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ phone, otp, newPassword }),
       });
-
       const data = await res.json();
       if (data.success) {
-        toast.success("Password reset successful. Please login.");
+        toast.success('Password reset successful. Please login.');
         setTimeout(() => handleClose(), 1500);
       } else {
-        toast.error(data.message || "Failed to reset password.");
+        toast.error(data.message || 'Failed to reset password.');
       }
     } catch (err) {
-      toast.error("Server error resetting password.");
+      toast.error('Server error resetting password.');
     }
   };
 
@@ -167,9 +167,9 @@ const ForgotPasswordModal = ({ show, onClose }) => {
       <Modal show={show} onHide={handleClose} centered>
         <Modal.Header closeButton>
           <Modal.Title>
-            {step === 1 && "Forgot Password"}
-            {step === 2 && "Enter OTP"}
-            {step === 3 && "Reset Password"}
+            {step === 1 && 'Forgot Password'}
+            {step === 2 && 'Enter OTP'}
+            {step === 3 && 'Reset Password'}
           </Modal.Title>
         </Modal.Header>
 
@@ -200,18 +200,18 @@ const ForgotPasswordModal = ({ show, onClose }) => {
               />
               <div style={{ fontSize: '0.9rem', color: otpExpired ? 'red' : 'gray' }}>
                 {otpExpired
-                  ? "OTP expired. Please resend."
+                  ? 'OTP expired. Please resend.'
                   : `OTP expires in ${formatTime(timeLeft)}`}
               </div>
               <div style={{ fontSize: '0.9rem' }}>
-                Didn't receive OTP?{" "}
+                Didn't receive OTP?{' '}
                 <button
                   className="btn btn-link p-0"
                   style={{ fontSize: '0.9rem' }}
                   onClick={handleResendOTP}
                   disabled={resending}
                 >
-                  {resending ? "Resending..." : "Resend OTP"}
+                  {resending ? 'Resending...' : 'Resend OTP'}
                 </button>
               </div>
             </>
@@ -240,30 +240,31 @@ const ForgotPasswordModal = ({ show, onClose }) => {
         </Modal.Body>
 
         <Modal.Footer>
-          <Button variant="secondary" onClick={handleClose}>Cancel</Button>
+          <Button variant="secondary" onClick={handleClose}>
+            Cancel
+          </Button>
 
           {step === 1 && (
-            <Button
-              variant="primary"
-              onClick={() => {
-                console.log("Send OTP clicked");
-                verifyPhoneAndSendOTP();
-              }}
-            >
+            <Button variant="primary" onClick={verifyPhoneAndSendOTP}>
               Send OTP
             </Button>
-
           )}
 
           {step === 2 && (
             <>
-              <Button variant="secondary" onClick={() => setStep(1)}>Back</Button>
-              <Button variant="primary" onClick={verifyOTP} disabled={otpExpired}>Verify OTP</Button>
+              <Button variant="secondary" onClick={() => setStep(1)}>
+                Back
+              </Button>
+              <Button variant="primary" onClick={verifyOTP} disabled={otpExpired}>
+                Verify OTP
+              </Button>
             </>
           )}
 
           {step === 3 && (
-            <Button variant="success" onClick={submitNewPassword}>Submit</Button>
+            <Button variant="success" onClick={submitNewPassword}>
+              Submit
+            </Button>
           )}
         </Modal.Footer>
       </Modal>

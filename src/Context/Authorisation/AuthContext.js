@@ -1,26 +1,6 @@
 // src/Context/Authorisation/AuthContext.js
-//
-// Owns: isAuthenticated, user, token, login(), logout()
-//
-// NOT owned here (delegated to dedicated contexts):
-//   • Socket lifecycle       → SocketContext
-//   • Notification state     → NotificationContext
-//   • Online users list      → OnlineUsersContext
-//
-// This separation means AuthContext no longer registers a "notification"
-// socket listener — NotificationContext does that. No more double-toasting.
-//
-// FIXES:
-//   1. setupSocket now resolves the user id as `userInfo.id ?? userInfo._id`
-//      because the backend's getloggeduser endpoint returns { id } not { _id }.
-//      Previously `userInfo._id` was always undefined, so the socket room join
-//      sent the literal string "undefined" and user-online never fired correctly.
-//   2. logout() mirrors the same id resolution when emitting user-offline.
-//   3. The streak fetch and setupSocket call both use the same BACKEND_URL
-//      constant so there is no risk of the two env vars resolving to different
-//      origins across build configurations.
 
-import {
+import React, {
   createContext,
   useContext,
   useState,
@@ -40,43 +20,67 @@ import AuthService from '../../Services/AuthService';
 
 const AuthContext = createContext(null);
 
-// Single source-of-truth for the base URL — used for both the streak fire-and-
-// forget call and anywhere else in this file that needs to hit the backend.
 const BACKEND_URL =
-  process.env.REACT_APP_BACKEND_URL || process.env.REACT_APP_SERVER_URL || '';
+  process.env.REACT_APP_BACKEND_URL ||
+  process.env.REACT_APP_SERVER_URL  ||
+  '';
 
-// ── Helpers ────────────────────────────────────────────────────────────────────
-const isTokenExpired = (token) => {
+// ── Token helpers ─────────────────────────────────────────────────────────────
+
+/** Seconds until the token expires. Negative means already expired. */
+function secondsUntilExpiry(token) {
   try {
     const { exp } = jwtDecode(token);
-    return Date.now() >= (exp - 30) * 1_000; // 30 s buffer
+    return exp - Math.floor(Date.now() / 1000);
   } catch {
-    return true;
+    return -1;
   }
-};
+}
+
+/** True when the token has expired (with a 30-second safety buffer). */
+const isTokenExpired = (token) => secondsUntilExpiry(token) < 30;
 
 /**
- * Resolve the user's id string from the object returned by AuthService.getUser().
- *
- * The backend's GET /api/auth/getloggeduser/:id handler explicitly maps
- * `_id` → `id` in its response shape, so `userInfo.id` is the reliable field.
- * We fall back to `_id` for any future endpoint that may return the raw document.
+ * Resolve the user's id from either `id` or `_id`.
+ * The backend's getloggeduser endpoint returns `id`; raw documents use `_id`.
  */
 const resolveUserId = (userInfo) =>
   userInfo?.id?.toString() ?? userInfo?._id?.toString() ?? null;
 
-// ── Provider ───────────────────────────────────────────────────────────────────
+// ── reCAPTCHA reset ───────────────────────────────────────────────────────────
+function resetCaptcha() {
+  try {
+    if (window.grecaptcha?.reset) window.grecaptcha.reset();
+  } catch (err) {
+    console.warn('[AuthContext] reCAPTCHA reset failed:', err?.message);
+  }
+}
+
+// ── Daily streak dedup ────────────────────────────────────────────────────────
+function maybeLogDailyStreak(token) {
+  const today = new Date().toISOString().split('T')[0]; // "YYYY-MM-DD"
+  const key   = 'streak_logged_date';
+  if (localStorage.getItem(key) === today) return; // already logged today
+  localStorage.setItem(key, today);
+  fetch(`${BACKEND_URL}/api/activity/log-daily-streak`, {
+    method:  'POST',
+    headers: { Authorization: `Bearer ${token}` },
+  }).catch(() => { /* fire-and-forget */ });
+}
+
+// ── Provider ──────────────────────────────────────────────────────────────────
 export const AuthProvider = ({ children }) => {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
-  const [user, setUser] = useState(null);
-  const [token, setToken] = useState(
-    () => localStorage.getItem('token')
-  );
+  const [user,            setUser]            = useState(null);
+  const [loading,         setLoading]         = useState(true);   // true during session restore
+  const [authError,       setAuthError]       = useState(null);   // last auth error string
 
-  const socketRef = useRef(null);
+  const tokenRef      = useRef(localStorage.getItem('token'));   // mutable, not state
+  const socketRef     = useRef(null);
+  const offConnectRef = useRef(null);
+  const expiryTimerRef = useRef(null);
 
-  // ── Socket setup — connects and emits user-online only ───────────────────
-  //   Notification listener is NOT registered here; NotificationContext owns it.
+  // ── Socket setup ────────────────────────────────────────────────────────────
   const setupSocket = useCallback(async (userInfo) => {
     try {
       const sock = await initializeSocket();
@@ -84,172 +88,237 @@ export const AuthProvider = ({ children }) => {
       socketRef.current = sock;
 
       const onConnect = () => {
-        // FIX: resolve id from either `id` or `_id` — backend returns `id`
         const userId = resolveUserId(userInfo);
         if (!userId) return;
-
         sock.emit('user-online', {
           userId,
-          name: userInfo.name ?? '',
-          hometown: userInfo.hometown ?? '',
-          currentcity: userInfo.currentcity ?? '',
+          name:        userInfo.name        ?? '',
+          hometown:    userInfo.hometown     ?? '',
+          currentcity: userInfo.currentcity  ?? '',
         });
         sock.emit('join-room', userId);
       };
 
-      // Register connect handler without clobbering other listeners
-      const offConnect = onSocketEvent('connect', onConnect);
+      offConnectRef.current?.(); // remove previous listener if any
+      offConnectRef.current = onSocketEvent('connect', onConnect);
       if (sock.connected) onConnect();
-
-      // Store cleanup so logout can remove it
-      socketRef._offConnect = offConnect;
     } catch (err) {
       console.error('[AuthContext] setupSocket failed:', err);
     }
   }, []);
 
-  // ── Logout ────────────────────────────────────────────────────────────────
-  const logout = useCallback(() => {
-    try {
-      // ✅ Reset reCAPTCHA (v2 + v3 safety)
-      if (window.grecaptcha) {
-        // Reset all rendered widgets (v2)
-        if (typeof window.grecaptcha.reset === 'function') {
-          window.grecaptcha.reset();
-        }
+  // ── Core logout (safe to call multiple times) ───────────────────────────────
+  const logout = useCallback((reason) => {
+    resetCaptcha();
 
-        // Optional: clear any pending executions (v3 safe guard)
-        if (typeof window.grecaptcha.execute === 'function') {
-          // No direct cancel API, but calling reset ensures state cleanup
-          console.info('[AuthContext] reCAPTCHA reset on logout');
-        }
-      }
-    } catch (err) {
-      console.warn('[AuthContext] reCAPTCHA reset failed:', err);
-    }
-
-    const sock = socketRef.current || getSocket();
-
-    // FIX: mirror the same id resolution used in setupSocket
+    const sock   = socketRef.current || getSocket();
     const userId = resolveUserId(user);
     if (sock?.connected && userId) {
       sock.emit('user-offline', userId);
     }
 
-    // Remove only our connect listener before full teardown
-    socketRef._offConnect?.();
+    offConnectRef.current?.();
+    offConnectRef.current = null;
     disconnectSocket();
     socketRef.current = null;
-    socketRef._offConnect = null;
 
-    // Clear storage
-    ['token', 'User', 'refreshToken', 'notifications'].forEach((k) =>
-      localStorage.removeItem(k)
-    );
-
-    // Reset state
-    setToken(null);
-    setIsAuthenticated(false);
-    setUser(null);
-
-    console.info('[AuthContext] User logged out + cleanup complete');
-  }, [user]);
-
-  // ── Auto-restore session on mount ─────────────────────────────────────────
-  useEffect(() => {
-    if (!token) return;
-
-    if (isTokenExpired(token)) {
-      console.warn('[AuthContext] Stored token expired — clearing.');
-
-      // ✅ Also reset captcha before logout (important edge case)
-      try {
-        if (window.grecaptcha?.reset) {
-          window.grecaptcha.reset();
-        }
-      } catch (err) {
-        console.warn('[AuthContext] reCAPTCHA reset during auto-expiry failed:', err);
-      }
-
-      logout();
-      return;
+    // Stop token-expiry timer
+    if (expiryTimerRef.current) {
+      clearInterval(expiryTimerRef.current);
+      expiryTimerRef.current = null;
     }
 
-    setIsAuthenticated(true);
+    AuthService.logout(); // clears localStorage keys
+    tokenRef.current = null;
 
-    AuthService.getUser()
-      .then((userInfo) => {
+    setIsAuthenticated(false);
+    setUser(null);
+    setLoading(false);
+
+    if (reason) console.info(`[AuthContext] Logout: ${reason}`);
+  }, [user]);
+
+  // ── Proactive token expiry check ────────────────────────────────────────────
+  const startExpiryWatch = useCallback((token) => {
+    if (expiryTimerRef.current) clearInterval(expiryTimerRef.current);
+
+    expiryTimerRef.current = setInterval(async () => {
+      const t = localStorage.getItem('token');
+      if (!t) { logout('token removed externally'); return; }
+
+      const secs = secondsUntilExpiry(t);
+
+      // Already expired
+      if (secs < 0) {
+        clearInterval(expiryTimerRef.current);
+        toast.warn('Your session has expired. Please log in again.');
+        logout('token expired');
+        return;
+      }
+
+      // Within 5 minutes — attempt refresh
+      if (secs < 300 && window.__refreshToken) {
+        try {
+          const newToken = await window.__refreshToken();
+          if (newToken) {
+            localStorage.setItem('token', newToken);
+            tokenRef.current = newToken;
+          } else {
+            // Refresh returned nothing — let the next interval handle expiry
+          }
+        } catch {
+          // Refresh failed — will log out when truly expired
+        }
+      }
+    }, 60_000); // check every 60 s
+  }, [logout]);
+
+  // ── auth:unauthorized event from apiRequest ─────────────────────────────────
+  useEffect(() => {
+    const handler = () => {
+      logout('401 from apiRequest');
+    };
+    window.addEventListener('auth:unauthorized', handler);
+    return () => window.removeEventListener('auth:unauthorized', handler);
+  }, [logout]);
+
+  // ── Visibility-change re-validation ────────────────────────────────────────
+  useEffect(() => {
+    const handler = () => {
+      if (document.visibilityState !== 'visible') return;
+      const t = localStorage.getItem('token');
+      if (!t) return;
+      if (isTokenExpired(t)) {
+        toast.warn('Your session expired while you were away. Please log in again.');
+        logout('token expired on visibility change');
+      }
+    };
+    document.addEventListener('visibilitychange', handler);
+    return () => document.removeEventListener('visibilitychange', handler);
+  }, [logout]);
+
+  // ── Storage event: sync logout across tabs ──────────────────────────────────
+  useEffect(() => {
+    const handler = (e) => {
+      if (e.key === 'token' && !e.newValue && isAuthenticated) {
+        logout('token removed in another tab');
+      }
+    };
+    window.addEventListener('storage', handler);
+    return () => window.removeEventListener('storage', handler);
+  }, [isAuthenticated, logout]);
+
+  // ── Session restore on mount ─────────────────────────────────────────────────
+  useEffect(() => {
+    const controller = new AbortController();
+    let isMounted    = true;
+
+    async function restore() {
+      const token = localStorage.getItem('token');
+
+      if (!token) {
+        if (isMounted) setLoading(false);
+        return;
+      }
+
+      if (isTokenExpired(token)) {
+        console.warn('[AuthContext] Stored token expired — clearing.');
+        resetCaptcha();
+        if (isMounted) {
+          logout('stored token expired on mount');
+        }
+        return;
+      }
+
+      if (isMounted) setIsAuthenticated(true);
+
+      try {
+        const userInfo = await AuthService.getUser({ signal: controller.signal });
+        if (!isMounted) return;
+
         if (!userInfo) {
-          logout();
+          logout('getUser returned null on mount');
           return;
         }
 
+        tokenRef.current = token;
         setUser(userInfo);
-        setupSocket(userInfo);
-      })
-      .catch((err) => {
-        console.error('[AuthContext] Auto-restore failed:', err);
+        await setupSocket(userInfo);
+        startExpiryWatch(token);
+      } catch (err) {
+        if (!isMounted || err.name === 'AbortError') return;
+        console.error('[AuthContext] Session restore failed:', err);
+        logout('session restore error');
+      } finally {
+        if (isMounted) setLoading(false);
+      }
+    }
 
-        // ✅ Ensure captcha cleanup even on failure
-        try {
-          if (window.grecaptcha?.reset) {
-            window.grecaptcha.reset();
-          }
-        } catch (err) {
-          console.warn('[AuthContext] reCAPTCHA reset during auto-expiry failed:', err);
-        }
+    restore();
 
-        logout();
-      });
-
+    return () => {
+      isMounted = false;
+      controller.abort();
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []); // intentionally runs once on mount
 
-  // ── Login ─────────────────────────────────────────────────────────────────
-  const login = useCallback(async (rawToken) => {
+  // ── Login ────────────────────────────────────────────────────────────────────
+  const login = useCallback(async (rawToken, userInfo) => {
+    setAuthError(null);
+
     if (!rawToken || rawToken === 'null' || rawToken === 'undefined') {
-      toast.error('Invalid login token');
+      const msg = 'Invalid login token';
+      setAuthError(msg);
+      toast.error(msg);
       return;
     }
 
-    const cleanToken = rawToken.trim();
-    if (isTokenExpired(cleanToken)) {
-      toast.error('Session expired. Please log in again.');
+    const cleanedToken = rawToken.trim();
+    if (isTokenExpired(cleanedToken)) {
+      const msg = 'Session expired. Please log in again.';
+      setAuthError(msg);
+      toast.error(msg);
       return;
     }
 
-    localStorage.setItem('token', cleanToken);
-    setToken(cleanToken);
+    localStorage.setItem('token', cleanedToken);
+    tokenRef.current = cleanedToken;
     setIsAuthenticated(true);
 
     try {
-      const userInfo = await AuthService.getUser();
-      if (userInfo) {
-        setUser(userInfo);
-        localStorage.setItem('User', JSON.stringify(userInfo));
+      // Accept userInfo pre-fetched by the calling component (avoids extra round-trip)
+      const resolvedUser = userInfo ?? await AuthService.getUser();
+      if (resolvedUser) {
+        setUser(resolvedUser);
+        localStorage.setItem('User', JSON.stringify(resolvedUser));
       }
 
-      // Log daily streak — fire and forget.
-      // FIX: use the same BACKEND_URL constant as the rest of the file so
-      // both env vars always resolve to the same origin.
-      fetch(`${BACKEND_URL}/api/activity/log-daily-streak`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${cleanToken}` },
-      }).catch(() => { });
-
-      await setupSocket(userInfo);
+      maybeLogDailyStreak(cleanedToken);
+      await setupSocket(resolvedUser ?? {});
+      startExpiryWatch(cleanedToken);
     } catch (err) {
       console.error('[AuthContext] login setup failed:', err);
     }
-  }, [setupSocket]);
+  }, [setupSocket, startExpiryWatch]);
+
+  // ── Cleanup on unmount ────────────────────────────────────────────────────────
+  useEffect(() => {
+    return () => {
+      if (expiryTimerRef.current) clearInterval(expiryTimerRef.current);
+      offConnectRef.current?.();
+    };
+  }, []);
 
   return (
     <AuthContext.Provider
       value={{
         isAuthenticated,
-        authtoken: token, // legacy alias
-        token,
         user,
+        token:    tokenRef.current,
+        authtoken: tokenRef.current, // legacy alias
+        loading,
+        authError,
         login,
         logout,
       }}

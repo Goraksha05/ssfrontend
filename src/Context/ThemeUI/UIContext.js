@@ -1,21 +1,57 @@
+/**
+ * UIContext.js — UI Panel & Navigation State
+ *
+ * CHANGE FROM PREVIOUS VERSION
+ * ─────────────────────────────
+ * Modal open/close state has been REMOVED from here. It now lives in
+ * ModalContext.js, which is the single source of truth for:
+ *   - scroll locking
+ *   - isAnyModalOpen flag
+ *   - all modal visibility
+ *
+ * What REMAINS here:
+ *   - Mobile menu open/close
+ *   - Notification panel open/close
+ *   - Theme picker open/close
+ *   - Login / Register / ForgotPassword modal triggers
+ *     (these are kept here because Navbar needs to open them imperatively;
+ *      their scroll lock is handled by ModalContext via useRegisterModal)
+ *
+ * REMOVED from this file:
+ *   - isProfileModalOpen / setIsProfileModalOpen
+ *   - isRewardsModalOpen / setIsRewardsModalOpen
+ *   - isCropModalOpen / setIsCropModalOpen
+ *   - isAnyModalOpen (now from ModalContext)
+ *   - useScrollLock (now handled centrally in ModalContext)
+ */
+
 import React, { createContext, useContext, useState, useEffect } from 'react';
 
 const UIContext = createContext();
 
 export const UIProvider = ({ children }) => {
+  // ── Navigation panels ────────────────────────────────────────────────────
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [isNotificationPanelOpen, setIsNotificationPanelOpen] = useState(false);
-  const [isTaskModalOpen, setIsTaskModalOpen] = useState(false);
+
+  // ── Auth modals ──────────────────────────────────────────────────────────
+  // These flags control which auth modal is displayed.
+  // Scroll lock for these modals is handled by useRegisterModal() inside
+  // each auth modal component — not here.
   const [isLoginModalOpen, setIsLoginModalOpen] = useState(false);
   const [isRegisterModalOpen, setIsRegisterModalOpen] = useState(false);
   const [isForgotPasswordModalOpen, setIsForgotPasswordModalOpen] = useState(false);
-  const [activeTaskId, setActiveTaskId] = useState(null);
-  const [isThemePickerOpen, setIsThemePickerOpen] = useState(false);
 
+  // ── Task/Activity modal ──────────────────────────────────────────────────
+  const [isTaskModalOpen, setIsTaskModalOpen] = useState(false);
+  const [activeTaskId, setActiveTaskId] = useState(null);
+
+  // ── Theme picker ─────────────────────────────────────────────────────────
+  const [isThemePickerOpen, setIsThemePickerOpen] = useState(false);
   const openThemePicker = () => setIsThemePickerOpen(true);
   const closeThemePicker = () => setIsThemePickerOpen(false);
 
-  // Handle auto-close on browser navigation
+  // ── Auto-close on browser navigation ────────────────────────────────────
   useEffect(() => {
     const closeMenus = () => {
       setIsMobileMenuOpen(false);
@@ -25,7 +61,7 @@ export const UIProvider = ({ children }) => {
     return () => window.removeEventListener('popstate', closeMenus);
   }, []);
 
-  // Handle outside clicks to close panels/menus
+  // ── Outside click handler for panels ────────────────────────────────────
   useEffect(() => {
     const handleClickOutside = (event) => {
       const target = event.target;
@@ -48,7 +84,7 @@ export const UIProvider = ({ children }) => {
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, [isNotificationPanelOpen, isMobileMenuOpen]);
 
-  // UI togglers
+  // ── Togglers ─────────────────────────────────────────────────────────────
   const toggleMobileMenu = () => {
     setIsMobileMenuOpen((prev) => !prev);
     if (!isMobileMenuOpen) setIsNotificationPanelOpen(false);
@@ -59,7 +95,7 @@ export const UIProvider = ({ children }) => {
     if (!isNotificationPanelOpen) setIsMobileMenuOpen(false);
   };
 
-  // Task/Activity modal
+  // ── Task modal ────────────────────────────────────────────────────────────
   const openTaskModal = (taskId) => {
     setActiveTaskId(taskId);
     setIsTaskModalOpen(true);
@@ -70,13 +106,13 @@ export const UIProvider = ({ children }) => {
     setActiveTaskId(null);
   };
 
-  // Login/Register/Forgot Password
+  // ── Auth modal openers ────────────────────────────────────────────────────
+  // Each opener closes the other two so only one auth step is visible.
   const openLoginModal = () => {
     setIsLoginModalOpen(true);
     setIsRegisterModalOpen(false);
     setIsForgotPasswordModalOpen(false);
   };
-
   const closeLoginModal = () => setIsLoginModalOpen(false);
 
   const openRegisterModal = () => {
@@ -84,7 +120,6 @@ export const UIProvider = ({ children }) => {
     setIsLoginModalOpen(false);
     setIsForgotPasswordModalOpen(false);
   };
-
   const closeRegisterModal = () => setIsRegisterModalOpen(false);
 
   const openForgotPasswordModal = () => {
@@ -92,26 +127,29 @@ export const UIProvider = ({ children }) => {
     setIsLoginModalOpen(false);
     setIsRegisterModalOpen(false);
   };
-
   const closeForgotPasswordModal = () => setIsForgotPasswordModalOpen(false);
 
   return (
     <UIContext.Provider
       value={{
-        // Visibility states
+        // Panel visibility
         isMobileMenuOpen,
         isNotificationPanelOpen,
+
+        // Panel controls
+        toggleMobileMenu,
+        toggleNotificationPanel,
+
+        // Task modal
         isActivityModalOpen: isTaskModalOpen,
+        activeActivityId: activeTaskId,
+        openActivityModal: openTaskModal,
+        closeActivityModal: closeTaskModal,
+
+        // Auth modals
         isLoginModalOpen,
         isRegisterModalOpen,
         isForgotPasswordModalOpen,
-        activeActivityId: activeTaskId,
-
-        // UI controls
-        toggleMobileMenu,
-        toggleNotificationPanel,
-        openActivityModal: openTaskModal,
-        closeActivityModal: closeTaskModal,
         openLoginModal,
         closeLoginModal,
         openRegisterModal,
@@ -119,7 +157,7 @@ export const UIProvider = ({ children }) => {
         openForgotPasswordModal,
         closeForgotPasswordModal,
 
-        // Theme Picker
+        // Theme picker
         isThemePickerOpen,
         openThemePicker,
         closeThemePicker,

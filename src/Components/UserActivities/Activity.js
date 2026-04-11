@@ -1,9 +1,9 @@
 // Activity.jsx — Improved main Activity page
-import React, { useState, useEffect, useContext, useCallback } from 'react';
+import React, { useState, useEffect, /*useContext,*/ useCallback } from 'react';
 import { useAuth } from '../../Context/Authorisation/AuthContext';
-import UserActivityDashboard from './UserActivityDashboard';
-import postContext from '../../Context/Posts/PostContext';
-import { StreakProvider } from '../../Context/Activity/StreakContext';
+// import UserActivityDashboard from './UserActivityDashboard';
+// import postContext from '../../Context/Posts/PostContext';
+// import { StreakProvider } from '../../Context/Activity/StreakContext';
 import apiRequest from '../../utils/apiRequest';
 import ObtainedRewardsModal from './ObtainedRewardsModal';
 import RewardsHub from '../Rewards/RewardsHub';
@@ -14,16 +14,16 @@ const Activity = () => {
   const { user: currentUser, isAuthenticated, token } = useAuth();
 
   const [
-    // userData,
-    setUserData
+    // userData
+    , setUserData
   ] = useState(null);
-  const [activeTab, setActiveTab] = useState('streak');
+  // const [activeTab, setActiveTab] = useState('streak');
   const [showRewards, setShowRewards] = useState(false);
   const [
-    // fetching,
-    setFetching
+    // fetching
+    , setFetching
   ] = useState(false);
-  const { statePosts } = useContext(postContext);
+  // const { statePosts } = useContext(postContext);
 
   const fetchUser = useCallback(async () => {
     if (!currentUser?._id || !token) return;
@@ -54,11 +54,11 @@ const Activity = () => {
     );
   }
 
-  const tabs = [
-    { key: 'streak', label: '🔥 Streaks', color: '#ff6b35' },
-    { key: 'referral', label: '🤝 Referrals', color: '#10b981' },
-    { key: 'post', label: '📝 Posts', color: '#f59e0b' },
-  ];
+  // const tabs = [
+  //   { key: 'streak', label: '🔥 Streaks', color: '#ff6b35' },
+  //   { key: 'referral', label: '🤝 Referrals', color: '#10b981' },
+  //   { key: 'post', label: '📝 Posts', color: '#f59e0b' },
+  // ];
 
   // const rewardItems = [
   //   { icon: '🛒', label: 'Grocery Coupons', value: `₹${userData?.totalGroceryCoupons || 0}`,  color: '#10b981' },
@@ -98,7 +98,7 @@ const Activity = () => {
       <RewardsHub/>
 
       {/* ── Tab Navigation ── */}
-      <div className="activity-tab-bar">
+      {/* <div className="activity-tab-bar">
         {tabs.map(tab => (
           <button
             key={tab.key}
@@ -109,10 +109,10 @@ const Activity = () => {
             {tab.label}
           </button>
         ))}
-      </div>
+      </div> */}
 
       {/* ── Content Panel ── */}
-      <StreakProvider userId={currentUser._id} onActivityRecorded={fetchUser}>
+      {/* <StreakProvider userId={currentUser._id} onActivityRecorded={fetchUser}>
         <div className="activity-panel">
           <UserActivityDashboard
             currentUserId={currentUser._id}
@@ -121,7 +121,7 @@ const Activity = () => {
             onActivityRecorded={fetchUser}
           />
         </div>
-      </StreakProvider>
+      </StreakProvider> */}
 
       {/* ── Obtained Rewards Modal ── */}
       {showRewards && (

@@ -1,151 +1,184 @@
-// context/ReferralContext.js
-//
-// FIXES (cumulative):
-//   1. Behavior-tracking signal moved into a useEffect (runs once on mount,
-//      not on every render) to prevent inflating referral_sent signal counts.
-//
-//   2. Referral activity filter now uses .toString() comparison so Mongoose
-//      ObjectId values match correctly instead of always returning false.
-//
-//   3. ESLint react-hooks/exhaustive-deps warning on fetchReferralData's
-//      dependency array: `getUserId` was listed as missing.
-//      Root cause: getToken and getUserId were defined as plain arrow functions
-//      inside the component body, so React's lint rule saw them as values that
-//      could change on every render and required them as deps. But adding them
-//      as deps would recreate apiRequest and fetchReferralData on every render,
-//      defeating memoisation entirely and causing an infinite fetch loop.
-//      Fix: move both pure utility functions to module scope. Module-level
-//      functions are stable references — they are never recreated, never change,
-//      and correctly do NOT belong in any useCallback/useEffect dependency array.
+// src/Context/ReferralContext.js
 
-import React, { createContext, useState, useEffect, useContext, useCallback } from 'react';
+import React, {
+  createContext, useState, useEffect,
+  useContext, useCallback, useRef, useMemo,
+} from 'react';
 import { jwtDecode } from 'jwt-decode';
+import apiRequest from '../../utils/apiRequest';
 import { emitSignal } from '../../utils/behaviorSDK';
 
-const ReferralContext = createContext();
-const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || process.env.REACT_APP_SERVER_URL || '';
+const ReferralContext = createContext(null);
 
-// ── Module-level helpers ──────────────────────────────────────────────────────
-// Defined outside the component so they are stable references that never
-// change between renders. This means they correctly do NOT appear in any
-// useCallback or useEffect dependency array — the lint rule only flags
-// functions that are declared inside the component body (and therefore
-// re-created on every render). These read from localStorage/decode the JWT
-// fresh on every call, so they never hold stale values either.
+const BACKEND_URL =
+  process.env.REACT_APP_BACKEND_URL ||
+  process.env.REACT_APP_SERVER_URL   ||
+  '';
+const CACHE_TTL_MS = 60_000; // 60 s
 
-const getToken = () => localStorage.getItem('token');
+// ── Module-level helpers (stable references, no closure risk) ─────────────────
 
-const getUserId = () => {
+const getToken   = () => localStorage.getItem('token');
+const getUserId  = () => {
   try {
     const t = getToken();
-    return t ? jwtDecode(t)?.user?.id : '';
+    return t ? jwtDecode(t)?.user?.id ?? '' : '';
   } catch {
     return '';
   }
 };
-
-const safeJson = async (res) => {
+const getReferralId = () => {
   try {
-    return await res.json();
-  } catch (e) {
-    const text = await res.text().catch(() => '');
-    console.error('❌ JSON parse failed:', text);
-    return {};
+    const t = getToken();
+    return t ? jwtDecode(t)?.user?.referralId ?? '' : '';
+  } catch {
+    return '';
   }
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const ReferralProvider = ({ children }) => {
-  const [referralActivities, setReferralActivities] = useState([]);
-  const [referralCount,      setReferralCount]       = useState(0);
-  const [referredUsers,      setReferredUsers]        = useState([]);
-  const [loading,            setLoading]              = useState(true);
+  const [referralActivities,    setReferralActivities]    = useState([]);
+  const [referredUsers,         setReferredUsers]         = useState([]);
+  const [referralCount,         setReferralCount]         = useState(0);
+  const [activeReferralCount,   setActiveReferralCount]   = useState(0); // with active subscription
+  const [referralId,            setReferralId]            = useState('');
+  const [loading,               setLoading]               = useState(false);
+  const [error,                 setError]                 = useState(null);
 
-  // apiRequest has no deps because getToken is now a stable module-level fn
-  const apiRequest = useCallback(async (method, path) => {
-    const token = getToken();
-    const res = await fetch(`${BACKEND_URL}${path}`, {
-      method,
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization:  `Bearer ${token}`,
-      },
-    });
-    return res;
-  }, []); // stable — getToken is module-level, BACKEND_URL is a module constant
+  const lastFetchRef  = useRef(0);          // timestamp of last successful fetch
+  const abortRef      = useRef(null);       // AbortController for the active fetch
+  const fetchingRef   = useRef(false);      // guard against concurrent calls
+  const signalSentRef = useRef(false);      // emit behavior signal only once per mount
 
-  // fetchReferralData only depends on apiRequest (also stable after the fix)
-  const fetchReferralData = useCallback(async () => {
-    const token  = getToken();
-    const userId = getUserId();
-    if (!token || !userId) return;
-
-    try {
-      const [activityRes, usersRes] = await Promise.all([
-        apiRequest('GET', '/api/activity/user'),
-        apiRequest('GET', '/api/auth/users/referred'),
-      ]);
-
-      const activityData = await safeJson(activityRes);
-      const usersData    = await safeJson(usersRes);
-
-      const activities = Array.isArray(activityData.activities)
-        ? activityData.activities
-        : [];
-
-      // Compare using .toString() — Mongoose ObjectIds are objects, not strings
-      const referrals = activities.filter((act) => {
-        if (act.type !== 'referral') return false;
-        const referralId =
-          act.referral?._id?.toString() ?? act.referral?.toString() ?? act.referral;
-        return referralId === userId;
-      });
-      setReferralActivities(referrals);
-
-      const referred = Array.isArray(usersData.referredUsers)
-        ? usersData.referredUsers
-        : [];
-      setReferredUsers(referred);
-      setReferralCount(referred.length);
-    } catch (err) {
-      console.error('Error fetching referral data:', err);
-    } finally {
-      setLoading(false);
-    }
-  }, [apiRequest]); // only dep is apiRequest — module-level helpers need no listing
-
+  // ── Behavior signal (once per provider lifetime) ──────────────────────────
   useEffect(() => {
-    fetchReferralData();
-  }, [fetchReferralData]);
-
-  // ── Behavior signal (once on mount) ──────────────────────────────────────
-  useEffect(() => {
+    if (signalSentRef.current) return;
+    signalSentRef.current = true;
     try {
       const session = window.__sdkSession;
       if (!session) return;
-
-      const now           = Date.now();
-      const last          = window.__lastReferralTs ?? now;
-      const timeSinceLast = now - last;
-
+      const now  = Date.now();
+      const last = window.__lastReferralTs ?? now;
       emitSignal(session, 'referral_sent', {
-        interval_ms_since_last_referral: timeSinceLast,
+        interval_ms_since_last_referral: now - last,
       });
-
       window.__lastReferralTs = now;
+    } catch { /* non-fatal */ }
+  }, []);
+
+  // ── fetchReferralData ─────────────────────────────────────────────────────
+  /**
+   * @param {boolean} [force=false]  Skip the TTL cache and always refetch.
+   */
+  const fetchReferralData = useCallback(async (force = false) => {
+    const token  = getToken();
+    const userId = getUserId();
+    if (!token || !userId) return;
+    if (fetchingRef.current) return;
+
+    // TTL cache guard
+    const age = Date.now() - lastFetchRef.current;
+    if (!force && age < CACHE_TTL_MS) return;
+
+    // Cancel any in-flight request
+    abortRef.current?.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
+
+    fetchingRef.current = true;
+    setLoading(true);
+    setError(null);
+
+    try {
+      const [activityRes, usersRes] = await Promise.all([
+        apiRequest.get(`${BACKEND_URL}/api/activity/user`, {
+          headers: { Authorization: `Bearer ${token}` },
+          signal: controller.signal,
+        }),
+        apiRequest.get(`${BACKEND_URL}/api/auth/users/referred`, {
+          headers: { Authorization: `Bearer ${token}` },
+          signal: controller.signal,
+        }),
+      ]);
+
+      const activities = Array.isArray(activityRes.data?.activities)
+        ? activityRes.data.activities
+        : [];
+
+      // Filter to referral-type activities that this user triggered
+      const referrals = activities.filter((act) => {
+        if (act.type !== 'referral') return false;
+        const refId =
+          act.referral?._id?.toString() ??
+          act.referral?.toString()       ??
+          act.referral;
+        return refId === userId;
+      });
+      setReferralActivities(referrals);
+
+      const referred = Array.isArray(usersRes.data?.referredUsers)
+        ? usersRes.data.referredUsers
+        : [];
+      setReferredUsers(referred);
+      setReferralCount(referred.length);
+      setActiveReferralCount(
+        referred.filter((u) => u.subscription?.active).length
+      );
+
+      setReferralId(getReferralId());
+      lastFetchRef.current = Date.now();
     } catch (err) {
-      console.warn('[ReferralContext] referral signal failed:', err);
+      if (err.name === 'CanceledError' || err.name === 'AbortError') return;
+      console.error('[ReferralContext] fetchReferralData:', err);
+      setError('Failed to load referral data. Please refresh.');
+    } finally {
+      setLoading(false);
+      fetchingRef.current = false;
     }
-  }, []); // stable — no component-scoped values referenced
+  }, []); // stable — all deps are module-level
+
+  // ── Fetch on mount ────────────────────────────────────────────────────────
+  useEffect(() => {
+    fetchReferralData();
+    return () => {
+      abortRef.current?.abort();
+    };
+  }, [fetchReferralData]);
+
+  // ── Cache invalidation (call from sibling context on relevant mutations) ──
+  const invalidate = useCallback(() => {
+    lastFetchRef.current = 0;
+    fetchReferralData(true);
+  }, [fetchReferralData]);
+
+  // ── Stable context value ──────────────────────────────────────────────────
+  const value = useMemo(() => ({
+    referralActivities,
+    referralCount,
+    activeReferralCount,
+    referredUsers,
+    referralId,
+    loading,
+    error,
+    fetchReferralData,
+    invalidate,
+  }), [
+    referralActivities, referralCount, activeReferralCount,
+    referredUsers, referralId, loading, error,
+    fetchReferralData, invalidate,
+  ]);
 
   return (
-    <ReferralContext.Provider
-      value={{ referralActivities, referralCount, referredUsers, fetchReferralData, loading }}
-    >
+    <ReferralContext.Provider value={value}>
       {children}
     </ReferralContext.Provider>
   );
 };
 
-export const useReferral = () => useContext(ReferralContext);
+export const useReferral = () => {
+  const ctx = useContext(ReferralContext);
+  if (!ctx) throw new Error('useReferral must be used within a ReferralProvider');
+  return ctx;
+};

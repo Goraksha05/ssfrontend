@@ -528,13 +528,7 @@ const ChatWindow = ({ onBackToList, replyTo, setReplyTo }) => {
       {/* ── Header ─────────────────────────────────────────────────────── */}
       <div className="chat-header">
         <div className="chat-header-left">
-          {/*
-            FIX 1: onBackToList wired correctly. The button uses
-            `chat-back-btn` so the CSS `display:flex !important` rule
-            on mobile kicks in. We also show it always via an inline
-            style override so desktop users navigating programmatically
-            (e.g. from a notification) can still go back.
-          */}
+
           <button
             className="chat-header-btn chat-back-btn"
             onClick={onBackToList}

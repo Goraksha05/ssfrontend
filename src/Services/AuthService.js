@@ -1,125 +1,186 @@
 // src/Services/AuthService.js
-//
-// Thin service layer for auth API calls.
-// Does NOT manage React state — that belongs in AuthContext.
-//
-
 
 import { reconnectSocket } from '../WebSocket/WebSocketClient';
+import { setRefreshTokenFn } from '../utils/apiRequest';
 
 const BASE =
   process.env.REACT_APP_BACKEND_URL ||
-  process.env.REACT_APP_SERVER_URL ||
+  process.env.REACT_APP_SERVER_URL  ||
   '';
 
 const API_URL = `${BASE}/api/auth`;
 
-// ─── Token helper ─────────────────────────────────────────────────────────────
-const cleanToken = (raw) => (raw ?? '').trim().replace(/\s/g, '');
+// ── Constants ──────────────────────────────────────────────────────────────────
+const AUTH_STORAGE_KEYS = ['token', 'User', 'refreshToken', 'notifications'];
 
-// ─── AuthService ──────────────────────────────────────────────────────────────
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+/** Strip whitespace and carriage returns that some proxies inject. */
+const cleanToken = (raw) =>
+  (raw ?? '').trim().replace(/\s/g, '');
+
+/** Return true only when `t` looks like a well-formed JWT (three base64 segments). */
+const isValidJwt = (t) =>
+  typeof t === 'string' && t.split('.').length === 3 && t.length > 20;
+
+/**
+ * Normalise the user object returned by the backend so every consumer
+ * always receives `{ id, _id, name, email, … }` regardless of which
+ * endpoint populated the response.
+ *
+ * The login endpoint returns the raw Mongoose document (uses `_id`).
+ * The getloggeduser endpoint explicitly maps `_id → id` in its response.
+ * We ensure both fields are present so callers using either work correctly.
+ */
+function parseUser(raw) {
+  if (!raw) return null;
+  const id = raw.id?.toString() || raw._id?.toString() || null;
+  return { ...raw, id, _id: id };
+}
+
+/**
+ * Shared success-path handler used by login / signup / loginAdmin.
+ * Validates the token, stores credentials, reconnects the socket, and
+ * returns the canonical result object.
+ */
+async function handleAuthSuccess(data) {
+  const token = cleanToken(data.authtoken);
+  if (!isValidJwt(token)) {
+    console.error('[AuthService] Server returned an invalid token:', token?.slice(0, 20));
+    return { success: false, error: 'Server returned an invalid token. Please try again.' };
+  }
+
+  const user = parseUser(data.user);
+  if (!user?.id) {
+    return { success: false, error: 'Server returned an incomplete user object.' };
+  }
+
+  localStorage.setItem('token', token);
+  localStorage.setItem('User', JSON.stringify(user));
+
+  try {
+    await reconnectSocket();
+  } catch (sockErr) {
+    // Non-fatal — socket reconnect failure should not block login
+    console.warn('[AuthService] Socket reconnect failed after login:', sockErr?.message);
+  }
+
+  return { success: true, user, authtoken: token };
+}
+
+/** Build fetch options, merging in an optional AbortSignal. */
+function buildFetchOptions(body, signal) {
+  return {
+    method:  'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body:    JSON.stringify(body),
+    ...(signal ? { signal } : {}),
+  };
+}
+
+/** Central fetch wrapper that surfaces network errors as `{ success: false }`. */
+async function apiFetch(url, options) {
+  try {
+    const res  = await fetch(url, options);
+    const data = await res.json().catch(() => ({}));
+
+    // Hybrid captcha fallback — backend signals v2 is required
+    if (res.status === 403 && data.fallback === 'v2_required') {
+      return { _raw: res, data, fallback: true };
+    }
+
+    return { _raw: res, data, ok: res.ok };
+  } catch (err) {
+    if (err.name === 'AbortError') throw err; // propagate cancellation
+    console.error('[AuthService] fetch error:', err);
+    return { _raw: null, data: {}, ok: false, networkError: true };
+  }
+}
+
+// ── AuthService ───────────────────────────────────────────────────────────────
+
 const AuthService = {
 
   /**
    * Log in with identifier (email | username | phone) + password.
-   * On success stores token + user in localStorage and reconnects the socket.
+   *
+   * @param {{ identifier, password, captchaToken, captchaType, captchaAction, signal }} params
    */
-  login: async ({ identifier, password, captchaToken, captchaType = 'v3', captchaAction = 'login' }) => {
-    try {
-      const res = await fetch(`${API_URL}/login`, {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ identifier, password, captchaToken, captchaType, captchaAction }),
-      });
+  login: async ({
+    identifier,
+    password,
+    captchaToken,
+    captchaType   = 'v3',
+    captchaAction = 'login',
+    signal,
+  }) => {
+    const { data, ok, fallback, networkError } = await apiFetch(
+      `${API_URL}/login`,
+      buildFetchOptions({ identifier, password, captchaToken, captchaType, captchaAction }, signal)
+    );
 
-      const data = await res.json();
-
-      // Hybrid fallback — backend signals v2 is required
-      if (res.status === 403 && data.fallback === 'v2_required') {
-        return { success: false, fallback: 'v2_required' };
-      }
-
-      if (res.ok && data.success && data.authtoken && data.user) {
-        const token = cleanToken(data.authtoken);
-        localStorage.setItem('token', token);
-
-        // Normalise: backend returns `id` (not `_id`) from getloggeduser but
-        // the login endpoint exposes the raw document which uses `_id`.
-        // Store both so downstream code using either field works correctly.
-        const user = { ...data.user, id: data.user._id || data.user.id };
-        localStorage.setItem('User', JSON.stringify(user));
-
-        await reconnectSocket();
-        return { success: true, user, authtoken: token };
-      }
-
-      return {
-        success: false,
-        error: data.error || data.message || 'Login failed',
-      };
-    } catch (err) {
-      console.error('[AuthService] login error:', err);
-      return { success: false, error: 'Login request failed' };
+    if (fallback)      return { success: false, fallback: 'v2_required' };
+    if (networkError)  return { success: false, error: 'Login request failed. Check your network.' };
+    if (!ok || !data.success || !data.authtoken || !data.user) {
+      return { success: false, error: data.error || data.message || 'Login failed.' };
     }
+
+    return handleAuthSuccess(data);
   },
 
   /**
    * Create a new account.
-   * On success stores token + user in localStorage and reconnects the socket.
    *
-   * FIX 3: now checks `data.success` in addition to `data.authtoken` to match
-   * the backend's createuser response contract exactly.
+   * @param {{ name, username, email, phone, password, referralno, role, captchaToken, captchaType, captchaAction, signal }} params
    */
-  signup: async ({ name, username, email, phone, password, referralno, role, captchaToken, captchaType = 'v3', captchaAction = 'signup' }) => {
-    try {
-      const res = await fetch(`${API_URL}/createuser`, {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ name, username, email, phone, password, referralno, role, captchaToken, captchaType, captchaAction }),
-      });
+  signup: async ({
+    name, username, email, phone, password,
+    referralno, role,
+    captchaToken,
+    captchaType   = 'v3',
+    captchaAction = 'signup',
+    signal,
+  }) => {
+    const { data, ok, fallback, networkError } = await apiFetch(
+      `${API_URL}/createuser`,
+      buildFetchOptions({
+        name, username, email, phone, password,
+        referralno, role,
+        captchaToken, captchaType, captchaAction,
+      }, signal)
+    );
 
-      const data = await res.json();
-
-      // Hybrid fallback
-      if (res.status === 403 && data.fallback === 'v2_required') {
-        return { success: false, fallback: 'v2_required' };
-      }
-
-      // FIX 3: backend returns { success: true, authtoken, user } — check all three
-      if (res.ok && data.success && data.authtoken && data.user) {
-        const token = cleanToken(data.authtoken);
-        localStorage.setItem('token', token);
-
-        const user = { ...data.user, id: data.user._id || data.user.id };
-        localStorage.setItem('User', JSON.stringify(user));
-
-        await reconnectSocket();
-        return { success: true, user, authtoken: token };
-      }
-
+    if (fallback)      return { success: false, fallback: 'v2_required' };
+    if (networkError)  return { success: false, error: 'Signup request failed. Check your network.' };
+    if (!ok || !data.success || !data.authtoken || !data.user) {
       return {
         success: false,
-        error: data.message || data.error || data.errors?.[0]?.msg || 'Signup failed',
+        error: data.message || data.error || data.errors?.[0]?.msg || 'Signup failed.',
       };
-    } catch (err) {
-      console.error('[AuthService] signup error:', err);
-      return { success: false, error: 'Signup request failed' };
     }
+
+    return handleAuthSuccess(data);
   },
 
   /**
-   * Fetch the current user from the server using the token + stored user ID.
-   * Returns null on any failure so callers decide what to do (not throws).
+   * Fetch the current user from the server using the stored token + user ID.
+   * Returns null (never throws) on any failure so callers can decide action.
    *
-   * FIX 2: checks res.ok before attempting to parse the body as a success
-   * response so callers receive a meaningful null on 401/500 instead of a
-   * silent null that looks the same as "user not found".
+   * @param {{ signal? }} [opts]
    */
-  getUser: async () => {
+  getUser: async ({ signal } = {}) => {
     const rawToken   = localStorage.getItem('token');
     const storedUser = localStorage.getItem('User');
 
     if (!rawToken || !storedUser) return null;
+
+    // Validate token shape before hitting the network
+    const token = cleanToken(rawToken);
+    if (!isValidJwt(token)) {
+      console.warn('[AuthService] getUser: stored token is malformed — clearing.');
+      AuthService.logout();
+      return null;
+    }
 
     let userId;
     try {
@@ -138,93 +199,92 @@ const AuthService = {
     try {
       const res = await fetch(`${API_URL}/getloggeduser/${userId}`, {
         headers: {
-          'Content-Type': 'application/json',
-          Authorization:  `Bearer ${cleanToken(rawToken)}`,
+          'Content-Type':  'application/json',
+          Authorization:   `Bearer ${token}`,
         },
+        ...(signal ? { signal } : {}),
       });
 
-      // FIX 2: distinguish HTTP errors from "user not found" application errors
       if (!res.ok) {
         console.warn(`[AuthService] getUser: server responded ${res.status}`);
         return null;
       }
 
-      const data = await res.json();
-      return data.success ? data.user : null;
+      const data = await res.json().catch(() => null);
+      return data?.success ? parseUser(data.user) : null;
     } catch (err) {
+      if (err.name === 'AbortError') return null;
       console.error('[AuthService] getUser error:', err);
       return null;
     }
   },
 
   /**
-   * Client-side storage cleanup.
+   * Admin login — validates isAdmin AFTER confirming HTTP success.
    *
-   * FIX 4: This method now ONLY clears localStorage.
-   * Socket disconnection is AuthContext's responsibility because it owns the
-   * socket lifecycle (socketRef, onConnect listeners, user-offline emission).
-   * Calling disconnectSocket() here as well caused double-disconnect races
-   * when AuthContext.logout() and AuthService.logout() were both called, and
-   * could clear tokens written by a concurrent login.
-   *
-   * AuthContext.logout() calls this method for storage cleanup, then handles
-   * socket teardown itself. Do NOT add socket logic back here.
+   * @param {{ identifier, password, captchaToken, captchaType, captchaAction, signal }} params
    */
-  logout: () => {
-    localStorage.removeItem('token');
-    localStorage.removeItem('User');
+  loginAdmin: async ({
+    identifier,
+    password,
+    captchaToken,
+    captchaType   = 'v3',
+    captchaAction = 'login',
+    signal,
+  }) => {
+    const { data, ok, fallback, networkError } = await apiFetch(
+      `${API_URL}/login`,
+      buildFetchOptions({ identifier, password, captchaToken, captchaType, captchaAction }, signal)
+    );
+
+    if (fallback)      return { success: false, fallback: 'v2_required' };
+    if (networkError)  return { success: false, error: 'Login request failed. Check your network.' };
+    if (!ok || !data.success || !data.authtoken || !data.user) {
+      return { success: false, error: data.error || data.message || 'Admin login failed.' };
+    }
+
+    // Guard must come AFTER HTTP success is confirmed
+    if (!data.user.isAdmin) {
+      return { success: false, error: 'Access denied: not an admin.' };
+    }
+
+    return handleAuthSuccess(data);
   },
 
   /**
-   * Admin login — identical to login() but validates the isAdmin flag
-   * AFTER confirming the HTTP request succeeded.
-   *
-   * FIX 1: the admin guard now runs only inside the `res.ok` branch.
-   * Previously `if (!data.user?.isAdmin)` ran first, so any network error
-   * or server error (where data.user is undefined) returned the misleading
-   * "Access denied: not an admin" message instead of the real error.
+   * Client-side logout: clears all auth-related localStorage keys.
+   * Socket teardown is intentionally NOT done here — AuthContext owns that.
    */
-  loginAdmin: async ({ identifier, password, captchaToken, captchaType = 'v3', captchaAction = 'login' }) => {
-    try {
-      const res = await fetch(`${API_URL}/login`, {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ identifier, password, captchaToken, captchaType, captchaAction }),
-      });
+  logout: () => {
+    AUTH_STORAGE_KEYS.forEach((k) => localStorage.removeItem(k));
+  },
 
-      const data = await res.json();
-
-      // Hybrid fallback
-      if (res.status === 403 && data.fallback === 'v2_required') {
-        return { success: false, fallback: 'v2_required' };
-      }      
-
-      // FIX 1: check HTTP success first, THEN validate admin role
-      if (res.ok && data.success && data.authtoken && data.user) {
-        if (!data.user.isAdmin) {
-          return { success: false, error: 'Access denied: not an admin' };
-        }
-
-        const token = cleanToken(data.authtoken);
-        localStorage.setItem('token', token);
-
-        // Normalise id field for consistency with login()
-        const user = { ...data.user, id: data.user._id || data.user.id };
-        localStorage.setItem('User', JSON.stringify(user));
-
-        await reconnectSocket();
-        return { success: true, user, authtoken: token };
-      }
-
-      return {
-        success: false,
-        error: data.error || data.message || 'Admin login failed',
-      };
-    } catch (err) {
-      console.error('[AuthService] loginAdmin error:', err);
-      return { success: false, error: 'Login request failed' };
-    }
+  /**
+   * Token refresh stub.
+   * Currently returns null (no server-side refresh endpoint).
+   * Replace the body when the backend gains POST /api/auth/refresh.
+   *
+   * Must return Promise<string> (new token) or throw on failure.
+   */
+  refreshToken: async () => {
+    // ── Future implementation ──────────────────────────────────────────────
+    // const refreshToken = localStorage.getItem('refreshToken');
+    // if (!refreshToken) return null;
+    // const res = await fetch(`${BASE}/api/auth/refresh`, {
+    //   method: 'POST',
+    //   headers: { 'Content-Type': 'application/json' },
+    //   body: JSON.stringify({ refreshToken }),
+    // });
+    // const data = await res.json();
+    // if (!res.ok || !data.authtoken) throw new Error('Refresh failed');
+    // return cleanToken(data.authtoken);
+    // ─────────────────────────────────────────────────────────────────────
+    return null;
   },
 };
+
+// Register the refresh function with apiRequest so the 401-retry queue works.
+// When refreshToken() returns null, apiRequest falls through to the logout event.
+setRefreshTokenFn(AuthService.refreshToken);
 
 export default AuthService;

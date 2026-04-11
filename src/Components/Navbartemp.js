@@ -28,7 +28,7 @@ import LogoutIcon from '../Assets/LogoutButton.png';
 import { ThemePickerTrigger } from '../Components/Theme/ThemePalettePicker';
 import { useUI } from '../Context/ThemeUI/UIContext';
 // import KycVerification from './KYC/KycVerification';
-
+import { useRegisterModal } from '../Context/ModalContext';
 // ─── NOTE on i18n.js ──────────────────────────────────────────────────────────
 // The old `i18n.js` (i18next/react-i18next) is no longer imported here.
 // All language state is managed by <I18nProvider> via the useI18n() hook.
@@ -37,7 +37,6 @@ import { useUI } from '../Context/ThemeUI/UIContext';
 // ─────────────────────────────────────────────────────────────────────────────
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
-
 
 
 /* ─── Small reusable hover-aware link ────────────────────────────────── */
@@ -60,7 +59,8 @@ function NavLinkItem({ to, icon: Icon, children, onClick }) {
 /* ─── Main Component ─────────────────────────────────────────────────── */
 export default function Navbartemp({ title, myHome }) {
   const { openThemePicker } = useUI();
-
+  const searchDebounceRef = useRef(null);
+  
   const { isAuthenticated, logout, notificationCount, setNotificationCount, authtoken } = useAuth();
   const { openSubscription } = useSubscription();
   const navigate = useNavigate();
@@ -92,27 +92,43 @@ export default function Navbartemp({ title, myHome }) {
   const [selectedUser, setSelectedUser] = useState(null);
   const [showProfileModal, setShowProfileModal] = useState(false);
 
+  useRegisterModal(Boolean(showProfileModal));
 
   const { sendRequest } = useFriend();
 
   /* ── Search ── */
-  const handleSearchChange = async (e) => {
+  const handleSearchChange = useCallback((e) => {
     const query = e.target.value;
-    setSearchQuery(query);
-    if (query.trim().length > 1) {
+    setSearchQuery(query); // update the input immediately (controlled input)
+  
+    // Cancel the previous pending search
+    if (searchDebounceRef.current) {
+      clearTimeout(searchDebounceRef.current);
+    }
+  
+    if (query.trim().length <= 1) {
+      setSearchResults([]);
+      setShowSearchResults(false);
+      return;
+    }
+  
+    // Debounce: only fire the API call 300ms after the user stops typing
+    searchDebounceRef.current = setTimeout(async () => {
       try {
-        const res = await apiRequest.get(`${BACKEND_URL}/api/users/search?query=${encodeURIComponent(query)}`, {
-          headers: { Authorization: `Bearer ${authtoken}` }
-        });
+        const res = await apiRequest.get(
+          `${BACKEND_URL}/api/users/search?query=${encodeURIComponent(query)}`,
+          { headers: { Authorization: `Bearer ${authtoken}` } }
+        );
+        // Both state updates in the same synchronous block → React 18 batches
+        // them into a single re-render. React 17: wrap in ReactDOM.unstable_batchedUpdates
+        // if you see two renders in the profiler.
         setSearchResults(res.data);
         setShowSearchResults(true);
       } catch (err) {
-        console.error("Search error:", err);
+        console.error('Search error:', err);
       }
-    } else {
-      setShowSearchResults(false);
-    }
-  };
+    }, 300);
+  }, [authtoken]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const openProfileModal = async (userId) => {
     try {
@@ -170,6 +186,14 @@ export default function Navbartemp({ title, myHome }) {
       if (logoutTimer.current) clearTimeout(logoutTimer.current);
     };
   }, [handleLogout]);
+
+  useEffect(() => {
+    return () => {
+        if (searchDebounceRef.current) {
+          clearTimeout(searchDebounceRef.current);
+        }
+      };
+  }, []);
 
   /* ── Outside click / Escape ── */
   useEffect(() => {
@@ -333,11 +357,11 @@ export default function Navbartemp({ title, myHome }) {
                   style={{ cursor: "pointer" }}
                   title="Go to Profile"
                 >
-                  <span className="navbar-greet-text">
-                    {isPrime && (
-                      <BadgeCheck size={21} style={{ color: "#38bdf8", marginRight: "4px", verticalAlign: "middle" }} fill="currentColor" stroke="white" />
-                    )}
+                  <span className="d-flex navbar-greet-text">
                     {t["nav.hi_greeting"] ? `${t["nav.hi_greeting"]}, ${userName.split(" ")[0]}` : `Hi, ${userName.split(" ")[0]}`}
+                    {isPrime && (
+                      <BadgeCheck size={18} style={{ color: "#38bdf8", marginLeft: "8px", verticalAlign: "middle" }} fill="currentColor" stroke="white" />
+                    )}
                   </span>
                 </div>
 
@@ -633,8 +657,11 @@ export default function Navbartemp({ title, myHome }) {
             onClick={() => {
               const targetId = selectedUser?.user_id?._id || selectedUser?.user_id || selectedUser?._id;
               if (targetId) {
-                sendRequest(targetId);
                 setShowProfileModal(false);
+
+                setTimeout(() => {
+                  sendRequest(targetId);
+                }, 0);
               } else {
                 console.error("❌ No valid user ID found:", selectedUser);
               }
