@@ -42,6 +42,7 @@ import { ReferralProvider } from './Context/Activity/ReferralContext';
 import PostState from './Context/Posts/PostState';
 import ProfileState from './Context/Profile/ProfileState';
 import { KycProvider } from './Context/KYC/KycContext';
+import { ModalProvider } from './Context/ModalContext';
 
 // ── Behavior SDK ───────────────────────────────────────────────────────────────
 import { startBehaviorSDK, stopBehaviorSDK } from './utils/behaviorSDK';
@@ -112,6 +113,7 @@ function PageLoader() {
 
 // ── AppContent — rendered inside Router so useNavigate/useLocation work ────────
 function AppContent() {
+
   const { isAuthenticated, user } = useAuth();
   const { isThemePickerOpen, closeThemePicker } = useUI();
 
@@ -327,9 +329,11 @@ export default function App() {
             <ChatProvider>
               <ThemeProvider>
                 <UIProvider>
-                  <Router>
-                    <AppContent />
-                  </Router>
+                  <ModalProvider>
+                    <Router>
+                      <AppContent />
+                    </Router>
+                  </ModalProvider>
                 </UIProvider>
               </ThemeProvider>
             </ChatProvider>
