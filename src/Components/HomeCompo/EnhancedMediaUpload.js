@@ -1,18 +1,71 @@
-// EnhancedMediaUpload.js
-import React, { useState, useRef, forwardRef, useImperativeHandle, useCallback } from 'react';
+// EnhancedMediaUpload.js — Render-optimised
+//
+// OPTIMISATIONS (this pass):
+//
+//  1.  MAX_SIZE moved to module scope.
+//      Was declared as `const MAX_SIZE = 500 * 1024 * 1024` inside the
+//      component body on every render, allocating a new binding each time.
+//      At module scope it is created once.
+//
+//  2.  ingestFiles useCallback dep array was [MAX_SIZE].
+//      MAX_SIZE is now a module-scope constant so the dep array is empty ([]),
+//      producing a truly stable function reference for the lifetime of the
+//      component — meaning handleDrop/handleFileChange also never need to
+//      be recreated (see #3).
+//
+//  3.  handleFileChange, handleDragOver, handleDragLeave, handleDrop wrapped
+//      in useCallback.
+//      Previously recreated on every render as plain arrow functions, causing
+//      new function references to be passed to the drop-zone on every state
+//      change (e.g. every drag-over toggle, every file added).
+//
+//  4.  handleRemoveFile and handleReorder wrapped in useCallback.
+//      Previously plain arrows recreated every render. Each MediaCard receives
+//      these as props, so new references on every render defeated any future
+//      memo boundary on those cards (see #5).
+//
+//  5.  MediaCard extracted as React.memo.
+//      The media grid previously re-rendered all cards on every state change
+//      (adding a file, toggling drag-over, opening the lightbox, toggling
+//      crop state). Now each card only re-renders when its own file/preview,
+//      index, total-count (for disabling reorder buttons), or callbacks change.
+//      Callbacks are stable via #3/#4, so in practice a card re-renders only
+//      when its own slot changes.
+//
+//  6.  DropZone extracted as React.memo.
+//      Receives isDragOver and mediaFiles.length as primitives plus stable
+//      callbacks. Re-renders only when the drag state or file count changes —
+//      not when crop state, lightbox index, or an individual card updates.
+//
+//  7.  resetForm wrapped in useCallback([]).
+//      Was a plain function recreated every render; it is used inside
+//      handleSubmit which is exposed via useImperativeHandle.
+//
+//  8.  handleSubmit wrapped in useCallback([postContent, mediaFiles, resetForm]).
+//      Was a plain function; now stable and correctly listed in
+//      useImperativeHandle's deps array.
+//
+//  9.  useImperativeHandle dep array corrected.
+//      Was missing — added [handleSubmit, mediaFiles] so the imperative handle
+//      always reflects the latest handleSubmit and hasMedia state.
+//
+// 10.  cropPayloadRef sync effect dep array comment corrected.
+//      The eslint-disable comment was suppressing a legitimate warning about
+//      missing deps (handleCropApply, handleCropClose, handleCropComplete,
+//      onCropRequest). Those callbacks are stable via useCallback so they
+//      are safe to add, making the effect dependency list honest.
+
+import React, {
+  useState, useRef, forwardRef, useImperativeHandle, useCallback,
+} from 'react';
 import Lightbox from 'react-image-lightbox';
 import 'react-image-lightbox/style.css';
 import { toast } from 'react-toastify';
 
-// All styles live in globals.css § 70 — no CSS here, no useTheme hook.
-// Theme switching is handled entirely by body.theme-dark / body.theme-light
-// class toggling, which is the same pattern used by every other component
-// in the app.
+/* ── Optimisation #1 — module-scope constant ────────────────────────────── */
+const MAX_SIZE = 500 * 1024 * 1024; // 500 MB
 
-/* ─── Canvas crop helper ─────────────────────────────────────────────────────
-   Pure-canvas implementation — no external getCroppedImg import needed.
-   Accepts optional rotation (degrees) forwarded from CropModal's state.
-   ─────────────────────────────────────────────────────────────────────────── */
+/* ─── Canvas crop helper ─────────────────────────────────────────────────── */
 async function getCroppedImg(imageSrc, pixelCrop, rotation = 0) {
   const image = await new Promise((resolve, reject) => {
     const img = new Image();
@@ -54,25 +107,149 @@ async function getCroppedImg(imageSrc, pixelCrop, rotation = 0) {
   );
 }
 
-/* ─── Component ─────────────────────────────────────────────────────────── */
-/**
- * EnhancedMediaUpload no longer owns CropModal rendering.
- * Instead it exposes crop state upward via `onCropRequest` so the
- * parent (Home) can render CropModal at the top of the tree —
- * outside any scrollable container — eliminating the scroll bug.
- *
- * Props:
- *   onFilesPrepared  – called with File[] when ready to submit
- *   postContent      – current post text (used for submit validation)
- *   onCropRequest    – (cropPayload | null) => void
- *                      Called with a payload object when the user clicks Crop,
- *                      and with null when the crop finishes or is cancelled.
- *                      Payload shape:
- *                        { image, onApply, onClose, crop, setCrop, zoom, setZoom, onCropComplete, applying }
- */
+/* ── Optimisation #5 — memo'd per-card component ────────────────────────── */
+// Re-renders only when its own file/preview, position, total count, or any
+// of the stable callbacks changes. In practice: only when its own slot mutates.
+const MediaCard = React.memo(({
+  file, preview, index, total,
+  onRemove, onReorder, onCropOpen, onLightboxOpen,
+}) => {
+  const isImage = file.type.startsWith('image');
+  return (
+    <div className="emu-card" role="listitem">
+      <div
+        className="emu-card-thumb"
+        onClick={() => isImage && onLightboxOpen(index)}
+        title={isImage ? 'Click to enlarge' : undefined}
+      >
+        {isImage ? (
+          <img src={preview} alt={file.name} loading="lazy" />
+        ) : (
+          <>
+            <video
+              src={preview}
+              controls
+              preload="metadata"
+              style={{ pointerEvents: 'auto' }}
+              onClick={(e) => e.stopPropagation()}
+            />
+            <span className="emu-video-badge">VIDEO</span>
+          </>
+        )}
+        <button
+          type="button"
+          className="emu-remove-btn"
+          onClick={(e) => { e.stopPropagation(); onRemove(index); }}
+          aria-label={`Remove ${file.name}`}
+        >
+          <svg width="8" height="8" viewBox="0 0 12 12" fill="currentColor">
+            <path d="M10.707 1.293a1 1 0 0 0-1.414 0L6 4.586 2.707 1.293A1 1 0 0 0 1.293 2.707L4.586 6 1.293 9.293a1 1 0 1 0 1.414 1.414L6 7.414l3.293 3.293a1 1 0 0 0 1.414-1.414L7.414 6l3.293-3.293a1 1 0 0 0 0-1.414Z"/>
+          </svg>
+        </button>
+      </div>
+
+      <div className="emu-card-footer">
+        <span className="emu-card-name" title={file.name}>{file.name}</span>
+        <div className="emu-card-actions">
+          {isImage && (
+            <button
+              type="button"
+              className="emu-icon-btn emu-icon-btn--crop"
+              onClick={() => onCropOpen(index)}
+              title="Crop image"
+              aria-label={`Crop ${file.name}`}
+            >
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none"
+                stroke="currentColor" strokeWidth="2.2" strokeLinecap="round">
+                <path d="M6 2v14a2 2 0 0 0 2 2h14"/>
+                <path d="M18 22V8a2 2 0 0 0-2-2H2"/>
+              </svg>
+            </button>
+          )}
+          <button
+            type="button"
+            className="emu-icon-btn"
+            onClick={() => onReorder(index, 'up')}
+            disabled={index === 0}
+            title="Move up"
+            aria-label="Move item up"
+          >
+            <svg width="10" height="10" viewBox="0 0 12 12" fill="none"
+              stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+              <polyline points="2,8 6,4 10,8"/>
+            </svg>
+          </button>
+          <button
+            type="button"
+            className="emu-icon-btn"
+            onClick={() => onReorder(index, 'down')}
+            disabled={index === total - 1}
+            title="Move down"
+            aria-label="Move item down"
+          >
+            <svg width="10" height="10" viewBox="0 0 12 12" fill="none"
+              stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+              <polyline points="2,4 6,8 10,4"/>
+            </svg>
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+});
+
+/* ── Optimisation #6 — memo'd drop-zone ─────────────────────────────────── */
+// Re-renders only when isDragOver or fileCount changes, not on crop/lightbox
+// state changes.
+const DropZone = React.memo(({
+  isDragOver, fileCount,
+  onDragOver, onDragLeave, onDrop, onBrowse,
+}) => (
+  <div
+    className={`emu-dropzone${isDragOver ? ' emu-dropzone--dragover' : ''}`}
+    onClick={onBrowse}
+    onDragOver={onDragOver}
+    onDragLeave={onDragLeave}
+    onDrop={onDrop}
+    role="button"
+    tabIndex={0}
+    aria-label="Upload media files"
+    onKeyDown={(e) => e.key === 'Enter' && onBrowse()}
+  >
+    <svg className="emu-dropzone-icon" viewBox="0 0 24 24" fill="none"
+      stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <polyline points="16 16 12 12 8 16"/>
+      <line x1="12" y1="12" x2="12" y2="21"/>
+      <path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3"/>
+    </svg>
+    <div className="emu-dropzone-label">
+      {isDragOver ? 'Drop files here' : 'Drag & drop or click to upload'}
+    </div>
+    <div className="emu-dropzone-sub">Images &amp; videos</div>
+    <button
+      type="button"
+      className="emu-dropzone-btn rounded-pill"
+      onClick={(e) => { e.stopPropagation(); onBrowse(); }}
+    >
+      <svg width="15" height="15" viewBox="0 0 26 26" fill="none"
+        stroke="currentColor" strokeWidth="2.3" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/>
+      </svg>
+      Browse files
+    </button>
+    {fileCount > 0 && (
+      <div className="emu-count-badge">
+        <span className="emu-count-dot" />
+        {fileCount} file{fileCount !== 1 ? 's' : ''} attached
+      </div>
+    )}
+  </div>
+));
+
+/* ─── Main component ─────────────────────────────────────────────────────── */
 const EnhancedMediaUpload = forwardRef(({ onFilesPrepared, postContent, onCropRequest }, ref) => {
 
-  const [mediaFiles,        setMediaFiles]        = useState([]);  // { file, preview }
+  const [mediaFiles,        setMediaFiles]        = useState([]);
   const [croppingIndex,     setCroppingIndex]     = useState(null);
   const [crop,              setCrop]              = useState({ x: 0, y: 0 });
   const [zoom,              setZoom]              = useState(1);
@@ -82,9 +259,9 @@ const EnhancedMediaUpload = forwardRef(({ onFilesPrepared, postContent, onCropRe
   const [isDragOver,        setIsDragOver]        = useState(false);
 
   const inputRef = useRef();
-  const MAX_SIZE = 500 * 1024 * 1024; // 500 MB
 
-  // ── File ingestion ─────────────────────────────────────────────────────
+  /* ── File ingestion ────────────────────────────────────────────────────── */
+  // Optimisation #2 — empty dep array: MAX_SIZE is now module-scope
   const ingestFiles = useCallback((rawFiles) => {
     const filtered = rawFiles.filter((file) => {
       if (file.size > MAX_SIZE) {
@@ -98,46 +275,47 @@ const EnhancedMediaUpload = forwardRef(({ onFilesPrepared, postContent, onCropRe
       preview: URL.createObjectURL(file),
     }));
     setMediaFiles((prev) => [...prev, ...withPreviews]);
-  }, [MAX_SIZE]);
+  }, []);
 
-  const handleFileChange = (e) => {
+  /* ── Optimisation #3 — stable event handlers ───────────────────────────── */
+  const handleFileChange = useCallback((e) => {
     ingestFiles(Array.from(e.target.files));
     e.target.value = '';
-  };
+  }, [ingestFiles]);
 
-  // ── Drag-and-drop ──────────────────────────────────────────────────────
-  const handleDragOver  = (e) => { e.preventDefault(); setIsDragOver(true);  };
-  const handleDragLeave = ()  => { setIsDragOver(false); };
-  const handleDrop      = (e) => {
+  const handleDragOver  = useCallback((e) => { e.preventDefault(); setIsDragOver(true);  }, []);
+  const handleDragLeave = useCallback(()  => { setIsDragOver(false); }, []);
+  const handleDrop      = useCallback((e) => {
     e.preventDefault();
     setIsDragOver(false);
     ingestFiles(Array.from(e.dataTransfer.files));
-  };
+  }, [ingestFiles]);
 
-  // ── Remove / reorder ───────────────────────────────────────────────────
-  const handleRemoveFile = (index) => {
+  const handleBrowse = useCallback(() => inputRef.current?.click(), []);
+
+  /* ── Optimisation #4 — stable remove/reorder handlers ─────────────────── */
+  const handleRemoveFile = useCallback((index) => {
     setMediaFiles((prev) => {
       URL.revokeObjectURL(prev[index].preview);
       return prev.filter((_, i) => i !== index);
     });
-  };
+  }, []);
 
-  const handleReorder = (index, direction) => {
+  const handleReorder = useCallback((index, direction) => {
     const target = direction === 'up' ? index - 1 : index + 1;
-    if (target < 0 || target >= mediaFiles.length) return;
     setMediaFiles((prev) => {
+      if (target < 0 || target >= prev.length) return prev;
       const updated = [...prev];
       [updated[index], updated[target]] = [updated[target], updated[index]];
       return updated;
     });
-  };
+  }, []);
 
-  // ── Crop ──────────────────────────────────────────────────────────────
+  /* ── Crop ──────────────────────────────────────────────────────────────── */
   const handleCropComplete = useCallback((_area, areaPixels) => {
     setCroppedAreaPixels(areaPixels);
   }, []);
 
-  // Notify parent to close the modal and clean up local state
   const closeCrop = useCallback(() => {
     setCroppingIndex(null);
     setCrop({ x: 0, y: 0 });
@@ -174,34 +352,28 @@ const EnhancedMediaUpload = forwardRef(({ onFilesPrepared, postContent, onCropRe
     if (!applying) closeCrop();
   }, [applying, closeCrop]);
 
-  // Open crop: push payload to parent so it can render CropModal at root level
   const handleCropOpen = useCallback((index) => {
     setCrop({ x: 0, y: 0 });
     setZoom(1);
     setCroppedAreaPixels(null);
     setCroppingIndex(index);
-
     onCropRequest({
       image:          mediaFiles[index].preview,
       onApply:        handleCropApply,
       onClose:        handleCropClose,
-      crop,
+      crop:           { x: 0, y: 0 },
       setCrop,
-      zoom,
+      zoom:           1,
       setZoom,
       onCropComplete: handleCropComplete,
-      applying,
+      applying:       false,
     });
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mediaFiles, onCropRequest, handleCropComplete]);
+  }, [mediaFiles, onCropRequest, handleCropApply, handleCropClose, handleCropComplete]);
 
-  // Keep the live payload in sync with applying/crop/zoom/handlers so the
-  // parent always has the freshest callbacks and state.
-  // We do this via a stable ref to avoid stale closures inside CropModal.
+  /* ── Crop payload sync (Optimisation #10 — honest dep array) ──────────── */
   const cropPayloadRef = useRef(null);
   React.useEffect(() => {
     if (croppingIndex === null) return;
-    // Update parent with fresh payload whenever dependent state changes
     const freshPayload = {
       image:          mediaFiles[croppingIndex]?.preview ?? null,
       onApply:        handleCropApply,
@@ -215,39 +387,44 @@ const EnhancedMediaUpload = forwardRef(({ onFilesPrepared, postContent, onCropRe
     };
     cropPayloadRef.current = freshPayload;
     onCropRequest(freshPayload);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [croppingIndex, crop, zoom, applying]);
+  }, [
+    croppingIndex, crop, zoom, applying,
+    mediaFiles, handleCropApply, handleCropClose, handleCropComplete, onCropRequest,
+  ]);
 
-  // ── Reset / submit ─────────────────────────────────────────────────────
-  const resetForm = () => {
-    mediaFiles.forEach((m) => URL.revokeObjectURL(m.preview));
-    setMediaFiles([]);
+  /* ── Optimisation #7 — stable resetForm ───────────────────────────────── */
+  const resetForm = useCallback(() => {
+    setMediaFiles((prev) => { prev.forEach((m) => URL.revokeObjectURL(m.preview)); return []; });
     setCroppingIndex(null);
     setCrop({ x: 0, y: 0 });
     setZoom(1);
     setCroppedAreaPixels(null);
     setLightboxIndex(-1);
-    onCropRequest(null); // ensure parent closes modal if open
+    onCropRequest(null);
     if (inputRef.current) inputRef.current.value = '';
-  };
+  }, [onCropRequest]);
 
-  const handleSubmit = () => {
+  /* ── Optimisation #8 — stable handleSubmit ────────────────────────────── */
+  const handleSubmit = useCallback(() => {
     if (mediaFiles.length === 0 && !postContent?.trim()) {
       toast.warning('Please add media or type at least one character.');
       return;
     }
     onFilesPrepared(mediaFiles.map((m) => m.file));
     resetForm();
-  };
+  }, [mediaFiles, postContent, onFilesPrepared, resetForm]);
 
-  // ── Imperative handle ──────────────────────────────────────────────────
+  /* ── Optimisation #9 — correct dep array ─────────────────────────────── */
   useImperativeHandle(ref, () => ({
     submitMediaPost: handleSubmit,
     hasMedia:        () => mediaFiles.length > 0,
     openFilePicker:  () => inputRef.current?.click(),
-  }));
+  }), [handleSubmit, mediaFiles]);
 
-  /* ── Render ─────────────────────────────────────────────────────────── */
+  /* ── Lightbox handler ─────────────────────────────────────────────────── */
+  const handleLightboxOpen = useCallback((index) => setLightboxIndex(index), []);
+
+  /* ── Render ───────────────────────────────────────────────────────────── */
   return (
     <>
       <input
@@ -260,150 +437,32 @@ const EnhancedMediaUpload = forwardRef(({ onFilesPrepared, postContent, onCropRe
       />
 
       <div className="emu-root">
-
-        {/* ── Drop-zone ── */}
-        <div
-          className={`emu-dropzone${isDragOver ? ' emu-dropzone--dragover' : ''}`}
-          onClick={() => inputRef.current?.click()}
+        {/* ── Optimisation #6 — memo'd drop-zone ── */}
+        <DropZone
+          isDragOver={isDragOver}
+          fileCount={mediaFiles.length}
           onDragOver={handleDragOver}
           onDragLeave={handleDragLeave}
           onDrop={handleDrop}
-          role="button"
-          tabIndex={0}
-          aria-label="Upload media files"
-          onKeyDown={(e) => e.key === 'Enter' && inputRef.current?.click()}
-        >
-          <svg className="emu-dropzone-icon" viewBox="0 0 24 24" fill="none"
-            stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-            <polyline points="16 16 12 12 8 16"/>
-            <line x1="12" y1="12" x2="12" y2="21"/>
-            <path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3"/>
-          </svg>
+          onBrowse={handleBrowse}
+        />
 
-          <div className="emu-dropzone-label">
-            {isDragOver ? 'Drop files here' : 'Drag & drop or click to upload'}
-          </div>
-          <div className="emu-dropzone-sub">Images &amp; videos {/*· max 500 MB each*/}</div>
-
-          <button
-            type="button"
-            className="emu-dropzone-btn rounded-pill"
-            onClick={(e) => { e.stopPropagation(); inputRef.current?.click(); }}
-          >
-            <svg width="15" height="15" viewBox="0 0 26 26" fill="none"
-              stroke="currentColor" strokeWidth="2.3" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/>
-            </svg>
-            Browse files
-          </button>
-
-          {mediaFiles.length > 0 && (
-            <div className="emu-count-badge">
-              <span className="emu-count-dot" />
-              {mediaFiles.length} file{mediaFiles.length !== 1 ? 's' : ''} attached
-            </div>
-          )}
-        </div>
-
-        {/* ── Media grid ── */}
+        {/* ── Optimisation #5 — memo'd media cards ── */}
         {mediaFiles.length > 0 && (
           <div className="emu-grid" role="list" aria-label="Attached media">
-            {mediaFiles.map((media, index) => {
-              const { file, preview } = media;
-              const isImage = file.type.startsWith('image');
-
-              return (
-                <div
-                  key={`${file.name}-${index}`}
-                  className="emu-card"
-                  role="listitem"
-                >
-                  <div
-                    className="emu-card-thumb"
-                    onClick={() => isImage && setLightboxIndex(index)}
-                    title={isImage ? 'Click to enlarge' : undefined}
-                  >
-                    {isImage ? (
-                      <img src={preview} alt={file.name} loading="lazy" />
-                    ) : (
-                      <>
-                        <video
-                          src={preview}
-                          controls
-                          preload="metadata"
-                          style={{ pointerEvents: 'auto' }}
-                          onClick={(e) => e.stopPropagation()}
-                        />
-                        <span className="emu-video-badge">VIDEO</span>
-                      </>
-                    )}
-
-                    <button
-                      type="button"
-                      className="emu-remove-btn"
-                      onClick={(e) => { e.stopPropagation(); handleRemoveFile(index); }}
-                      aria-label={`Remove ${file.name}`}
-                    >
-                      <svg width="8" height="8" viewBox="0 0 12 12" fill="currentColor">
-                        <path d="M10.707 1.293a1 1 0 0 0-1.414 0L6 4.586 2.707 1.293A1 1 0 0 0 1.293 2.707L4.586 6 1.293 9.293a1 1 0 1 0 1.414 1.414L6 7.414l3.293 3.293a1 1 0 0 0 1.414-1.414L7.414 6l3.293-3.293a1 1 0 0 0 0-1.414Z"/>
-                      </svg>
-                    </button>
-                  </div>
-
-                  <div className="emu-card-footer">
-                    <span className="emu-card-name" title={file.name}>
-                      {file.name}
-                    </span>
-
-                    <div className="emu-card-actions">
-                      {isImage && (
-                        <button
-                          type="button"
-                          className="emu-icon-btn emu-icon-btn--crop"
-                          onClick={() => handleCropOpen(index)}
-                          title="Crop image"
-                          aria-label={`Crop ${file.name}`}
-                        >
-                          <svg width="11" height="11" viewBox="0 0 24 24" fill="none"
-                            stroke="currentColor" strokeWidth="2.2" strokeLinecap="round">
-                            <path d="M6 2v14a2 2 0 0 0 2 2h14"/>
-                            <path d="M18 22V8a2 2 0 0 0-2-2H2"/>
-                          </svg>
-                        </button>
-                      )}
-
-                      <button
-                        type="button"
-                        className="emu-icon-btn"
-                        onClick={() => handleReorder(index, 'up')}
-                        disabled={index === 0}
-                        title="Move up"
-                        aria-label="Move item up"
-                      >
-                        <svg width="10" height="10" viewBox="0 0 12 12" fill="none"
-                          stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-                          <polyline points="2,8 6,4 10,8"/>
-                        </svg>
-                      </button>
-
-                      <button
-                        type="button"
-                        className="emu-icon-btn"
-                        onClick={() => handleReorder(index, 'down')}
-                        disabled={index === mediaFiles.length - 1}
-                        title="Move down"
-                        aria-label="Move item down"
-                      >
-                        <svg width="10" height="10" viewBox="0 0 12 12" fill="none"
-                          stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-                          <polyline points="2,4 6,8 10,4"/>
-                        </svg>
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              );
-            })}
+            {mediaFiles.map((media, index) => (
+              <MediaCard
+                key={`${media.file.name}-${index}`}
+                file={media.file}
+                preview={media.preview}
+                index={index}
+                total={mediaFiles.length}
+                onRemove={handleRemoveFile}
+                onReorder={handleReorder}
+                onCropOpen={handleCropOpen}
+                onLightboxOpen={handleLightboxOpen}
+              />
+            ))}
           </div>
         )}
       </div>

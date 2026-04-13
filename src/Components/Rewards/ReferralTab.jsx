@@ -723,7 +723,9 @@ export default function ReferralTab({ eligible, user, redeemedReferral, onReward
   const hasEnough   = selectedNum ? activeCount >= selectedNum : false;
 
   const next = sortedSlabs.find(s => activeCount < s.referralCount)?.referralCount ?? null;
-  const prev = [...sortedSlabs].reverse().find(s => activeCount >= s.referralCount)?.referralCount ?? 0;
+  // Use strictly-less-than so that when activeCount exactly equals a milestone,
+  // the bar shows 100% progress (reaching the goal) instead of resetting to 0%.
+  const prev = [...sortedSlabs].reverse().find(s => activeCount > s.referralCount)?.referralCount ?? 0;
 
   const btnState = !eligible   ? 'locked'
     : !selectedNum             ? 'idle'
@@ -870,7 +872,7 @@ export default function ReferralTab({ eligible, user, redeemedReferral, onReward
             onClick={() => setTrackerOpen(v => !v)}
           >
             <span>
-              {trackerOpen ? '▲' : '▼'}&nbsp; Downline tracker
+              {trackerOpen ? '▲' : '▼'}&nbsp; Active / Inactive status of your referrals
               {!usersLoading && referredUsers.length > 0 && (
                 <span style={{
                   marginLeft: 8, fontSize: 11, padding: '1px 7px', borderRadius: 10,

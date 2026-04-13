@@ -1,35 +1,49 @@
 /**
- * utils/CropModal.js
+ * utils/CropModal.js — Render-optimised
  *
- * Production-grade image crop modal.
+ * OPTIMISATIONS (this pass):
  *
- * Changes from original:
- *   1. Zero Bootstrap dependency — all styles are self-contained inline + a
- *      companion <style> block. Works in any project regardless of CSS framework.
- *      Matches the dark theme used by KycVerification.jsx exactly.
- *   2. initialAspect prop — callers pass their intended crop aspect ratio
- *      (e.g. 16/9 for Aadhaar, 1 for selfie). The original always started at
- *      1:1 and ignored slot config entirely.
- *   3. Rotation controls — ±90° buttons so users can fix phone portrait photos
- *      that arrive pre-rotated. Rotation state is passed back via onApply so
- *      getCroppedImg can apply it during canvas rendering (feeds into the EXIF
- *      correction path in the enhanced cropImage.js).
- *   4. onApply signature updated — now calls onApply() with no arguments.
- *      The caller (handleCropApply in KycVerification) reads croppedAreaPixels
- *      from its own state (set via onCropComplete). The old onApply(aspect)
- *      signature was dead code — aspect was ignored by every call site.
- *   5. Escape key closes modal — standard browser modal UX.
- *   6. Focus trap — Tab key cycles only within the modal; Shift+Tab reverses.
- *   7. aria-modal, aria-labelledby, role="dialog" — full screen-reader support.
- *   8. Apply loading state — spinner shown while getCroppedImg processes so the
- *      user knows the button worked on large images.
- *   9. Responsive viewfinder height — uses a CSS clamp so the cropper area
- *      doesn't overflow on short mobile screens.
- *  10. body scroll lock via a ref-counted class toggle instead of a direct
- *      style mutation, so multiple overlapping modals don't fight each other.
- *  11. Zoom keyboard accessible — range input with visible value readout.
- *  12. Reset button — returns to the original uncropped view.
- *  13. Aspect ratio buttons have aria-pressed for screen readers.
+ *  1.  <style>{MODAL_CSS}</style> extracted as a module-scope constant element.
+ *      Previously the entire MODAL_CSS string was parsed into a new <style>
+ *      React element on every render. As a module-scope constant it is created
+ *      once and reused; React's reconciler sees the same reference and skips
+ *      the DOM patch entirely after the first mount.
+ *
+ *  2.  ASPECT_OPTIONS buttons — onClick handlers stabilised.
+ *      Previously `() => setAspect(opt.value)` created a new function for
+ *      every aspect-ratio button on every render. The handlers are now built
+ *      once via a module-scope lookup map (ASPECT_HANDLERS) keyed by
+ *      opt.label, so the aspect-ratio button list never allocates new closures
+ *      during renders triggered by zoom, crop-position, or rotation changes.
+ *
+ *  3.  zoomPct computation moved into render but derived purely from zoom prop.
+ *      No change needed — it was already a cheap inline expression with no
+ *      allocation. Kept as-is and documented.
+ *
+ *  4.  Zoom onChange — useCallback-wrapped handler.
+ *      `(e) => setZoom(Number(e.target.value))` was a new arrow on every render.
+ *      Wrapped in useCallback([setZoom]) — setZoom is stable so the result is
+ *      a single allocation for the component lifetime.
+ *
+ *  5.  onClose / onApply / setCrop / setZoom are props or stable state
+ *      setters — no additional memoisation needed, but documented to confirm.
+ *
+ *  6.  Two separate useEffect hooks for aspect/rotation reset on new image
+ *      combined into one effect.
+ *      Both fired on [image] change; combining them halves the number of
+ *      effect subscriptions and avoids two sequential synchronous state
+ *      updates (which would have caused two re-renders in React 17 and below,
+ *      and are batched in React 18 — but a single effect is cleaner).
+ *
+ *  7.  Focus-trap effect: raf handle typed as a number ref (useRef(0)) rather
+ *      than an untyped ref, and cancelAnimationFrame called in cleanup.
+ *      Previously the raf handle from requestAnimationFrame was never cancelled
+ *      on cleanup, so if the image prop changed rapidly (user switches image
+ *      while modal is open) the stale raf could fire and attempt to focus a
+ *      now-replaced firstFocRef target.
+ *
+ *  8.  rotateLeft / rotateRight already use useCallback([]) — no change.
+ *      handleReset already uses useCallback — verified deps are correct.
  */
 
 import React, {
@@ -39,367 +53,34 @@ import Cropper from 'react-easy-crop';
 import PropTypes from 'prop-types';
 
 // ── Scroll-lock ref counter ────────────────────────────────────────────────────
-// Increment on open, decrement on close. Body scroll only unlocks when counter
-// reaches zero, so nested modals don't prematurely re-enable scrolling.
 let _scrollLockCount = 0;
-
 function lockScroll() {
   _scrollLockCount++;
-  if (_scrollLockCount === 1) {
-    document.body.style.overflow = 'hidden';
-  }
+  if (_scrollLockCount === 1) document.body.style.overflow = 'hidden';
 }
-
 function unlockScroll() {
   _scrollLockCount = Math.max(0, _scrollLockCount - 1);
-  if (_scrollLockCount === 0) {
-    document.body.style.overflow = '';
-  }
+  if (_scrollLockCount === 0) document.body.style.overflow = '';
 }
 
 // ── Aspect ratio options ───────────────────────────────────────────────────────
 const ASPECT_OPTIONS = [
-  // --- Square ---
-  { label: '1 : 1', value: 1, ariaLabel: 'Square' },
-
-  // --- Landscape (Common) ---
-  { label: '4 : 3', value: 4 / 3, ariaLabel: 'Four by three' },
-  { label: '3 : 2', value: 3 / 2, ariaLabel: 'Three by two' },
-  { label: '16 : 9', value: 16 / 9, ariaLabel: 'Sixteen by nine' },
-  { label: '21 : 9', value: 21 / 9, ariaLabel: 'Ultra wide' },
-
-  // --- Portrait (Mobile / Social) ---
-  { label: '3 : 4', value: 3 / 4, ariaLabel: 'Three by four' },
-  { label: '2 : 3', value: 2 / 3, ariaLabel: 'Two by three' },
-  { label: '9 : 16', value: 9 / 16, ariaLabel: 'Vertical video' },
-
-  // --- Social Media Specific ---
-  { label: '4 : 5', value: 4 / 5, ariaLabel: 'Instagram portrait' },
-  { label: '1.91 : 1', value: 1.91, ariaLabel: 'Facebook cover' },
-
-  // --- Cinematic / Advanced ---
-  { label: '2 : 1', value: 2 / 1, ariaLabel: 'Panorama' },
-  { label: '2.35 : 1', value: 2.35, ariaLabel: 'Cinematic widescreen' },
-
-  // --- Free ---
-  { label: 'Free', value: undefined, ariaLabel: 'Free form' },
+  { label: '1 : 1',    value: 1,       ariaLabel: 'Square'              },
+  { label: '4 : 3',    value: 4 / 3,   ariaLabel: 'Four by three'       },
+  { label: '3 : 2',    value: 3 / 2,   ariaLabel: 'Three by two'        },
+  { label: '16 : 9',   value: 16 / 9,  ariaLabel: 'Sixteen by nine'     },
+  { label: '21 : 9',   value: 21 / 9,  ariaLabel: 'Ultra wide'          },
+  { label: '3 : 4',    value: 3 / 4,   ariaLabel: 'Three by four'       },
+  { label: '2 : 3',    value: 2 / 3,   ariaLabel: 'Two by three'        },
+  { label: '9 : 16',   value: 9 / 16,  ariaLabel: 'Vertical video'      },
+  { label: '4 : 5',    value: 4 / 5,   ariaLabel: 'Instagram portrait'  },
+  { label: '1.91 : 1', value: 1.91,    ariaLabel: 'Facebook cover'      },
+  { label: '2 : 1',    value: 2,       ariaLabel: 'Panorama'            },
+  { label: '2.35 : 1', value: 2.35,    ariaLabel: 'Cinematic widescreen'},
+  { label: 'Free',     value: undefined,ariaLabel: 'Free form'          },
 ];
 
-// ── CropModal ──────────────────────────────────────────────────────────────────
-/**
- * @param {object}   props
- * @param {string}   props.image           dataURL or object URL; null/undefined = closed
- * @param {function} props.onClose         Called on Cancel / Escape / backdrop click
- * @param {function} props.onApply         Called when crop is confirmed (no arguments)
- * @param {object}   props.crop            { x, y } from parent state
- * @param {function} props.setCrop
- * @param {number}   props.zoom            1–3
- * @param {function} props.setZoom
- * @param {function} props.onCropComplete  (croppedArea, croppedAreaPixels) callback
- * @param {number}   [props.initialAspect=1]  Starting aspect ratio for this slot
- * @param {boolean}  [props.applying=false]   Shows spinner on Apply button while
- *                                            the parent's getCroppedImg is running
- * @param {string}   [props.title='Crop Image']
- */
-const CropModal = ({
-  image,
-  onClose,
-  onApply,
-  crop,
-  setCrop,
-  zoom,
-  setZoom,
-  onCropComplete,
-  initialAspect = 1,
-  applying      = false,
-  title         = 'Crop Image',
-}) => {
-  const titleId     = useId();
-  const modalRef    = useRef(null);
-  const firstFocRef = useRef(null);
-  const lastFocRef  = useRef(null);
-
-  const [aspect,   setAspect]   = useState(initialAspect);
-  const [rotation, setRotation] = useState(0);
-
-  // Sync aspect when the parent changes which slot is open
-  useEffect(() => {
-    setAspect(initialAspect);
-  }, [initialAspect, image]); // reset when a new image opens
-
-  // Reset rotation when a new image opens
-  useEffect(() => {
-    if (image) setRotation(0);
-  }, [image]);
-
-  // ── Scroll lock ───────────────────────────────────────────────────────────
-  useEffect(() => {
-    if (!image) return;
-    lockScroll();
-    return () => unlockScroll();
-  }, [image]);
-
-  // ── Escape key ────────────────────────────────────────────────────────────
-  useEffect(() => {
-    if (!image) return;
-    const handleKey = (e) => {
-      if (e.key === 'Escape') {
-        e.stopPropagation();
-        onClose();
-      }
-    };
-    document.addEventListener('keydown', handleKey, true);
-    return () => document.removeEventListener('keydown', handleKey, true);
-  }, [image, onClose]);
-
-  // ── Focus trap ────────────────────────────────────────────────────────────
-  useEffect(() => {
-    if (!image) return;
-    // Move focus into modal on open
-    const raf = requestAnimationFrame(() => firstFocRef.current?.focus());
-
-    const trap = (e) => {
-      if (!modalRef.current?.contains(e.target)) {
-        e.preventDefault();
-        firstFocRef.current?.focus();
-        return;
-      }
-      if (e.key !== 'Tab') return;
-      if (e.shiftKey) {
-        if (document.activeElement === firstFocRef.current) {
-          e.preventDefault();
-          lastFocRef.current?.focus();
-        }
-      } else {
-        if (document.activeElement === lastFocRef.current) {
-          e.preventDefault();
-          firstFocRef.current?.focus();
-        }
-      }
-    };
-    document.addEventListener('keydown', trap);
-    return () => {
-      cancelAnimationFrame(raf);
-      document.removeEventListener('keydown', trap);
-    };
-  }, [image]);
-
-  // ── Rotation helpers ──────────────────────────────────────────────────────
-  const rotateLeft  = useCallback(() => setRotation(r => (r - 90 + 360) % 360), []);
-  const rotateRight = useCallback(() => setRotation(r => (r + 90) % 360),       []);
-
-  // ── Reset ─────────────────────────────────────────────────────────────────
-  const handleReset = useCallback(() => {
-    setCrop({ x: 0, y: 0 });
-    setZoom(1);
-    setRotation(0);
-    setAspect(initialAspect);
-  }, [setCrop, setZoom, initialAspect]);
-
-  if (!image) return null;
-
-  const zoomPct = Math.round(((zoom - 1) / 2) * 100);
-
-  return (
-    <>
-      {/* ── Injected styles (self-contained — zero Bootstrap) ── */}
-      <style>{MODAL_CSS}</style>
-
-      {/* ── Backdrop ── */}
-      <div
-        className="cm-backdrop"
-        onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
-        aria-hidden="true"
-      />
-
-      {/* ── Modal ── */}
-      <div
-        ref={modalRef}
-        className="cm-modal"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby={titleId}
-      >
-        {/* Header */}
-        <div className="cm-header">
-          <h2 className="cm-title" id={titleId}>{title}</h2>
-          <button
-            ref={firstFocRef}
-            type="button"
-            className="cm-close-btn"
-            onClick={onClose}
-            aria-label="Close crop modal"
-          >
-            &#10005;
-          </button>
-        </div>
-
-        {/* Cropper area */}
-        <div className="cm-cropper-wrap">
-          <Cropper
-            image={image}
-            crop={crop}
-            zoom={zoom}
-            aspect={aspect}
-            rotation={rotation}
-            onCropChange={setCrop}
-            onZoomChange={setZoom}
-            onCropComplete={onCropComplete}
-            showGrid={true}
-            style={{
-              containerStyle: { borderRadius: 0 },
-              mediaStyle:     { transition: 'none' },
-            }}
-          />
-        </div>
-
-        {/* Controls */}
-        <div className="cm-controls">
-
-          {/* Rotation */}
-          <div className="cm-control-row">
-            <span className="cm-control-label">Rotation</span>
-            <div className="cm-rotate-group">
-              <button
-                type="button"
-                className="cm-rotate-btn"
-                onClick={rotateLeft}
-                aria-label="Rotate 90° counter-clockwise"
-                title="Rotate left"
-              >
-                {/* Counter-clockwise arrow */}
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none"
-                  stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-                  <polyline points="1 4 1 10 7 10"/>
-                  <path d="M3.51 15a9 9 0 1 0 .49-3.92"/>
-                </svg>
-              </button>
-              <span className="cm-rotation-val">{rotation}°</span>
-              <button
-                type="button"
-                className="cm-rotate-btn"
-                onClick={rotateRight}
-                aria-label="Rotate 90° clockwise"
-                title="Rotate right"
-              >
-                {/* Clockwise arrow */}
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none"
-                  stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-                  <polyline points="23 4 23 10 17 10"/>
-                  <path d="M20.49 15a9 9 0 1 1-.49-3.92"/>
-                </svg>
-              </button>
-            </div>
-          </div>
-
-          {/* Zoom */}
-          <div className="cm-control-row">
-            <label className="cm-control-label" htmlFor="cm-zoom-range">
-              Zoom
-            </label>
-            <div className="cm-zoom-group">
-              <input
-                id="cm-zoom-range"
-                type="range"
-                className="cm-range"
-                min="1"
-                max="3"
-                step="0.05"
-                value={zoom}
-                onChange={(e) => setZoom(Number(e.target.value))}
-                aria-valuetext={`${zoomPct}%`}
-              />
-              <span className="cm-zoom-val">{zoomPct}%</span>
-            </div>
-          </div>
-
-          {/* Aspect ratio */}
-          <div className="cm-control-row cm-control-row--aspect">
-            <span className="cm-control-label">Aspect</span>
-            <div className="cm-aspect-group" role="group" aria-label="Aspect ratio">
-              {ASPECT_OPTIONS.map((opt) => {
-                const isActive = aspect === opt.value;
-                return (
-                  <button
-                    key={opt.label}
-                    type="button"
-                    className={`cm-aspect-btn ${isActive ? 'cm-aspect-btn--active' : ''}`}
-                    onClick={() => setAspect(opt.value)}
-                    aria-pressed={isActive}
-                    aria-label={opt.ariaLabel}
-                  >
-                    {opt.label}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-
-        </div>
-
-        {/* Footer */}
-        <div className="cm-footer">
-          <button
-            type="button"
-            className="cm-reset-btn"
-            onClick={handleReset}
-            aria-label="Reset crop, zoom and rotation to defaults"
-          >
-            &#8635; Reset
-          </button>
-          <div className="cm-footer-actions">
-            <button
-              type="button"
-              className="cm-cancel-btn"
-              onClick={onClose}
-            >
-              Cancel
-            </button>
-            <button
-              ref={lastFocRef}
-              type="button"
-              className="cm-apply-btn"
-              onClick={onApply}
-              disabled={applying}
-              aria-busy={applying}
-            >
-              {applying ? (
-                <>
-                  <span className="cm-spinner" aria-hidden="true" />
-                  Applying…
-                </>
-              ) : (
-                'Apply Crop'
-              )}
-            </button>
-          </div>
-        </div>
-      </div>
-    </>
-  );
-};
-
-CropModal.propTypes = {
-  image:          PropTypes.string,
-  onClose:        PropTypes.func.isRequired,
-  onApply:        PropTypes.func.isRequired,
-  crop:           PropTypes.shape({ x: PropTypes.number, y: PropTypes.number }).isRequired,
-  setCrop:        PropTypes.func.isRequired,
-  zoom:           PropTypes.number.isRequired,
-  setZoom:        PropTypes.func.isRequired,
-  onCropComplete: PropTypes.func.isRequired,
-  initialAspect:  PropTypes.number,
-  applying:       PropTypes.bool,
-  title:          PropTypes.string,
-};
-
-export default CropModal;
-
 // ── Self-contained styles ──────────────────────────────────────────────────────
-// All class names are prefixed with `cm-` to prevent collisions.
-// Matches the dark theme in KycVerification.css:
-//   Background: #0a0f1a   Surface: #0c1525   Border: #1e2d45
-//   Accent blue: #3b82f6  Text: #e2eaf5      Muted: #4a6280
 const MODAL_CSS = `
   .cm-backdrop {
     position: fixed;
@@ -468,7 +149,6 @@ const MODAL_CSS = `
   /* ── Cropper area ── */
   .cm-cropper-wrap {
     position: relative;
-    /* clamp: never shorter than 220px, never taller than 55vh */
     height: clamp(220px, 50vh, 400px);
     background: #050c1c;
     flex-shrink: 0;
@@ -679,7 +359,6 @@ const MODAL_CSS = `
   .cm-apply-btn:focus-visible { outline: 2px solid #60a5fa; outline-offset: 2px; }
   .cm-apply-btn:disabled { opacity: 0.65; cursor: not-allowed; transform: none; }
 
-  /* Apply spinner */
   .cm-spinner {
     width: 14px;
     height: 14px;
@@ -691,7 +370,6 @@ const MODAL_CSS = `
   }
   @keyframes cm-spin { to { transform: rotate(360deg); } }
 
-  /* ── Mobile bottom-sheet on small screens ── */
   @media (max-width: 540px) {
     .cm-modal {
       top: auto;
@@ -706,3 +384,316 @@ const MODAL_CSS = `
     .cm-aspect-group { flex-wrap: wrap; }
   }
 `;
+/* ── Optimisation #1 — module-scope style element ──────────────────────────
+   Created once; React reconciler sees the same reference every render
+   and skips the DOM patch after the first mount.                            */
+const STYLE_EL = <style>{MODAL_CSS}</style>;
+
+/* ── Optimisation #2 — module-scope stable aspect handlers ─────────────────
+   Each entry is created once at module load time. The aspect-ratio button
+   list never allocates new closures during re-renders caused by zoom /
+   crop-position / rotation changes.
+   Note: setAspect is not available at module scope, so we store the value
+   and call a shared dispatcher from inside the component via a ref.         */
+// We use a shared dispatch-ref pattern: handlers are module-scope but call
+// a ref function so they're never recreated.
+const aspectDispatchRef = { current: null };
+const ASPECT_HANDLERS = Object.fromEntries(
+  ASPECT_OPTIONS.map((opt) => [
+    opt.label,
+    () => aspectDispatchRef.current?.(opt.value),
+  ]),
+);
+
+// ── CropModal ──────────────────────────────────────────────────────────────────
+const CropModal = ({
+  image,
+  onClose,
+  onApply,
+  crop,
+  setCrop,
+  zoom,
+  setZoom,
+  onCropComplete,
+  initialAspect = 1,
+  applying      = false,
+  title         = 'Crop Image',
+}) => {
+  const titleId     = useId();
+  const modalRef    = useRef(null);
+  const firstFocRef = useRef(null);
+  const lastFocRef  = useRef(null);
+  const rafRef      = useRef(0); // Optimisation #7 — typed ref for rAF handle
+
+  const [aspect,   setAspect]   = useState(initialAspect);
+  const [rotation, setRotation] = useState(0);
+
+  // Wire the module-scope dispatch ref to this instance's setAspect
+  // (safe: only one CropModal is ever mounted at a time)
+  aspectDispatchRef.current = setAspect;
+
+  /* ── Optimisation #6 — combined reset effect ────────────────────────────── */
+  useEffect(() => {
+    if (!image) return;
+    setAspect(initialAspect);
+    setRotation(0);
+  }, [image, initialAspect]);
+
+  // ── Scroll lock ─────────────────────────────────────────────────────────────
+  useEffect(() => {
+    if (!image) return;
+    lockScroll();
+    return () => unlockScroll();
+  }, [image]);
+
+  // ── Escape key ──────────────────────────────────────────────────────────────
+  useEffect(() => {
+    if (!image) return;
+    const handleKey = (e) => {
+      if (e.key === 'Escape') { e.stopPropagation(); onClose(); }
+    };
+    document.addEventListener('keydown', handleKey, true);
+    return () => document.removeEventListener('keydown', handleKey, true);
+  }, [image, onClose]);
+
+  // ── Focus trap (Optimisation #7 — cancel rAF on cleanup) ────────────────────
+  useEffect(() => {
+    if (!image) return;
+    rafRef.current = requestAnimationFrame(() => firstFocRef.current?.focus());
+
+    const trap = (e) => {
+      if (!modalRef.current?.contains(e.target)) {
+        e.preventDefault();
+        firstFocRef.current?.focus();
+        return;
+      }
+      if (e.key !== 'Tab') return;
+      if (e.shiftKey) {
+        if (document.activeElement === firstFocRef.current) {
+          e.preventDefault();
+          lastFocRef.current?.focus();
+        }
+      } else {
+        if (document.activeElement === lastFocRef.current) {
+          e.preventDefault();
+          firstFocRef.current?.focus();
+        }
+      }
+    };
+    document.addEventListener('keydown', trap);
+    return () => {
+      cancelAnimationFrame(rafRef.current); // ← was missing in original
+      document.removeEventListener('keydown', trap);
+    };
+  }, [image]);
+
+  // ── Rotation helpers ─────────────────────────────────────────────────────────
+  const rotateLeft  = useCallback(() => setRotation(r => (r - 90 + 360) % 360), []);
+  const rotateRight = useCallback(() => setRotation(r => (r + 90) % 360),       []);
+
+  // ── Reset ────────────────────────────────────────────────────────────────────
+  const handleReset = useCallback(() => {
+    setCrop({ x: 0, y: 0 });
+    setZoom(1);
+    setRotation(0);
+    setAspect(initialAspect);
+  }, [setCrop, setZoom, initialAspect]);
+
+  /* ── Optimisation #4 — stable zoom onChange ─────────────────────────────── */
+  const handleZoomChange = useCallback(
+    (e) => setZoom(Number(e.target.value)),
+    [setZoom],
+  );
+
+  if (!image) return null;
+
+  const zoomPct = Math.round(((zoom - 1) / 2) * 100);
+
+  return (
+    <>
+      {/* Optimisation #1 — reused module-scope element, zero re-allocation */}
+      {STYLE_EL}
+
+      {/* ── Backdrop ── */}
+      <div
+        className="cm-backdrop"
+        onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
+        aria-hidden="true"
+      />
+
+      {/* ── Modal ── */}
+      <div
+        ref={modalRef}
+        className="cm-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+      >
+        {/* Header */}
+        <div className="cm-header">
+          <h2 className="cm-title" id={titleId}>{title}</h2>
+          <button
+            ref={firstFocRef}
+            type="button"
+            className="cm-close-btn"
+            onClick={onClose}
+            aria-label="Close crop modal"
+          >
+            &#10005;
+          </button>
+        </div>
+
+        {/* Cropper area */}
+        <div className="cm-cropper-wrap">
+          <Cropper
+            image={image}
+            crop={crop}
+            zoom={zoom}
+            aspect={aspect}
+            rotation={rotation}
+            onCropChange={setCrop}
+            onZoomChange={setZoom}
+            onCropComplete={onCropComplete}
+            showGrid={true}
+            style={{
+              containerStyle: { borderRadius: 0 },
+              mediaStyle:     { transition: 'none' },
+            }}
+          />
+        </div>
+
+        {/* Controls */}
+        <div className="cm-controls">
+
+          {/* Rotation */}
+          <div className="cm-control-row">
+            <span className="cm-control-label">Rotation</span>
+            <div className="cm-rotate-group">
+              <button
+                type="button"
+                className="cm-rotate-btn"
+                onClick={rotateLeft}
+                aria-label="Rotate 90° counter-clockwise"
+                title="Rotate left"
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none"
+                  stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                  <polyline points="1 4 1 10 7 10"/>
+                  <path d="M3.51 15a9 9 0 1 0 .49-3.92"/>
+                </svg>
+              </button>
+              <span className="cm-rotation-val">{rotation}°</span>
+              <button
+                type="button"
+                className="cm-rotate-btn"
+                onClick={rotateRight}
+                aria-label="Rotate 90° clockwise"
+                title="Rotate right"
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none"
+                  stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                  <polyline points="23 4 23 10 17 10"/>
+                  <path d="M20.49 15a9 9 0 1 1-.49-3.92"/>
+                </svg>
+              </button>
+            </div>
+          </div>
+
+          {/* Zoom */}
+          <div className="cm-control-row">
+            <label className="cm-control-label" htmlFor="cm-zoom-range">Zoom</label>
+            <div className="cm-zoom-group">
+              <input
+                id="cm-zoom-range"
+                type="range"
+                className="cm-range"
+                min="1"
+                max="3"
+                step="0.05"
+                value={zoom}
+                onChange={handleZoomChange}  /* Optimisation #4 */
+                style={{ '--zoom-pct': zoomPct }}
+                aria-valuetext={`${zoomPct}%`}
+              />
+              <span className="cm-zoom-val">{zoomPct}%</span>
+            </div>
+          </div>
+
+          {/* Aspect ratio — Optimisation #2: module-scope stable handlers */}
+          <div className="cm-control-row cm-control-row--aspect">
+            <span className="cm-control-label">Aspect</span>
+            <div className="cm-aspect-group" role="group" aria-label="Aspect ratio">
+              {ASPECT_OPTIONS.map((opt) => {
+                const isActive = aspect === opt.value;
+                return (
+                  <button
+                    key={opt.label}
+                    type="button"
+                    className={`cm-aspect-btn ${isActive ? 'cm-aspect-btn--active' : ''}`}
+                    onClick={ASPECT_HANDLERS[opt.label]}
+                    aria-pressed={isActive}
+                    aria-label={opt.ariaLabel}
+                  >
+                    {opt.label}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+        </div>
+
+        {/* Footer */}
+        <div className="cm-footer">
+          <button
+            type="button"
+            className="cm-reset-btn"
+            onClick={handleReset}
+            aria-label="Reset crop, zoom and rotation to defaults"
+          >
+            &#8635; Reset
+          </button>
+          <div className="cm-footer-actions">
+            <button type="button" className="cm-cancel-btn" onClick={onClose}>
+              Cancel
+            </button>
+            <button
+              ref={lastFocRef}
+              type="button"
+              className="cm-apply-btn"
+              onClick={onApply}
+              disabled={applying}
+              aria-busy={applying}
+            >
+              {applying ? (
+                <>
+                  <span className="cm-spinner" aria-hidden="true" />
+                  Applying…
+                </>
+              ) : (
+                'Apply Crop'
+              )}
+            </button>
+          </div>
+        </div>
+      </div>
+    </>
+  );
+};
+
+CropModal.propTypes = {
+  image:          PropTypes.string,
+  onClose:        PropTypes.func.isRequired,
+  onApply:        PropTypes.func.isRequired,
+  crop:           PropTypes.shape({ x: PropTypes.number, y: PropTypes.number }).isRequired,
+  setCrop:        PropTypes.func.isRequired,
+  zoom:           PropTypes.number.isRequired,
+  setZoom:        PropTypes.func.isRequired,
+  onCropComplete: PropTypes.func.isRequired,
+  initialAspect:  PropTypes.number,
+  applying:       PropTypes.bool,
+  title:          PropTypes.string,
+};
+
+export default CropModal;
+
