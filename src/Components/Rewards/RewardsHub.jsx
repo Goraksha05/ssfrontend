@@ -37,6 +37,8 @@ import { useActivityDashboard, DASHBOARD_QUERY_KEY }
                                     from '../../hooks/useActivityDashboard';
 import apiRequest                   from '../../utils/apiRequest';
 
+import RedeemGroceryCoupons from './RedeemGroceryCoupons';
+
 import ReferralTab from './ReferralTab';
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || '';
@@ -982,6 +984,13 @@ export default function RewardsHub({ initialTab = 'streak' }) {
           <span style={styles.walletLabel}>Tokens</span>
         </div>
       </div>
+
+      <RedeemGroceryCoupons
+        totalGroceryCoupons={wallet.totalGroceryCoupons}
+        eligible={eligible}
+        user={user}
+        onRedeemed={onRewardClaimed}   // optional: same callback the tabs use
+      />
 
       {/* Tabs */}
       <nav style={styles.tabBar}>
