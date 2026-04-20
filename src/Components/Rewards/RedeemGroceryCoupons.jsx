@@ -1,60 +1,24 @@
 /**
  * RedeemGroceryCoupons.jsx
- *
- * Drop-in "Redeem Grocery Coupons" button + flow for RewardsHub.
- *
- * PLACEMENT — in RewardsHub.jsx, after the Wallet summary cards, add:
- *
- *   import RedeemGroceryCoupons from './RedeemGroceryCoupons';
- *   ...
- *   <RedeemGroceryCoupons
- *     totalGroceryCoupons={wallet.totalGroceryCoupons}
- *     eligible={eligible}
- *     user={user}
- *     onRedeemed={onRewardClaimed}   // optional: same callback the tabs use
- *   />
- *
- * WHAT IT DOES:
- *   1. Shows the blue "RectaAcceptBtn" image as the button background.
- *   2. On click → opens a confirmation modal showing the grocery-coupon balance.
- *   3. User confirms → POST /api/activity/redeem-grocery-coupons
- *      Backend creates a RewardClaim (type: 'grocery_redeem'), writes a Payout
- *      (status: 'pending'), and fires an in-app + push notification to every
- *      admin with the 'manage_payouts' permission.
- *   4. On success → success toast + parent callback to refresh wallet counts.
- *
- * ONLY GROCERY COUPONS:
- *   Shares and Referral Tokens are non-cash assets and are never redeemable
- *   through this flow. The modal makes that explicit.
- *
- * ELIGIBILITY:
- *   • Requires eligible === true  (KYC verified + active subscription)
- *   • Requires totalGroceryCoupons > 0
- *   • Requires bank details on file (prompted inside the modal if missing)
- *   If any gate fails, the button is shown but clicking opens a gate-info modal
- *   instead of the redemption flow.
- *
- * DESIGN:
- *   The blue glossy button image (RectaAcceptBtn.png) is used as the background
- *   via a <img> element layered under the label text, preserving aspect ratio
- *   and the original shine effect from the asset.
- */
+**/
 
 import React, {
-  useState, useCallback, useRef, useEffect,
+  useState, useCallback, useRef, useEffect, useMemo,
 } from 'react';
 import { toast } from 'react-toastify';
 import apiRequest from '../../utils/apiRequest';
+import BankDetailsModal from '../Common/BankDetailsModal';
 
 // ─── Asset ────────────────────────────────────────────────────────────────────
-// The blue glossy button image shipped with this PR.
-// If you store assets differently, change this import to match your setup.
 import RectaBtn from '../../Assets/RectaAcceptBtn.png';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || '';
-const MIN_REDEEM  = 1;   // minimum ₹ balance required to redeem
+const MIN_REDEEM  = 499.99;   // minimum ₹ balance required to redeem
+
+// localStorage key helpers — namespaced per user so multi-account devices work
+const lsKey = (userId, suffix) => `rdcRedeem_${userId}_${suffix}`;
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -65,44 +29,48 @@ function getToken() {
   return localStorage.getItem('token');
 }
 
-// ─── Input field ──────────────────────────────────────────────────────────────
+// ─── localStorage persistence helpers ────────────────────────────────────────
 
-function Field({ label, value, onChange, placeholder, error, type = 'text' }) {
-  return (
-    <div style={{ marginBottom: 14 }}>
-      <label style={{
-        display: 'block', fontSize: 11, fontWeight: 600,
-        textTransform: 'uppercase', letterSpacing: '0.06em',
-        color: 'var(--color-text-secondary, #6b7280)', marginBottom: 5,
-      }}>
-        {label}
-      </label>
-      <input
-        type={type}
-        value={value}
-        onChange={e => onChange(e.target.value)}
-        placeholder={placeholder}
-        style={{
-          width: '100%', boxSizing: 'border-box',
-          padding: '10px 12px', fontSize: 13,
-          border: `1px solid ${error ? '#ef4444' : 'var(--color-border-secondary, #d1d5db)'}`,
-          borderRadius: 8,
-          background: 'var(--color-background-primary, #fff)',
-          color: 'var(--color-text-primary, #111)',
-          fontFamily: 'inherit', outline: 'none',
-          transition: 'border-color 0.15s',
-        }}
-      />
-      {error && (
-        <span style={{
-          display: 'block', fontSize: 11,
-          color: '#ef4444', marginTop: 3,
-        }}>
-          {error}
-        </span>
-      )}
-    </div>
-  );
+/**
+ * Read persisted redemption lock for a given user.
+ * Returns { locked: boolean, redeemedAmount: number } or null if no lock exists.
+ */
+function readLock(userId) {
+  if (!userId) return null;
+  try {
+    const raw = localStorage.getItem(lsKey(userId, 'lock'));
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Write a redemption lock for a given user.
+ * @param {string} userId
+ * @param {number} redeemedAmount  The balance that was just redeemed (₹)
+ */
+function writeLock(userId, redeemedAmount) {
+  if (!userId) return;
+  try {
+    localStorage.setItem(
+      lsKey(userId, 'lock'),
+      JSON.stringify({ locked: true, redeemedAmount }),
+    );
+  } catch {
+    // Storage quota exceeded — fail silently; session-level redeemed flag still guards the button
+  }
+}
+
+/**
+ * Remove the redemption lock — called when the user has earned new coupons
+ * past their previous redeemed amount, meaning the next slab was reached.
+ */
+function clearLock(userId) {
+  if (!userId) return;
+  try {
+    localStorage.removeItem(lsKey(userId, 'lock'));
+  } catch { /* noop */ }
 }
 
 // ─── Gate-info modal (shown when user is ineligible) ─────────────────────────
@@ -126,58 +94,6 @@ function GateModal({ reason, onClose }) {
   );
 }
 
-// ─── Bank-details sub-form (inline, inside the confirm modal) ─────────────────
-
-function BankForm({ form, setField, errors }) {
-  return (
-    <div style={{
-      marginTop: 16, padding: '14px 16px', borderRadius: 10,
-      background: 'var(--color-background-secondary, #f9fafb)',
-      border: '1px solid var(--color-border-tertiary, #e5e7eb)',
-    }}>
-      <p style={{
-        margin: '0 0 12px', fontSize: 12, fontWeight: 600,
-        textTransform: 'uppercase', letterSpacing: '0.06em',
-        color: 'var(--color-text-secondary, #6b7280)',
-      }}>
-        Bank details required for payment
-      </p>
-      <Field
-        label="Account Number"
-        value={form.accountNumber}
-        onChange={v => setField('accountNumber', v)}
-        placeholder="1234567890"
-        error={errors.accountNumber}
-        type="text"
-      />
-      <Field
-        label="Confirm Account Number"
-        value={form.confirmAccount}
-        onChange={v => setField('confirmAccount', v)}
-        placeholder="1234567890"
-        error={errors.confirmAccount}
-        type="text"
-      />
-      <Field
-        label="IFSC Code"
-        value={form.ifscCode}
-        onChange={v => setField('ifscCode', v.toUpperCase())}
-        placeholder="SBIN0001234"
-        error={errors.ifscCode}
-        type="text"
-      />
-      <Field
-        label="PAN Number"
-        value={form.panNumber}
-        onChange={v => setField('panNumber', v.toUpperCase())}
-        placeholder="ABCDE1234F"
-        error={errors.panNumber}
-        type="text"
-      />
-    </div>
-  );
-}
-
 // ─── Confirm-redeem modal ─────────────────────────────────────────────────────
 
 function ConfirmModal({
@@ -185,58 +101,17 @@ function ConfirmModal({
   hasBankDetails,
   onClose,
   onConfirm,
+  onAddBank,
   submitting,
 }) {
-  const EMPTY_BANK = {
-    accountNumber: '',
-    confirmAccount: '',
-    ifscCode: '',
-    panNumber: '',
-  };
-
-  const [bankForm, setBankForm] = useState(EMPTY_BANK);
-  const [errors,   setErrors]   = useState({});
-  const [notes,    setNotes]    = useState('');
-
-  const setField = (key, val) => {
-    setBankForm(p => ({ ...p, [key]: val }));
-    setErrors(p => ({ ...p, [key]: undefined }));
-  };
-
-  const validate = () => {
-    if (hasBankDetails) return {};
-    const e = {};
-    if (!bankForm.accountNumber.trim())
-      e.accountNumber = 'Required';
-    else if (!/^\d{9,18}$/.test(bankForm.accountNumber))
-      e.accountNumber = 'Must be 9–18 digits';
-    if (bankForm.confirmAccount !== bankForm.accountNumber)
-      e.confirmAccount = 'Account numbers do not match';
-    if (!bankForm.ifscCode.trim())
-      e.ifscCode = 'Required';
-    else if (!/^[A-Z]{4}0[A-Z0-9]{6}$/.test(bankForm.ifscCode))
-      e.ifscCode = 'Invalid IFSC (e.g. SBIN0001234)';
-    if (!bankForm.panNumber.trim())
-      e.panNumber = 'Required';
-    else if (!/^[A-Z]{5}[0-9]{4}[A-Z]$/.test(bankForm.panNumber))
-      e.panNumber = 'Invalid PAN (e.g. ABCDE1234F)';
-    return e;
-  };
+  const [notes, setNotes] = useState('');
 
   const handleSubmit = () => {
-    const e = validate();
-    setErrors(e);
-    if (Object.keys(e).length > 0) return;
-
-    const bankDetails = hasBankDetails
-      ? undefined
-      : {
-          accountNumber: bankForm.accountNumber,
-          ifscCode: bankForm.ifscCode,
-          panNumber: bankForm.panNumber,
-        };
-
-    onConfirm({ bankDetails, notes: notes.trim() });
+    if (!hasBankDetails) {
+      toast.info('Please add your bank details before redeeming.');
+      return;
+    }
+    onConfirm({ notes: notes.trim() });
   };
 
   return (
@@ -285,9 +160,34 @@ function ConfirmModal({
         </span>
       </div>
 
-      {/* ── Bank details (only if not already on file) ── */}
+      {/* ── Bank details ── */}
       {!hasBankDetails && (
-        <BankForm form={bankForm} setField={setField} errors={errors} />
+        <div style={{
+          marginTop: 16, padding: '14px 16px', borderRadius: 10,
+          background: 'var(--color-background-secondary, #f9fafb)',
+          border: '1px solid #fde68a',
+        }}>
+          <p style={{
+            margin: '0 0 10px', fontSize: 12, fontWeight: 600,
+            textTransform: 'uppercase', letterSpacing: '0.06em',
+            color: '#92400e',
+          }}>
+            Bank details required for payment
+          </p>
+          <button
+            type="button"
+            onClick={onAddBank}
+            style={{
+              display: 'inline-flex', alignItems: 'center', gap: 6,
+              padding: '9px 16px', borderRadius: 8, fontSize: 13, fontWeight: 600,
+              border: '1.5px solid #6366f1',
+              background: 'linear-gradient(135deg, #eff6ff, #eef2ff)',
+              color: '#4338ca', cursor: 'pointer', fontFamily: 'inherit',
+            }}
+          >
+            Add Bank Details
+          </button>
+        </div>
       )}
 
       {hasBankDetails && (
@@ -422,7 +322,6 @@ function SuccessModal({ amount, onClose }) {
 // ─── Shared modal shell ────────────────────────────────────────────────────────
 
 function ModalShell({ children, onClose, title }) {
-  // Trap focus inside modal
   const ref = useRef(null);
   useEffect(() => {
     ref.current?.focus();
@@ -518,6 +417,7 @@ function BlueBtn({ children, onClick, disabled, style = {}, ...rest }) {
     <button
       onClick={!disabled ? onClick : undefined}
       disabled={disabled}
+      title='Redeem Your Grocery Cash'
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => { setHover(false); setPressed(false); }}
       onMouseDown={() => setPressed(true)}
@@ -548,7 +448,6 @@ function BlueBtn({ children, onClick, disabled, style = {}, ...rest }) {
       }}
       {...rest}
     >
-
       {/* Label sits on top of the image */}
       <span style={{
         display: 'flex',
@@ -593,23 +492,76 @@ export default function RedeemGroceryCoupons({
   user,
   onRedeemed,
 }) {
+  // ── Resolve stable user ID ─────────────────────────────────────────────────
+  const userId = useMemo(
+    () => (user?._id || user?.id)?.toString() ?? null,
+    [user],
+  );
+
+  // ── Restore lock state from localStorage on first mount ───────────────────
+  // lock = { locked: boolean, redeemedAmount: number } | null
+  const [lock, setLock] = useState(() => readLock(userId));
+
+  // Optimistic flag — set immediately on API success so the button disables
+  // and the balance shows ₹0 before the lock state / parent re-render settles.
+  const [justRedeemed, setJustRedeemed] = useState(false);
+
+  /**
+   * The balance we display to the user.
+   *
+   * Rules:
+   *  • If a lock exists AND totalGroceryCoupons <= redeemedAmount:
+   *      → show 0  (pending payout hasn't been processed yet; no new slab earned)
+   *  • If a lock exists AND totalGroceryCoupons > redeemedAmount:
+   *      → the admin must have paid out AND the user earned more; clear the lock,
+   *        show the real balance, re-enable the button.
+   *  • No lock → show totalGroceryCoupons as-is.
+   */
+  const displayedCoupons = useMemo(() => {
+    // Immediately show ₹0 the moment the API succeeds, regardless of whether
+    // the parent prop has updated yet.
+    if (justRedeemed) return 0;
+    if (!lock) return totalGroceryCoupons;
+    if (totalGroceryCoupons > lock.redeemedAmount) {
+      // New slab reached — lock is now stale, clear it (effect handles storage)
+      return totalGroceryCoupons;
+    }
+    return 0;
+  }, [justRedeemed, lock, totalGroceryCoupons]);
+
+  // Clear the localStorage lock whenever the balance surpasses the redeemed amount
+  useEffect(() => {
+    if (lock && (totalGroceryCoupons < lock.redeemedAmount || totalGroceryCoupons === 0)) {
+      clearLock(userId);
+      setLock(null);
+    }
+  }, [lock, totalGroceryCoupons, userId]);
+
+  // Re-read lock from storage when userId changes (e.g. switching accounts)
+  useEffect(() => {
+    setLock(readLock(userId));
+  }, [userId]);
+
+  // ── Phase / modal state ────────────────────────────────────────────────────
+  // phase: 'idle' | 'gate' | 'confirming_loading' | 'confirm' | 'submitting' | 'success'
   const [phase, setPhase] = useState('idle');
-  // phase: 'idle' | 'gate' | 'confirm' | 'submitting' | 'success' | 'error'
 
   const [gateMsg,        setGateMsg]        = useState('');
-  const [redeemed,       setRedeemed]       = useState(false);   // user already redeemed in this session
-  const [hasBankDetails, setHasBankDetails] = useState(null);    // null = unknown, true/false = resolved
+  const [hasBankDetails, setHasBankDetails] = useState(null);
   const [successAmount,  setSuccessAmount]  = useState(0);
 
-  // Lazily check whether the user has bank details on file the first time the
-  // button is clicked. We don't want an extra fetch on every render.
+
   const bankCheckedRef = useRef(false);
 
+  // ── Whether the user is currently in a "redeemed" lock state ──────────────
+  const redeemed = justRedeemed || (!!lock && totalGroceryCoupons <= lock.redeemedAmount);
+
+  // ── Lazy bank-details check ────────────────────────────────────────────────
   const checkBankDetails = useCallback(async () => {
     if (bankCheckedRef.current) return hasBankDetails;
     try {
       const res = await apiRequest.get(
-        `/api/auth/getloggeduser/${user?._id || user?.id}`,
+        `/api/auth/getloggeduser/${userId}`,
         { _silent: true },
       );
       const u = res.data?.user ?? res.data;
@@ -622,18 +574,18 @@ export default function RedeemGroceryCoupons({
       bankCheckedRef.current = true;
       return false;
     }
-  }, [user, hasBankDetails]);
+  }, [userId, hasBankDetails]);
 
-  // ── Determine gate reason (called on button click) ─────────────────────────
+  // ── Gate reason ────────────────────────────────────────────────────────────
   const getGateReason = useCallback(() => {
     if (!eligible) {
       return 'Complete KYC verification and activate a subscription before redeeming rewards.';
     }
-    if (totalGroceryCoupons < MIN_REDEEM) {
-      return `You have no grocery coupon balance to redeem. Earn grocery coupons by completing post, referral, or streak milestones.`;
-    }
     if (redeemed) {
-      return 'You have already submitted a redemption request this session. Once the team processes it, you\'ll be able to submit a new request.';
+      return 'You have already submitted a redemption request. The button will re-enable once your current payout is processed and you earn new grocery coupons by reaching the next reward slab.';
+    }
+    if (totalGroceryCoupons < MIN_REDEEM) {
+      return 'You have no grocery coupon balance to redeem. Earn grocery coupons by completing post, referral, or streak milestones.';
     }
     return null;
   }, [eligible, totalGroceryCoupons, redeemed]);
@@ -646,19 +598,16 @@ export default function RedeemGroceryCoupons({
       return;
     }
 
-    // Lazy-load bank detail status
     setPhase('confirming_loading');
     await checkBankDetails();
     setPhase('confirm');
   }, [getGateReason, checkBankDetails]);
 
-  const handleConfirm = useCallback(async ({ bankDetails, notes }) => {
+  // ── Redemption submit ──────────────────────────────────────────────────────
+  const handleConfirm = useCallback(async ({ notes }) => {
     setPhase('submitting');
     try {
-      const payload = {
-        bankDetails: bankDetails ?? undefined,
-        notes:       notes       || undefined,
-      };
+      const payload = { notes: notes || undefined };
 
       await apiRequest.post(
         `${BACKEND_URL}/api/activity/redeem-grocery-coupons`,
@@ -666,26 +615,87 @@ export default function RedeemGroceryCoupons({
         { headers: { Authorization: `Bearer ${getToken()}` } },
       );
 
-      setSuccessAmount(totalGroceryCoupons);
-      setRedeemed(true);
+      const redeemedAmount = totalGroceryCoupons;
+
+      // ── Optimistic UI: zero the balance + disable button immediately ──────
+      setJustRedeemed(true);
+
+      // ── Persist the lock so the disabled state survives refreshes ────────
+      const newLock = { locked: true, redeemedAmount };
+      writeLock(userId, redeemedAmount);
+      setLock(newLock);
+
+      setSuccessAmount(redeemedAmount);
+      setBankModalOpen(false); // ensure BankDetailsModal is dismissed before showing SuccessModal
       setPhase('success');
+
       onRedeemed?.();
     } catch (err) {
+      // Handle 409 — already pending (e.g. duplicate tab submit)
+      if (err?.response?.status === 409) {
+        const redeemedAmount = totalGroceryCoupons;
+        const newLock = { locked: true, redeemedAmount };
+        writeLock(userId, redeemedAmount);
+        setLock(newLock);
+        toast.warn(
+          err?.response?.data?.message ||
+          'A redemption request is already pending. Your balance will show ₹0 until it is processed.',
+        );
+        setPhase('idle');
+        return;
+      }
       const msg = err?.response?.data?.message || 'Redemption failed. Please try again.';
       toast.error(msg);
       setPhase('confirm');
     }
-  }, [totalGroceryCoupons, onRedeemed]);
+  }, [totalGroceryCoupons, userId, onRedeemed]);
 
   const close = useCallback(() => setPhase('idle'), []);
 
-  // ── Derive button label ────────────────────────────────────────────────────
+  // ── BankDetailsModal state ─────────────────────────────────────────────────
+  const [bankModalLoading, setBankModalLoading] = useState(false);
+  const [bankModalOpen,    setBankModalOpen]    = useState(false);
+
+  const handleBankDetailsSubmit = useCallback(async (formData, successCallback) => {
+    setBankModalLoading(true);
+    try {
+      await apiRequest.post(
+        `${BACKEND_URL}/api/auth/save-bank-details`,
+        {
+          accountNumber: formData.accountNumber,
+          ifscCode:      formData.ifscCode,
+          panNumber:     formData.panNumber,
+          bankName:      formData.bankName,
+        },
+        { headers: { Authorization: `Bearer ${getToken()}` } },
+      );
+      setHasBankDetails(true);
+      bankCheckedRef.current = true;
+      successCallback?.();
+      setTimeout(() => {
+        setBankModalOpen(false);
+        setPhase((prev) =>
+          prev === 'confirm' || prev === 'submitting' ? 'confirm' : prev,
+        );
+      }, 2500);
+    } catch (err) {
+      const msg = err?.response?.data?.message || 'Failed to save bank details. Please try again.';
+      toast.error(msg);
+    } finally {
+      setBankModalLoading(false);
+    }
+  }, []);
+
+  // ── Derived button label ───────────────────────────────────────────────────
   const isReadyToRedeem = eligible && totalGroceryCoupons >= MIN_REDEEM && !redeemed;
+
   const btnLabel = redeemed
-    ? '✓ Redemption Requested'
+    ? '✓ Redemption Pending'
     : phase === 'confirming_loading'
       ? 'Loading…'
-      : `Redeem ${fmtINR(totalGroceryCoupons)}`;
+      : `Redeem ${fmtINR(displayedCoupons)}`;
+
+  if (totalGroceryCoupons < MIN_REDEEM && !redeemed) return null;
 
   return (
     <>
@@ -700,7 +710,8 @@ export default function RedeemGroceryCoupons({
           justifyContent: 'space-between',
           flexWrap: 'wrap', gap: 10,
         }}>
-          {/* Left: balance summary */}
+
+          {/* ── Left: balance summary ── */}
           <div>
             <p style={{
               margin: '0 0 3px', fontSize: 11, fontWeight: 600,
@@ -710,17 +721,15 @@ export default function RedeemGroceryCoupons({
             }}>
               Cash Reward Available
             </p>
-            <div style={{
-              display: 'flex', alignItems: 'baseline', gap: 8,
-            }}>
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
               <span style={{
                 fontFamily: '"Courier New", monospace',
                 fontSize: 26, fontWeight: 700, letterSpacing: -0.5,
-                color: totalGroceryCoupons > 0
+                color: displayedCoupons > 0
                   ? 'var(--color-text-primary, #111)'
                   : 'var(--color-text-tertiary, #9ca3af)',
               }}>
-                {fmtINR(totalGroceryCoupons)}
+                {fmtINR(displayedCoupons)}
               </span>
               <span style={{
                 fontSize: 12,
@@ -739,22 +748,42 @@ export default function RedeemGroceryCoupons({
             }}>
               Shares &amp; tokens are non-cash · not included
             </p>
+
+            {/* ── Post-redeem "pending payout" notice ── */}
+            {redeemed && (
+              <div style={{
+                marginTop: 8,
+                display: 'flex', alignItems: 'flex-start', gap: 6,
+                padding: '8px 12px', borderRadius: 8,
+                background: '#fffbeb', border: '1px solid #fde68a',
+                maxWidth: 280,
+              }}>
+                <span style={{ fontSize: 13, flexShrink: 0, marginTop: 1 }}>⏳</span>
+                <p style={{
+                  margin: 0, fontSize: 11, lineHeight: 1.5,
+                  color: '#92400e', fontFamily: 'var(--font-sans, inherit)',
+                }}>
+                  Payout pending. Balance will refresh once you reach your next reward slab.
+                </p>
+              </div>
+            )}
           </div>
 
-          {/* Right: the image button */}
+          {/* ── Right: the image button ── */}
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4 }}>
             <BlueBtn
               onClick={handleButtonClick}
-              disabled={phase === 'confirming_loading' || phase === 'submitting' || redeemed}
-              style={{
-                // Shrink slightly when balance is 0 so it looks less prominent
-                opacity: isReadyToRedeem || redeemed ? 1 : 0.6,
-              }}
+              disabled={
+                phase === 'confirming_loading' ||
+                phase === 'submitting'         ||
+                redeemed
+              }
+              style={{ opacity: isReadyToRedeem ? 1 : 0.6 }}
             >
               {btnLabel}
             </BlueBtn>
 
-            {/* Lock hint when not eligible */}
+            {/* Lock hints */}
             {!isReadyToRedeem && !redeemed && (
               <span style={{
                 fontSize: 11,
@@ -771,10 +800,10 @@ export default function RedeemGroceryCoupons({
 
             {redeemed && (
               <span style={{
-                fontSize: 11, color: '#16a34a',
+                fontSize: 11, color: '#b45309',
                 fontFamily: 'var(--font-sans, inherit)',
               }}>
-                ✓ Team notified — processing in 3–5 days
+                🔒 Unlocks at next reward slab
               </span>
             )}
           </div>
@@ -792,6 +821,7 @@ export default function RedeemGroceryCoupons({
           hasBankDetails={hasBankDetails ?? false}
           onClose={phase !== 'submitting' ? close : undefined}
           onConfirm={handleConfirm}
+          onAddBank={() => setBankModalOpen(true)}
           submitting={phase === 'submitting'}
         />
       )}
@@ -799,6 +829,16 @@ export default function RedeemGroceryCoupons({
       {phase === 'success' && (
         <SuccessModal amount={successAmount} onClose={close} />
       )}
+
+      {/* BankDetailsModal */}
+      <BankDetailsModal
+        isOpen={bankModalOpen}
+        onClose={() => {
+          setBankModalOpen(false);
+        }}
+        loading={bankModalLoading}
+        onSubmit={handleBankDetailsSubmit}
+      />
     </>
   );
 }

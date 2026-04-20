@@ -259,3 +259,9 @@ export function useRewardEligibility() {
     },
   };
 }
+
+export function invalidateEligibilityCache() {
+  _cache.data = null;
+  _cache.fetchedAt = 0;
+  _cache.promise = null;
+}

@@ -1,6 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { toast, ToastContainer } from 'react-toastify';
-import useScrollLock from "../../hooks/useScrollLock";
+import useScrollLock from "../../../hooks/useScrollLock";
 import 'react-toastify/dist/ReactToastify.css';
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
@@ -18,28 +18,38 @@ const ForgotPasswordModal = ({ show, onClose }) => {
   const [loading, setLoading] = useState(false);
   const [showPass, setShowPass] = useState(false);
 
-  const resetAll = () => {
-    setStep(1); setPhone(''); setOtp(''); setNewPassword('');
-    setConfirmPassword(''); setTimeLeft(300); setOtpExpired(false);
-    setResending(false); setLoading(false);
-  };
-
-  const handleClose = () => { resetAll(); onClose(); };
-
   const formatTime = (s) => `${Math.floor(s / 60)}:${(s % 60).toString().padStart(2, '0')}`;
+  
+  const resetAll = useCallback(() => {
+    setStep(1);
+    setPhone('');
+    setOtp('');
+    setNewPassword('');
+    setConfirmPassword('');
+    setTimeLeft(300);
+    setOtpExpired(false);
+    setResending(false);
+    setLoading(false);
+  }, []);
 
+  const handleClose = useCallback(() => {
+    resetAll();
+    onClose();
+  }, [resetAll,onClose]);
+  
   useEffect(() => {
     let timer;
     if (step === 2 && timeLeft > 0) timer = setInterval(() => setTimeLeft(p => p - 1), 1000);
     else if (step === 2 && timeLeft === 0) setOtpExpired(true);
     return () => clearInterval(timer);
   }, [step, timeLeft]);
-
+  
+  
   useEffect(() => {
     const onKey = (e) => { if (e.key === 'Escape') handleClose(); };
     if (show) window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [show]);
+  }, [show, handleClose]);
 
   const sendOTP = async () => {
     try {

@@ -120,10 +120,10 @@ export const StreakProvider = ({ children }) => {
     }
   }, []); // stable — reads token fresh on every call
 
-  const hasFetchedRef = useRef(false);
+  // const hasFetchedRef = useRef(false);
   useEffect(() => {
-    if (hasFetchedRef.current) return;   // ✅ prevent double call
-    hasFetchedRef.current = true;
+    // if (hasFetchedRef.current) return;   // ✅ prevent double call
+    // hasFetchedRef.current = true;
 
     fetchAll();
 

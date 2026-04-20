@@ -4,7 +4,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../Context/Authorisation/AuthContext';
 import AuthService from '../../Services/AuthService';
-import ForgotPasswordModal from './ForgotPasswordModal';
+import ForgotPasswordModal from './Hooks/useForgotPassword';
 import Logo from '../XLogo/Logo';
 import { toast } from 'react-toastify';
 import 'react-toastify/dist/ReactToastify.css';
