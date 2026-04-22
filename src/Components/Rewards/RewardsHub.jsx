@@ -36,8 +36,8 @@ import { useRewardEligibility }     from '../../hooks/useRewardEligibility';
 import { useActivityDashboard, DASHBOARD_QUERY_KEY }
                                     from '../../hooks/useActivityDashboard';
 import apiRequest                   from '../../utils/apiRequest';
-
-import RedeemGroceryCoupons from './RedeemGroceryCoupons';
+import BankDetailsModal from '../Common/BankDetailsModal';
+// import RedeemGroceryCoupons from './RedeemGroceryCoupons';
 
 import ReferralTab from './ReferralTab';
 
@@ -244,82 +244,6 @@ function CountDisplay({ value, suffix, isLoading }) {
       <span style={{ fontSize: 14, color: 'var(--color-text-secondary)', fontFamily: 'var(--font-sans)' }}>
         {suffix}
       </span>
-    </div>
-  );
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// BankDetailsModal — unchanged from original
-// ─────────────────────────────────────────────────────────────────────────────
-
-function BankModal({ open, loading, onClose, onSubmit, rewardLabel }) {
-  const [form, setForm]     = useState({ accountNumber: '', confirm: '', ifscCode: '', panNumber: '' });
-  const [errors, setErrors] = useState({});
-
-  useEffect(() => {
-    if (open) setForm({ accountNumber: '', confirm: '', ifscCode: '', panNumber: '' });
-  }, [open]);
-
-  if (!open) return null;
-
-  const validate = () => {
-    const e = {};
-    if (!form.accountNumber) e.accountNumber = 'Required';
-    else if (!/^\d{9,18}$/.test(form.accountNumber)) e.accountNumber = 'Invalid account number';
-    if (form.confirm !== form.accountNumber) e.confirm = 'Account numbers do not match';
-    if (!form.ifscCode) e.ifscCode = 'Required';
-    else if (!/^[A-Z]{4}0[A-Z0-9]{6}$/.test(form.ifscCode.toUpperCase())) e.ifscCode = 'Invalid IFSC code';
-    if (!form.panNumber) e.panNumber = 'Required';
-    else if (!/^[A-Z]{5}[0-9]{4}[A-Z]$/.test(form.panNumber.toUpperCase())) e.panNumber = 'Invalid PAN';
-    return e;
-  };
-
-  const handleSubmit = () => {
-    const e = validate();
-    setErrors(e);
-    if (Object.keys(e).length > 0) return;
-    onSubmit({
-      accountNumber: form.accountNumber,
-      ifscCode:      form.ifscCode.toUpperCase(),
-      panNumber:     form.panNumber.toUpperCase(),
-    });
-  };
-
-  const field = (key, label, placeholder) => (
-    <div style={styles.fieldWrap}>
-      <label style={styles.fieldLabel}>{label}</label>
-      <input
-        style={{ ...styles.input, ...(errors[key] ? { borderColor: 'var(--color-border-danger)' } : {}) }}
-        value={form[key]}
-        placeholder={placeholder}
-        onChange={e => {
-          setForm(p => ({ ...p, [key]: e.target.value }));
-          setErrors(p => ({ ...p, [key]: undefined }));
-        }}
-      />
-      {errors[key] && (
-        <span style={{ fontSize: 11, color: 'var(--color-text-danger)', marginTop: 2, display: 'block' }}>
-          {errors[key]}
-        </span>
-      )}
-    </div>
-  );
-
-  return (
-    <div style={styles.modalBackdrop} onClick={e => e.target === e.currentTarget && onClose()}>
-      <div style={styles.modalCard}>
-        <p style={styles.modalTitle}>Bank details — {rewardLabel}</p>
-        {field('accountNumber', 'Account number', '1234567890')}
-        {field('confirm', 'Confirm account number', '1234567890')}
-        {field('ifscCode', 'IFSC code', 'SBIN0001234')}
-        {field('panNumber', 'PAN number', 'ABCDE1234F')}
-        <div style={styles.modalFooter}>
-          <button style={styles.cancelBtn} onClick={onClose}>Cancel</button>
-          <button style={styles.submitBtn(loading)} onClick={handleSubmit} disabled={loading}>
-            {loading ? 'Submitting…' : 'Submit & claim'}
-          </button>
-        </div>
-      </div>
     </div>
   );
 }
@@ -612,7 +536,7 @@ function PostTab({ eligible, user, redeemedPosts, onRewardClaimed }) {
     : !hasEnough               ? 'locked'
     : 'ready';
 
-  const handleSubmit = async (bankDetails) => {
+  const handleBankSubmit = async (bankDetails, successCallback) => {
     setLoading(true);
     try {
       const res = await apiRequest.post(
@@ -623,6 +547,7 @@ function PostTab({ eligible, user, redeemedPosts, onRewardClaimed }) {
       toast.success(res.data?.message || `Post reward for ${selectedNum} posts claimed!`);
       setSelected('');
       setModalOpen(false);
+      successCallback?.();
       onRewardClaimed?.();
     } catch (err) {
       toast.error(parseClaimError(err));
@@ -687,11 +612,11 @@ function PostTab({ eligible, user, redeemedPosts, onRewardClaimed }) {
         </button>
       </div>
 
-      <BankModal
-        open={modalOpen}
+      <BankDetailsModal
+        isOpen={modalOpen}
         loading={loading}
         onClose={() => setModalOpen(false)}
-        onSubmit={handleSubmit}
+        onSubmit={handleBankSubmit}
         rewardLabel={`${selectedNum} posts`}
       />
     </div>
@@ -702,201 +627,8 @@ function PostTab({ eligible, user, redeemedPosts, onRewardClaimed }) {
 // // ReferralTab — NOW reads from useActivityDashboard (React Query)
 // // ─────────────────────────────────────────────────────────────────────────────
 
-// function ReferralTab({ eligible, user, redeemedReferral, onRewardClaimed }) {
-//   // ★ CHANGED: useActivityDashboard() instead of useReferral()
-//   const {
-//     activeReferralCount,
-//     referralCount,
-//     // referredUsers,
-//     isLoading: dashLoading,
-//   } = useActivityDashboard();
-
-//   const { parseClaimError } = useRewardEligibility();
-//   const slabs = usePlanSlabs('referral');
-
-//   const claimed = (redeemedReferral ?? []).map(Number);
-
-//   const [selected, setSelected]   = useState('');
-//   const [loading, setLoading]     = useState(false);
-//   const [modalOpen, setModalOpen] = useState(false);
-
-//   const activeCount = activeReferralCount ?? 0;
-
-//   const sortedSlabs = useMemo(() =>
-//     [...slabs].sort((a, b) => a.referralCount - b.referralCount),
-//     [slabs]
-//   );
-
-//   const bigSlabs    = sortedSlabs.filter(s => s.groceryCoupons > 0);
-//   const tokenSlabs  = sortedSlabs.filter(s => s.groceryCoupons === 0 && s.referralToken > 0);
-
-//   const selectedNum = selected ? Number(selected) : null;
-//   const isClaimed   = selectedNum ? claimed.includes(selectedNum) : false;
-//   const hasEnough   = selectedNum ? activeCount >= selectedNum : false;
-
-//   const next = sortedSlabs.find(s => activeCount < s.referralCount)?.referralCount ?? null;
-//   const prev = [...sortedSlabs].reverse().find(s => activeCount >= s.referralCount)?.referralCount ?? 0;
-
-//   const btnState = !eligible   ? 'locked'
-//     : !selectedNum             ? 'idle'
-//     : isClaimed                ? 'claimed'
-//     : !hasEnough               ? 'locked'
-//     : 'ready';
-
-//   const handleSubmit = async (bankDetails) => {
-//     setLoading(true);
-//     try {
-//       const res = await apiRequest.post(
-//         `${BACKEND_URL}/api/activity/referral`,
-//         { referralCount: selectedNum, bankDetails },
-//         { headers: { Authorization: `Bearer ${getToken()}` } }
-//       );
-//       toast.success(res.data?.message || `Referral reward for ${selectedNum} referrals claimed!`);
-//       setSelected('');
-//       setModalOpen(false);
-//       onRewardClaimed?.();
-//     } catch (err) {
-//       toast.error(parseClaimError(err));
-//     } finally {
-//       setLoading(false);
-//     }
-//   };
-
-//   // Referral link
-//   const referralId = user?.referralId ?? '';
-//   const frontendUrl = process.env.REACT_APP_FRONTEND_URL || window.location.origin;
-//   const inviteLink  = referralId ? `${frontendUrl}?ref=${referralId}` : '—';
-
-//   const copyLink = () => {
-//     if (!referralId) return;
-//     navigator.clipboard.writeText(inviteLink)
-//       .then(() => toast.success('Referral link copied!'))
-//       .catch(() => toast.error('Could not copy link.'));
-//   };
-
-//   return (
-//     <div>
-//       {/* ★ CountDisplay shows "—" while loading, not "0" */}
-//       <div style={{ display: 'flex', gap: 24, marginBottom: 20 }}>
-//         <div>
-//           <CountDisplay value={referralCount} suffix="total" isLoading={dashLoading} />
-//         </div>
-//         <div>
-//           <CountDisplay value={activeReferralCount} suffix="active" isLoading={dashLoading} />
-//         </div>
-//       </div>
-
-//       <ProgressBar
-//         current={activeCount}
-//         next={next}
-//         prev={prev}
-//         label={next ? `${activeCount} / ${next} active referrals` : 'All milestones reached'}
-//         color="#7c3aed"
-//       />
-
-//       {/* Big milestone chips */}
-//       {bigSlabs.length > 0 && (
-//         <>
-//           <p style={styles.sectionHead}>Grocery + Shares milestones</p>
-//           <div style={styles.milestoneGrid}>
-//             {bigSlabs.map(s => {
-//               const cl = claimed.includes(s.referralCount);
-//               const ac = activeCount >= s.referralCount;
-//               return (
-//                 <MilestoneChip
-//                   key={s.referralCount}
-//                   label={`${s.referralCount}r`}
-//                   sublabel={`₹${s.groceryCoupons.toLocaleString('en-IN')}`}
-//                   state={cl ? 'claimed' : ac ? 'active' : 'locked'}
-//                   badge={cl ? 'Claimed' : null}
-//                 />
-//               );
-//             })}
-//           </div>
-//         </>
-//       )}
-
-//       {/* Token milestone chips */}
-//       {tokenSlabs.length > 0 && (
-//         <>
-//           <p style={styles.sectionHead}>Token milestones</p>
-//           <div style={styles.milestoneGrid}>
-//             {tokenSlabs.map(s => {
-//               const cl = claimed.includes(s.referralCount);
-//               const ac = activeCount >= s.referralCount;
-//               return (
-//                 <MilestoneChip
-//                   key={s.referralCount}
-//                   label={`${s.referralCount}r`}
-//                   sublabel={`+${s.referralToken}t`}
-//                   state={cl ? 'claimed' : ac ? 'active' : 'locked'}
-//                 />
-//               );
-//             })}
-//           </div>
-//         </>
-//       )}
-
-//       {/* Referral link */}
-//       <p style={styles.sectionHead}>Your referral link</p>
-//       <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 20 }}>
-//         <code style={{
-//           flex: 1, fontSize: 12, padding: '8px 10px',
-//           background: 'var(--color-background-secondary)',
-//           border: '0.5px solid var(--color-border-tertiary)', borderRadius: 6,
-//           overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-//           fontFamily: '"Courier New", monospace', color: 'var(--color-text-secondary)',
-//         }}>
-//           {inviteLink}
-//         </code>
-//         <button style={{ ...styles.cancelBtn, fontSize: 12, padding: '6px 12px' }} onClick={copyLink}>
-//           Copy
-//         </button>
-//       </div>
-
-//       {/* Claim row */}
-//       <div style={styles.claimRow}>
-//         <select
-//           style={styles.select}
-//           value={selected}
-//           onChange={e => setSelected(e.target.value)}
-//           disabled={!eligible}
-//         >
-//           <option value="">Select a milestone…</option>
-//           {sortedSlabs.map(s => {
-//             const isCl = claimed.includes(s.referralCount);
-//             const ok   = activeCount >= s.referralCount;
-//             const label = s.groceryCoupons
-//               ? `${s.referralCount}r — ₹${s.groceryCoupons.toLocaleString('en-IN')} + ${s.shares}sh + ${s.referralToken}t`
-//               : `${s.referralCount}r — ${s.referralToken} tokens`;
-//             return (
-//               <option key={s.referralCount} value={s.referralCount} disabled={!ok || isCl}>
-//                 {label}{isCl ? ' — Claimed' : !ok ? ' — Locked' : ' — Available'}
-//               </option>
-//             );
-//           })}
-//         </select>
-
-//         <button
-//           style={styles.claimBtn(btnState)}
-//           onClick={() => btnState === 'ready' && setModalOpen(true)}
-//           disabled={btnState !== 'ready'}
-//         >
-//           {btnState === 'claimed' ? 'Claimed' : btnState === 'locked' && !eligible ? 'Locked' : 'Claim'}
-//         </button>
-//       </div>
-
-//       <BankModal
-//         open={modalOpen}
-//         loading={loading}
-//         onClose={() => setModalOpen(false)}
-//         onSubmit={handleSubmit}
-//         rewardLabel={`${selectedNum} referrals`}
-//       />
-//     </div>
-//   );
-// }
 <ReferralTab />
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Main: RewardsHub
 // ─────────────────────────────────────────────────────────────────────────────
@@ -938,7 +670,7 @@ export default function RewardsHub({ initialTab = 'streak' }) {
     if (type === 'streak') setStreakModal({ open: true, days: value, label });
   }, []);
 
-  const handleStreakClaim = async (bankDetails) => {
+  const handleStreakClaim = async (bankDetails, successCallback) => {
     setStreakLoading(true);
     try {
       const res = await apiRequest.post(
@@ -950,13 +682,16 @@ export default function RewardsHub({ initialTab = 'streak' }) {
       // ★ CHANGED: onRewardClaimed() invalidates BOTH earned-rewards and dashboard
       onRewardClaimed();
       setStreakModal({ open: false, days: null, label: '' });
+      successCallback?.();
     } catch (err) {
       toast.error(parseClaimError(err));
     } finally {
       setStreakLoading(false);
     }
   };
-
+  
+  const displayGrocery = wallet.availableBalance ?? wallet.totalGroceryCoupons ?? 0;
+  
   return (
     <div style={styles.shell}>
       {/* Eligibility banner — once, not per-tab */}
@@ -972,7 +707,7 @@ export default function RewardsHub({ initialTab = 'streak' }) {
       {/* Wallet */}
       <div style={styles.walletBar}>
         <div style={styles.walletCell}>
-          <span style={styles.walletNum}>₹{(wallet.totalGroceryCoupons || 0).toLocaleString('en-IN')}</span>
+          <span style={styles.walletNum}>₹{displayGrocery.toLocaleString('en-IN')}</span>
           <span style={styles.walletLabel}>Grocery coupons</span>
         </div>
         <div style={styles.walletCell}>
@@ -985,12 +720,12 @@ export default function RewardsHub({ initialTab = 'streak' }) {
         </div>
       </div>
 
-      <RedeemGroceryCoupons
+      {/* <RedeemGroceryCoupons
         totalGroceryCoupons={wallet.totalGroceryCoupons}
         eligible={eligible}
         user={user}
         onRedeemed={onRewardClaimed}   // optional: same callback the tabs use
-      />
+      /> */}
 
       {/* Tabs */}
       <nav style={styles.tabBar}>
@@ -1028,8 +763,8 @@ export default function RewardsHub({ initialTab = 'streak' }) {
       )}
 
       {/* Streak bank modal — outside tab tree so it survives tab switches */}
-      <BankModal
-        open={streakModal.open}
+      <BankDetailsModal
+        isOpen={streakModal.open}
         loading={streakLoading}
         onClose={() => setStreakModal({ open: false, days: null, label: '' })}
         onSubmit={handleStreakClaim}

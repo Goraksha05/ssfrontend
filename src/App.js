@@ -60,6 +60,7 @@ import ThemePalettePicker from './Components/Theme/ThemePalettePicker';
 import WelcomPage from './Components/WelcomPage';
 import LogSignNewModel from './Components/Auth/RegiLogModel_OnlyCaptchaWidget';
 import Home from './Components/HomeCompo/Home';
+import UpgradePromptController from './Components/Subscription/UpgradePromptController';
 
 // ── Lazily loaded pages (deferred until route is visited) ──────────────────────
 // Each of these adds non-trivial JS to the bundle. Lazy-loading them cuts
@@ -199,6 +200,7 @@ function AppContent() {
                   <FriendProvider>
                     <ReferralProvider>
                       <SubscriptionProvider>
+                      <UpgradePromptController />                        
                         <StatusProvider>
 
                           {/* ── Persistent chrome (authenticated non-admin only) ── */}

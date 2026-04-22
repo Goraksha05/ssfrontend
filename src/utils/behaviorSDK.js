@@ -34,7 +34,7 @@ function createQueue(sessionId, wsClient) {
     // The original read 'authToken' which is never written anywhere, so every
     // flush was silently skipped.
     function getToken() {
-        const t = localStorage.getItem('token');
+        const t = localStorage.getItem('authtoken');
         return t && t !== 'null' && t !== 'undefined' ? t : null;
     }
 
@@ -49,14 +49,16 @@ function createQueue(sessionId, wsClient) {
     }
 
     async function flushHTTP(batch, token) {
-        try {
-            fetch(API_ENDPOINT, {
-                method:    'POST',
-                headers:   { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-                body:      JSON.stringify(batch),
-                keepalive: true,
-            }).catch(() => { });
-        } catch (_) { }
+        for (const signal of batch) {
+            try {
+                fetch(API_ENDPOINT, {
+                    method:    'POST',
+                    headers:   { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+                    body:      JSON.stringify(signal),  // one signal per request
+                    keepalive: true,
+                }).catch(() => {});
+            } catch (_) {}
+        }
     }
 
     async function flush() {
@@ -231,16 +233,21 @@ function setupSessionTracking(queue, sessionId) {
 
     // Session end on unload
     const onUnload = () => {
+        const token = localStorage.getItem('authtoken');
+        if (!token || token === 'null' || token === 'undefined') return;
+
         const duration_ms = Date.now() - startTime;
-        navigator.sendBeacon(
-            API_ENDPOINT,
-            JSON.stringify({
+        fetch(API_ENDPOINT, {
+            method:    'POST',
+            headers:   { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+            body:      JSON.stringify({
                 signalType:      'session_end',
                 payload:         { duration_ms, page_count: pageCount },
                 clientTimestamp: Date.now(),
                 sessionId,
-            })
-        );
+            }),
+            keepalive: true,   // keeps the request alive after page unloads
+        }).catch(() => {});
     };
 
     window.addEventListener('beforeunload', onUnload);
@@ -253,7 +260,7 @@ function setupSessionTracking(queue, sessionId) {
 // ── Device fingerprint registration ───────────────────────────────────────────
 async function registerFingerprint() {
     // FIX 1: read from 'token', the canonical key — 'authToken' is never written.
-    const token = localStorage.getItem('token');
+    const token = localStorage.getItem('authtoken');
     if (!token || token === 'null' || token === 'undefined') return null;
 
     let gpuRenderer = '';
@@ -335,6 +342,8 @@ export function stopBehaviorSDK(session) {
     if (!session) return;
     session.cleanups?.forEach(fn => fn?.());
     session.queue?.stop();
+    localStorage.removeItem('authtoken');
+    localStorage.removeItem('token');
 }
 
 /**

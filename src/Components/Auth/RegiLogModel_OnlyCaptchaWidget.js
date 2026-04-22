@@ -1,4 +1,4 @@
-// RegiLogModel.js — Hybrid reCAPTCHA v3 (primary) + v2 (fallback)
+// RegiLogModel_OnlyCaptchaWidget.js — Hybrid reCAPTCHA v3 (primary) + v2 (fallback)
 // Styles are in App.css (rl-root, rl-card, rl-tab-bar, rl-glossy-btn, etc.)
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
@@ -8,13 +8,239 @@ import ForgotPasswordModal from './Hooks/useForgotPassword';
 import Logo from '../XLogo/Logo';
 import { toast } from 'react-toastify';
 import 'react-toastify/dist/ReactToastify.css';
-import { BadgeCheck, Eye, EyeOff, LogIn, UserPlus, ShieldCheck } from 'lucide-react';
+import { BadgeCheck, Eye, EyeOff, LogIn, UserPlus, ShieldCheck, ChevronDown } from 'lucide-react';
 import { initializeSocket } from '../../WebSocket/WebSocketClient';
 import TermsModal from '../TermsAndConditions/TermsModal';
 import apiRequest from '../../utils/apiRequest';
 
 import GreenGlossyBtn from '../../Assets/GreenGlossy.png';
 import RedGlossyBtn from '../../Assets/RedGlossy.png';
+
+const getFlagEmoji = (countryCode) => {
+    return countryCode
+        .toUpperCase()
+        .replace(/./g, char =>
+            String.fromCodePoint(127397 + char.charCodeAt())
+        );
+};
+// ─── Country codes list ───────────────────────────────────────────────────────
+// Each entry: { code, dialCode, flag }
+// "code" is the ISO 3166-1 alpha-2 country code used to render the emoji flag.
+// "dialCode" is the numeric prefix (without +) sent to the selector label.
+// The phone value submitted to the backend is ALWAYS the raw local number only
+// (digits typed by the user), because the backend validates /^\d{10}$/.
+const COUNTRY_CODES = [
+    { code: 'IN', dialCode: '+91',  name: 'India'              },
+    { code: 'US', dialCode: '+1',   name: 'USA'                },
+    { code: 'GB', dialCode: '+44',  name: 'UK'                 },
+    { code: 'AE', dialCode: '+971', name: 'UAE'                },
+    { code: 'SA', dialCode: '+966', name: 'Saudi Arabia'       },
+    { code: 'AU', dialCode: '+61',  name: 'Australia'          },
+    { code: 'CA', dialCode: '+1',   name: 'Canada'             },
+    { code: 'SG', dialCode: '+65',  name: 'Singapore'          },
+    { code: 'NZ', dialCode: '+64',  name: 'New Zealand'        },
+    { code: 'ZA', dialCode: '+27',  name: 'South Africa'       },
+    { code: 'NG', dialCode: '+234', name: 'Nigeria'            },
+    { code: 'KE', dialCode: '+254', name: 'Kenya'              },
+    { code: 'GH', dialCode: '+233', name: 'Ghana'              },
+    { code: 'PK', dialCode: '+92',  name: 'Pakistan'           },
+    { code: 'BD', dialCode: '+880', name: 'Bangladesh'         },
+    { code: 'LK', dialCode: '+94',  name: 'Sri Lanka'          },
+    { code: 'NP', dialCode: '+977', name: 'Nepal'              },
+    { code: 'MY', dialCode: '+60',  name: 'Malaysia'           },
+    { code: 'DE', dialCode: '+49',  name: 'Germany'            },
+    { code: 'FR', dialCode: '+33',  name: 'France'             },
+    { code: 'IT', dialCode: '+39',  name: 'Italy'              },
+    { code: 'ES', dialCode: '+34',  name: 'Spain'              },
+    { code: 'NL', dialCode: '+31',  name: 'Netherlands'        },
+    { code: 'SE', dialCode: '+46',  name: 'Sweden'             },
+    { code: 'NO', dialCode: '+47',  name: 'Norway'             },
+    { code: 'CH', dialCode: '+41',  name: 'Switzerland'        },
+    { code: 'JP', dialCode: '+81',  name: 'Japan'              },
+    { code: 'CN', dialCode: '+86',  name: 'China'              },
+    { code: 'KR', dialCode: '+82',  name: 'South Korea'        },
+    { code: 'BR', dialCode: '+55',  name: 'Brazil'             },
+    { code: 'MX', dialCode: '+52',  name: 'Mexico'             },
+    { code: 'AR', dialCode: '+54',  name: 'Argentina'          },
+    { code: 'PH', dialCode: '+63',  name: 'Philippines'        },
+    { code: 'ID', dialCode: '+62',  name: 'Indonesia'          },
+    { code: 'TH', dialCode: '+66',  name: 'Thailand'           },
+    { code: 'VN', dialCode: '+84',  name: 'Vietnam'            },
+    { code: 'EG', dialCode: '+20',  name: 'Egypt'              },
+    { code: 'RU', dialCode: '+7',   name: 'Russia'             },
+    { code: 'TR', dialCode: '+90',  name: 'Turkey'             },
+    { code: 'IR', dialCode: '+98',  name: 'Iran'               },
+    { code: 'IQ', dialCode: '+964', name: 'Iraq'               },
+    { code: 'QA', dialCode: '+974', name: 'Qatar'              },
+    { code: 'KW', dialCode: '+965', name: 'Kuwait'             },
+    { code: 'BH', dialCode: '+973', name: 'Bahrain'            },
+    { code: 'OM', dialCode: '+968', name: 'Oman'               },
+    { code: 'JO', dialCode: '+962', name: 'Jordan'             },
+    { code: 'IL', dialCode: '+972', name: 'Israel'             },
+    { code: 'HK', dialCode: '+852', name: 'Hong Kong'          },
+    { code: 'TW', dialCode: '+886', name: 'Taiwan'             },
+    { code: 'PT', dialCode: '+351', name: 'Portugal'           },
+    { code: 'PL', dialCode: '+48',  name: 'Poland'             },
+    { code: 'BE', dialCode: '+32',  name: 'Belgium'            },
+    { code: 'AT', dialCode: '+43',  name: 'Austria'            },
+    { code: 'DK', dialCode: '+45',  name: 'Denmark'            },
+    { code: 'FI', dialCode: '+358', name: 'Finland'            },
+    { code: 'CZ', dialCode: '+420', name: 'Czech Republic'     },
+    { code: 'HU', dialCode: '+36',  name: 'Hungary'            },
+    { code: 'GR', dialCode: '+30',  name: 'Greece'             },
+    { code: 'RO', dialCode: '+40',  name: 'Romania'            },
+    { code: 'UA', dialCode: '+380', name: 'Ukraine'            },
+    { code: 'CO', dialCode: '+57',  name: 'Colombia'           },
+    { code: 'CL', dialCode: '+56',  name: 'Chile'              },
+    { code: 'PE', dialCode: '+51',  name: 'Peru'               },
+    { code: 'ET', dialCode: '+251', name: 'Ethiopia'           },
+    { code: 'TZ', dialCode: '+255', name: 'Tanzania'           },
+    { code: 'UG', dialCode: '+256', name: 'Uganda'             },
+    { code: 'MU', dialCode: '+230', name: 'Mauritius'          },
+];
+
+const fetchUserCountry = async () => {
+    try {
+        const res = await fetch('https://ipapi.co/json/');
+        const data = await res.json();
+
+        return data?.country_code || 'IN'; // fallback
+    } catch (err) {
+        console.error('Geo detection failed:', err);
+        return 'IN';
+    }
+};
+
+const PhoneInput = ({ value, onChange }) => {
+    const [selectedCountry, setSelectedCountry] = useState(
+        COUNTRY_CODES.find(c => c.code === 'IN')
+    );
+    const [dropdownOpen, setDropdownOpen] = useState(false);
+    const [search, setSearch] = useState('');
+    const dropdownRef = useRef(null);
+    const searchRef   = useRef(null);
+
+    // Close dropdown when clicking outside
+    useEffect(() => {
+        const handleOutsideClick = (e) => {
+            if (dropdownRef.current && !dropdownRef.current.contains(e.target)) {
+                setDropdownOpen(false);
+                setSearch('');
+            }
+        };
+        if (dropdownOpen) {
+            document.addEventListener('mousedown', handleOutsideClick);
+            // Auto-focus the search box when dropdown opens
+            setTimeout(() => searchRef.current?.focus(), 50);
+        }
+        return () => document.removeEventListener('mousedown', handleOutsideClick);
+    }, [dropdownOpen]);
+
+    const filteredCountries = COUNTRY_CODES.filter(c =>
+        c.name.toLowerCase().includes(search.toLowerCase()) ||
+        c.dialCode.includes(search)
+    );
+
+    const handleCountrySelect = (country) => {
+        setSelectedCountry(country);
+        setDropdownOpen(false);
+        setSearch('');
+    };
+
+    // Only allow digits in the local-number field; strip everything else
+    const handlePhoneChange = (e) => {
+        const digits = e.target.value.replace(/\D/g, '');
+        onChange({ target: { name: 'phone', value: digits } });
+    };
+
+    useEffect(() => {
+        const detectCountry = async () => {
+            const code = await fetchUserCountry();
+
+            const matched = COUNTRY_CODES.find(c => c.code === code);
+
+            if (matched) {
+                setSelectedCountry(matched);
+            }
+        };
+
+        detectCountry();
+    }, []);
+
+    return (
+        <div className="rl-phone-wrap" ref={dropdownRef}>
+            {/* Country code trigger button */}
+            <div className="rl-phone-input-row">
+                <button
+                    type="button"
+                    className="rl-phone-code-btn"
+                    onClick={() => setDropdownOpen(prev => !prev)}
+                    aria-label="Select country code"
+                    title={`${selectedCountry?.name || ''} ${selectedCountry?.dialCode || ''}`}
+                >
+                    {selectedCountry && (
+                        <>
+                            <span className="rl-phone-flag">
+                                {getFlagEmoji(selectedCountry.code)}
+                            </span>
+                            <span className="rl-phone-dialcode">
+                                {selectedCountry.dialCode}
+                            </span>
+                        </>
+                    )}
+                    <ChevronDown size={14} className={`rl-phone-chevron ${dropdownOpen ? 'open' : ''}`} />
+                </button>
+
+                {/* Dropdown */}
+                {dropdownOpen && (
+                    <div className="rl-phone-dropdown">
+                        <div className="rl-phone-search-wrap">
+                            <input
+                                ref={searchRef}
+                                type="text"
+                                className="rl-phone-search"
+                                placeholder="Search country…"
+                                value={search}
+                                onChange={e => setSearch(e.target.value)}
+                                onClick={e => e.stopPropagation()}
+                            />
+                        </div>
+                        <ul className="rl-phone-list">
+                            {filteredCountries.length === 0 ? (
+                                <li className="rl-phone-no-results">No results</li>
+                            ) : (
+                                filteredCountries.map(country => (
+                                    <li
+                                        key={country.code}
+                                        className={`rl-phone-item ${country.code === selectedCountry?.code ? 'selected' : ''}`}
+                                        onClick={() => handleCountrySelect(country)}
+                                    >
+                                        <span className="rl-phone-flag">{getFlagEmoji(country.code)}</span>
+                                        <span className="rl-phone-item-name">{country.name}</span>
+                                        <span className="rl-phone-item-dial">{country.dialCode}</span>
+                                    </li>
+                                ))
+                            )}
+                        </ul>
+                    </div>
+                )}
+
+                {/* Local number input — stores only digits */}
+                <input
+                    type="tel"
+                    name="phone"
+                    className="rl-input rl-phone-number-input"
+                    placeholder="10-digit phone number"
+                    autoComplete="tel-national"
+                    value={value}
+                    onChange={handlePhoneChange}
+                    maxLength={15}
+                    required
+                />
+            </div>
+        </div>
+    );
+};
 
 // ─── CaptchaWidget (v2 fallback checkbox) ────────────────────────────────────
 //
@@ -496,7 +722,7 @@ const LogSignNewModel = () => {
                             />
                         </div>
 
-                        <div className="rl-input-wrap">
+                        {/* <div className="rl-input-wrap">
                             <input
                                 type="text"
                                 name="phone"
@@ -507,7 +733,12 @@ const LogSignNewModel = () => {
                                 onChange={handleInputChange}
                                 required
                             />
-                        </div>
+                        </div> */}
+                        {/* ────────── Phone Input with Country Code ────────── */}
+                        <PhoneInput
+                            value={signupData.phone}
+                            onChange={handleInputChange}
+                        />                        
 
                         <div className="rl-divider">Security</div>
 

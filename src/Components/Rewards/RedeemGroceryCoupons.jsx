@@ -50,28 +50,6 @@ function readLock(userId) {
  * @param {string} userId
  * @param {number} redeemedAmount  The balance that was just redeemed (₹)
  */
-function writeLock(userId, redeemedAmount) {
-  if (!userId) return;
-  try {
-    localStorage.setItem(
-      lsKey(userId, 'lock'),
-      JSON.stringify({ locked: true, redeemedAmount }),
-    );
-  } catch {
-    // Storage quota exceeded — fail silently; session-level redeemed flag still guards the button
-  }
-}
-
-/**
- * Remove the redemption lock — called when the user has earned new coupons
- * past their previous redeemed amount, meaning the next slab was reached.
- */
-function clearLock(userId) {
-  if (!userId) return;
-  try {
-    localStorage.removeItem(lsKey(userId, 'lock'));
-  } catch { /* noop */ }
-}
 
 // ─── Gate-info modal (shown when user is ineligible) ─────────────────────────
 
@@ -500,50 +478,16 @@ export default function RedeemGroceryCoupons({
 
   // ── Restore lock state from localStorage on first mount ───────────────────
   // lock = { locked: boolean, redeemedAmount: number } | null
+  // eslint-disable-next-line
   const [lock, setLock] = useState(() => readLock(userId));
 
   // Optimistic flag — set immediately on API success so the button disables
   // and the balance shows ₹0 before the lock state / parent re-render settles.
+  // eslint-disable-next-line
   const [justRedeemed, setJustRedeemed] = useState(false);
 
-  /**
-   * The balance we display to the user.
-   *
-   * Rules:
-   *  • If a lock exists AND totalGroceryCoupons <= redeemedAmount:
-   *      → show 0  (pending payout hasn't been processed yet; no new slab earned)
-   *  • If a lock exists AND totalGroceryCoupons > redeemedAmount:
-   *      → the admin must have paid out AND the user earned more; clear the lock,
-   *        show the real balance, re-enable the button.
-   *  • No lock → show totalGroceryCoupons as-is.
-   */
-  const displayedCoupons = useMemo(() => {
-    // Immediately show ₹0 the moment the API succeeds, regardless of whether
-    // the parent prop has updated yet.
-    if (justRedeemed) return 0;
-    if (!lock) return totalGroceryCoupons;
-    if (totalGroceryCoupons > lock.redeemedAmount) {
-      // New slab reached — lock is now stale, clear it (effect handles storage)
-      return totalGroceryCoupons;
-    }
-    return 0;
-  }, [justRedeemed, lock, totalGroceryCoupons]);
+  const displayedCoupons = totalGroceryCoupons;
 
-  // Clear the localStorage lock whenever the balance surpasses the redeemed amount
-  useEffect(() => {
-    if (lock && (totalGroceryCoupons < lock.redeemedAmount || totalGroceryCoupons === 0)) {
-      clearLock(userId);
-      setLock(null);
-    }
-  }, [lock, totalGroceryCoupons, userId]);
-
-  // Re-read lock from storage when userId changes (e.g. switching accounts)
-  useEffect(() => {
-    setLock(readLock(userId));
-  }, [userId]);
-
-  // ── Phase / modal state ────────────────────────────────────────────────────
-  // phase: 'idle' | 'gate' | 'confirming_loading' | 'confirm' | 'submitting' | 'success'
   const [phase, setPhase] = useState('idle');
 
   const [gateMsg,        setGateMsg]        = useState('');
@@ -554,7 +498,19 @@ export default function RedeemGroceryCoupons({
   const bankCheckedRef = useRef(false);
 
   // ── Whether the user is currently in a "redeemed" lock state ──────────────
-  const redeemed = justRedeemed || (!!lock && totalGroceryCoupons <= lock.redeemedAmount);
+  // const redeemed = justRedeemed || (!!lock && totalGroceryCoupons <= lock.redeemedAmount);
+
+  const [redemptionStatus, setRedemptionStatus] = useState(null);
+
+  useEffect(() => {
+    if (!userId) return;
+    apiRequest.get('/api/activity/redemption-status', { _silent: true })
+      .then(r => setRedemptionStatus(r.data))
+      .catch(() => {});
+  }, [userId]);
+
+  const hasPendingRedemption = redemptionStatus?.hasRedemption &&
+    ['pending', 'processing', 'on_hold'].includes(redemptionStatus?.status);
 
   // ── Lazy bank-details check ────────────────────────────────────────────────
   const checkBankDetails = useCallback(async () => {
@@ -581,14 +537,14 @@ export default function RedeemGroceryCoupons({
     if (!eligible) {
       return 'Complete KYC verification and activate a subscription before redeeming rewards.';
     }
-    if (redeemed) {
+    if (hasPendingRedemption) {
       return 'You have already submitted a redemption request. The button will re-enable once your current payout is processed and you earn new grocery coupons by reaching the next reward slab.';
     }
     if (totalGroceryCoupons < MIN_REDEEM) {
       return 'You have no grocery coupon balance to redeem. Earn grocery coupons by completing post, referral, or streak milestones.';
     }
     return null;
-  }, [eligible, totalGroceryCoupons, redeemed]);
+  }, [eligible, totalGroceryCoupons, hasPendingRedemption]);
 
   const handleButtonClick = useCallback(async () => {
     const gateReason = getGateReason();
@@ -607,48 +563,32 @@ export default function RedeemGroceryCoupons({
   const handleConfirm = useCallback(async ({ notes }) => {
     setPhase('submitting');
     try {
-      const payload = { notes: notes || undefined };
-
-      await apiRequest.post(
+      const res = await apiRequest.post(
         `${BACKEND_URL}/api/activity/redeem-grocery-coupons`,
-        payload,
-        { headers: { Authorization: `Bearer ${getToken()}` } },
+        { notes: notes || undefined },
       );
 
-      const redeemedAmount = totalGroceryCoupons;
+      // ── Backend now returns updated wallet in the response ──────────────
+      // Use it immediately for optimistic update, then let refetch confirm it.
+      // eslint-disable-next-line
+      const newBalance = res.data?.wallet?.availableBalance ?? 0;
 
-      // ── Optimistic UI: zero the balance + disable button immediately ──────
-      setJustRedeemed(true);
-
-      // ── Persist the lock so the disabled state survives refreshes ────────
-      const newLock = { locked: true, redeemedAmount };
-      writeLock(userId, redeemedAmount);
-      setLock(newLock);
-
-      setSuccessAmount(redeemedAmount);
-      setBankModalOpen(false); // ensure BankDetailsModal is dismissed before showing SuccessModal
+      setSuccessAmount(totalGroceryCoupons);
       setPhase('success');
 
+      // Notify parent to refetch (this will update wallet.totalGroceryCoupons)
       onRedeemed?.();
+
     } catch (err) {
-      // Handle 409 — already pending (e.g. duplicate tab submit)
       if (err?.response?.status === 409) {
-        const redeemedAmount = totalGroceryCoupons;
-        const newLock = { locked: true, redeemedAmount };
-        writeLock(userId, redeemedAmount);
-        setLock(newLock);
-        toast.warn(
-          err?.response?.data?.message ||
-          'A redemption request is already pending. Your balance will show ₹0 until it is processed.',
-        );
+        toast.warn(err?.response?.data?.message || 'A redemption request is already pending.');
         setPhase('idle');
         return;
       }
-      const msg = err?.response?.data?.message || 'Redemption failed. Please try again.';
-      toast.error(msg);
+      toast.error(err?.response?.data?.message || 'Redemption failed. Please try again.');
       setPhase('confirm');
     }
-  }, [totalGroceryCoupons, userId, onRedeemed]);
+  }, [totalGroceryCoupons, onRedeemed]);
 
   const close = useCallback(() => setPhase('idle'), []);
 
@@ -687,15 +627,15 @@ export default function RedeemGroceryCoupons({
   }, []);
 
   // ── Derived button label ───────────────────────────────────────────────────
-  const isReadyToRedeem = eligible && totalGroceryCoupons >= MIN_REDEEM && !redeemed;
+  const isReadyToRedeem = eligible && totalGroceryCoupons >= MIN_REDEEM && !hasPendingRedemption;
 
-  const btnLabel = redeemed
+  const btnLabel = hasPendingRedemption
     ? '✓ Redemption Pending'
     : phase === 'confirming_loading'
       ? 'Loading…'
       : `Redeem ${fmtINR(displayedCoupons)}`;
 
-  if (totalGroceryCoupons < MIN_REDEEM && !redeemed) return null;
+  if (totalGroceryCoupons < MIN_REDEEM && !hasPendingRedemption) return null;
 
   return (
     <>
@@ -750,7 +690,7 @@ export default function RedeemGroceryCoupons({
             </p>
 
             {/* ── Post-redeem "pending payout" notice ── */}
-            {redeemed && (
+            {hasPendingRedemption && (
               <div style={{
                 marginTop: 8,
                 display: 'flex', alignItems: 'flex-start', gap: 6,
@@ -776,7 +716,7 @@ export default function RedeemGroceryCoupons({
               disabled={
                 phase === 'confirming_loading' ||
                 phase === 'submitting'         ||
-                redeemed
+                hasPendingRedemption
               }
               style={{ opacity: isReadyToRedeem ? 1 : 0.6 }}
             >
@@ -784,7 +724,7 @@ export default function RedeemGroceryCoupons({
             </BlueBtn>
 
             {/* Lock hints */}
-            {!isReadyToRedeem && !redeemed && (
+            {!isReadyToRedeem && !hasPendingRedemption && (
               <span style={{
                 fontSize: 11,
                 color: 'var(--color-text-tertiary, #9ca3af)',
@@ -798,7 +738,7 @@ export default function RedeemGroceryCoupons({
               </span>
             )}
 
-            {redeemed && (
+            {hasPendingRedemption && (
               <span style={{
                 fontSize: 11, color: '#b45309',
                 fontFamily: 'var(--font-sans, inherit)',

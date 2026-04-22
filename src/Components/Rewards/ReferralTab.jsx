@@ -1,42 +1,6 @@
 /**
  * ReferralTab.jsx — Drop-in replacement for the ReferralTab inside RewardsHub.jsx
- *
- * HOW TO USE:
- *   1. Copy this file to your components/Rewards/ folder.
- *   2. In RewardsHub.jsx, replace the existing `function ReferralTab(...)` block
- *      with an import:
- *        import ReferralTab from './ReferralTab';
- *   3. The props signature is identical to the original:
- *        <ReferralTab
- *          eligible={eligible}
- *          user={user}
- *          redeemedReferral={redeemed.referral}
- *          onRewardClaimed={onRewardClaimed}
- *        />
- *
- * WHAT'S NEW vs the original ReferralTab:
- *   ✅  Downline tracker panel — shows every referred member with:
- *         • Name, masked phone number (full shown on click / copy)
- *         • Active / Inactive subscription badge
- *         • Join date
- *         • "Call" shortcut (opens tel: link on mobile)
- *         • "Copy phone" button for desktop follow-up
- *   ✅  Search by name or phone
- *   ✅  Filter tab: All | Active | Inactive (with badge counts)
- *   ✅  Inline reminder nudge text that the user can copy to share
- *   ✅  Warning banner when inactive members exist, with count
- *   ✅  Loading skeleton while referredUsers fetches
- *   ✅  Empty state messages per filter
- *   ✅  referredUsers fetched from /api/auth/users/referred (already in backend)
- *      and supplemented by activeReferralCount from useActivityDashboard()
- *
- * BACKEND NOTE:
- *   GET /api/auth/users/referred  returns:
- *     { referredUsers: [{ _id, name, email, phone, subscription, date }] }
- *   This already exists in authController.getReferredUsers.
- *   Phone is returned as a plain string (10 digits).  The component masks it
- *   by default for privacy and reveals on explicit interaction.
- */
+**/
 
 import React, {
   useState, useEffect, useMemo, useCallback, useRef,
@@ -45,13 +9,7 @@ import { toast } from 'react-toastify';
 import apiRequest from '../../utils/apiRequest';
 import { useActivityDashboard } from '../../hooks/useActivityDashboard';
 import { useRewardEligibility } from '../../hooks/useRewardEligibility';
-
-// ─── Re-used from RewardsHub (these are defined there, so we import them) ─────
-// If you keep this component inside RewardsHub.jsx as a function, just remove
-// the imports below and rely on the closure. If it's a separate file, you
-// need to either duplicate these tiny helpers or export them from RewardsHub.
-//
-// For a separate file, we inline the three helpers we need (they are tiny):
+import BankDetailsModal from '../Common/BankDetailsModal';
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || '';
 const getToken    = () => localStorage.getItem('token');
@@ -243,80 +201,6 @@ function MilestoneChip({ label, sublabel, state, badge }) {
       <span style={S.chipMain}>{label}</span>
       {sublabel && <span style={S.chipSub}>{sublabel}</span>}
       {badge && <span style={S.chipBadge}>{badge}</span>}
-    </div>
-  );
-}
-
-// ─── BankModal (self-contained, identical to RewardsHub version) ──────────────
-
-function BankModal({ open, loading, onClose, onSubmit, rewardLabel }) {
-  const [form, setForm]     = useState({ accountNumber: '', confirm: '', ifscCode: '', panNumber: '' });
-  const [errors, setErrors] = useState({});
-
-  useEffect(() => {
-    if (open) setForm({ accountNumber: '', confirm: '', ifscCode: '', panNumber: '' });
-  }, [open]);
-
-  if (!open) return null;
-
-  const validate = () => {
-    const e = {};
-    if (!form.accountNumber) e.accountNumber = 'Required';
-    else if (!/^\d{9,18}$/.test(form.accountNumber)) e.accountNumber = 'Invalid account number';
-    if (form.confirm !== form.accountNumber) e.confirm = 'Account numbers do not match';
-    if (!form.ifscCode) e.ifscCode = 'Required';
-    else if (!/^[A-Z]{4}0[A-Z0-9]{6}$/.test(form.ifscCode.toUpperCase())) e.ifscCode = 'Invalid IFSC code';
-    if (!form.panNumber) e.panNumber = 'Required';
-    else if (!/^[A-Z]{5}[0-9]{4}[A-Z]$/.test(form.panNumber.toUpperCase())) e.panNumber = 'Invalid PAN';
-    return e;
-  };
-
-  const handleSubmit = () => {
-    const e = validate();
-    setErrors(e);
-    if (Object.keys(e).length > 0) return;
-    onSubmit({
-      accountNumber: form.accountNumber,
-      ifscCode:      form.ifscCode.toUpperCase(),
-      panNumber:     form.panNumber.toUpperCase(),
-    });
-  };
-
-  const field = (key, label, placeholder) => (
-    <div style={S.fieldWrap}>
-      <label style={S.fieldLabel}>{key === 'confirm' ? label : label}</label>
-      <input
-        style={{ ...S.input, ...(errors[key] ? { borderColor: 'var(--color-border-danger)' } : {}) }}
-        value={form[key]}
-        placeholder={placeholder}
-        onChange={e => {
-          setForm(p => ({ ...p, [key]: e.target.value }));
-          setErrors(p => ({ ...p, [key]: undefined }));
-        }}
-      />
-      {errors[key] && (
-        <span style={{ fontSize: 11, color: 'var(--color-text-danger)', marginTop: 2, display: 'block' }}>
-          {errors[key]}
-        </span>
-      )}
-    </div>
-  );
-
-  return (
-    <div style={S.modalBackdrop} onClick={e => e.target === e.currentTarget && onClose()}>
-      <div style={S.modalCard}>
-        <p style={S.modalTitle}>Bank details — {rewardLabel}</p>
-        {field('accountNumber', 'Account number', '1234567890')}
-        {field('confirm', 'Confirm account number', '1234567890')}
-        {field('ifscCode', 'IFSC code', 'SBIN0001234')}
-        {field('panNumber', 'PAN number', 'ABCDE1234F')}
-        <div style={S.modalFooter}>
-          <button style={S.cancelBtn} onClick={onClose}>Cancel</button>
-          <button style={S.submitBtn(loading)} onClick={handleSubmit} disabled={loading}>
-            {loading ? 'Submitting…' : 'Submit & claim'}
-          </button>
-        </div>
-      </div>
     </div>
   );
 }
@@ -733,7 +617,7 @@ export default function ReferralTab({ eligible, user, redeemedReferral, onReward
     : !hasEnough               ? 'locked'
     : 'ready';
 
-  const handleSubmit = async (bankDetails) => {
+  const handleBankSubmit = async (bankDetails, successCallback) => {
     setLoading(true);
     try {
       const res = await apiRequest.post(
@@ -744,6 +628,7 @@ export default function ReferralTab({ eligible, user, redeemedReferral, onReward
       toast.success(res.data?.message || `Referral reward for ${selectedNum} referrals claimed!`);
       setSelected('');
       setModalOpen(false);
+      successCallback?.();
       onRewardClaimed?.();
       refetchUsers(); // refresh phone list after claim (subscription status may change)
     } catch (err) {
@@ -940,11 +825,11 @@ export default function ReferralTab({ eligible, user, redeemedReferral, onReward
         </button>
       </div>
 
-      <BankModal
-        open={modalOpen}
+      <BankDetailsModal
+        isOpen={modalOpen}
         loading={loading}
         onClose={() => setModalOpen(false)}
-        onSubmit={handleSubmit}
+        onSubmit={handleBankSubmit}
         rewardLabel={`${selectedNum} referrals`}
       />
     </div>

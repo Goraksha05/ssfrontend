@@ -485,6 +485,7 @@ export const ThemePickerTrigger = ({ onClick }) => {
           borderRadius:  '50px',
           border:        '1.5px dashed rgba(255,255,255,0.3)',
           pointerEvents: 'none',
+          transform:     'scale(1.08)',
         }} />
       </button>
     </>

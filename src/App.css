@@ -1125,11 +1125,12 @@ ul li button:hover {
 .rl-divider {
     display: flex;
     align-items: center;
+    justify-content: center;
     gap: 10px;
     margin: 0.6rem 0 1rem;
     color: #bbb;
     font-size: 0.78rem;
-    font-weight: 700;
+    font-weight: 800;
 }
 
 .rl-divider::before,
@@ -1139,3 +1140,152 @@ ul li button:hover {
     height: 1px;
     background: #e0e0e0;
 }
+
+ /* ============================================================================
+  CSS to add to App.css (or your component stylesheet)
+ ============================================================================ */
+  .rl-phone-divider { 
+    width: 1px; 
+    height: 24px; 
+    background: #444; 
+    flex-shrink: 0; 
+  }
+ 
+  .rl-phone-wrap {
+      position: relative;
+      display: flex;
+      align-items: center;
+      gap: 0;
+      width: 100%;
+      margin-bottom: 12px;
+  }
+
+  .rl-phone-input-row { 
+      display: flex; align-items: center;
+      border: 1px solid #44444400; border-radius: 8px;
+      background: #060e1a8c; 
+      overflow: hidden; 
+      width: 100%;
+  }
+
+  .rl-phone-code-btn {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      padding: 0 10px;
+      height: 44px;
+      border: 1px solid #cdd5e0;
+      border-right: none;
+      border-radius: 8px 0 0 8px;
+      cursor: pointer;
+      white-space: nowrap;
+      font-size: 0.85rem;
+      font-weight: 500;
+      color: #e2f3ff88;
+      transition: background 0.15s;
+      flex-shrink: 0;
+  }
+
+  .rl-phone-flag {
+      font-family: "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif;
+      font-size: 18px;
+  }
+ 
+  .rl-phone-dialcode {
+      font-size: 0.85rem;
+      color: #e2f3ff88;
+      letter-spacing: 0.01em;
+  }
+ 
+  .rl-phone-chevron {
+      color: #888;
+      transition: transform 0.2s;
+      flex-shrink: 0;
+  }
+ 
+  .rl-phone-chevron.open {
+      transform: rotate(180deg);
+  }
+ 
+  .rl-phone-number-input {
+      flex: 1;
+      border-radius: 0 8px 8px 0 !important;
+      border-left: none !important;
+      margin-bottom: 0 !important;
+  }
+ 
+  .rl-phone-dropdown {
+      position: absolute;
+      top: calc(100% + 4px);
+      left: 0;
+      z-index: 9999;
+      width: 280px;
+      background: #ffe4d8;
+      border: 1px solid #cdd5e0;
+      border-radius: 10px;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.13);
+      overflow: hidden;
+  }
+
+  .rl-phone-search-wrap {
+      padding: 8px 10px;
+      border-bottom: 1px solid #eee;
+  }
+ 
+  .rl-phone-search {
+      width: 100%;
+      padding: 6px 10px;
+      border: 1px solid #dddddd;
+      border-radius: 6px;
+      font-size: 0.85rem;
+      outline: none;
+      box-sizing: border-box;
+  }
+ 
+  .rl-phone-search:focus {
+      border-color: #4CAF50;
+  }
+ 
+  .rl-phone-list {
+      list-style: none;
+      margin: 0;
+      padding: 4px 0;
+      max-height: 220px;
+      overflow-y: auto;
+  }
+ 
+  .rl-phone-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 14px;
+      cursor: pointer;
+      transition: background 0.12s;
+      font-size: 0.85rem;
+  }
+ 
+  .rl-phone-item:hover {
+      background: #f0f9f0;
+  }
+ 
+  .rl-phone-item.selected {
+      background: #e8f5e9;
+      font-weight: 600;
+  }
+ 
+  .rl-phone-item-name {
+      flex: 1;
+      color: #333;
+  }
+ 
+  .rl-phone-item-dial {
+      color: #888;
+      font-size: 0.8rem;
+  }
+ 
+  .rl-phone-no-results {
+      padding: 12px 14px;
+      color: #aaa;
+      font-size: 0.85rem;
+      text-align: center;
+  }
