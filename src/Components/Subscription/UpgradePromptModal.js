@@ -24,13 +24,17 @@ const S = {
     inset: 0,
     zIndex: 9999,
     display: 'flex',
-    alignItems: 'center',
+    alignItems: 'flex-start',        // allow card to start at top so it isn't cut off
     justifyContent: 'center',
     padding: '16px',
+    paddingTop: 'max(16px, env(safe-area-inset-top))',
+    paddingBottom: 'max(16px, env(safe-area-inset-bottom))',
     background: 'rgba(5, 7, 20, 0.72)',
     backdropFilter: 'blur(8px)',
     WebkitBackdropFilter: 'blur(8px)',
     animation: 'upm_overlayIn 0.25s ease forwards',
+    overflowY: 'auto',               // overlay itself scrolls if card is taller than viewport
+    WebkitOverflowScrolling: 'touch',
   },
 
   /* ── Card ────────────────────────────────────────────────────── */
@@ -38,8 +42,10 @@ const S = {
     position: 'relative',
     width: '100%',
     maxWidth: '480px',
+    marginTop: 'auto',               // keep vertically centred when there's room
+    marginBottom: 'auto',
     borderRadius: '28px',
-    overflow: 'hidden',
+    overflow: 'auto',
     background: 'linear-gradient(155deg, #0d1232 0%, #111828 55%, #0a0d1e 100%)',
     border: '1px solid rgba(180, 150, 90, 0.22)',
     boxShadow:

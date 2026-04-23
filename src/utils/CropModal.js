@@ -1,50 +1,6 @@
 /**
  * utils/CropModal.js — Render-optimised
- *
- * OPTIMISATIONS (this pass):
- *
- *  1.  <style>{MODAL_CSS}</style> extracted as a module-scope constant element.
- *      Previously the entire MODAL_CSS string was parsed into a new <style>
- *      React element on every render. As a module-scope constant it is created
- *      once and reused; React's reconciler sees the same reference and skips
- *      the DOM patch entirely after the first mount.
- *
- *  2.  ASPECT_OPTIONS buttons — onClick handlers stabilised.
- *      Previously `() => setAspect(opt.value)` created a new function for
- *      every aspect-ratio button on every render. The handlers are now built
- *      once via a module-scope lookup map (ASPECT_HANDLERS) keyed by
- *      opt.label, so the aspect-ratio button list never allocates new closures
- *      during renders triggered by zoom, crop-position, or rotation changes.
- *
- *  3.  zoomPct computation moved into render but derived purely from zoom prop.
- *      No change needed — it was already a cheap inline expression with no
- *      allocation. Kept as-is and documented.
- *
- *  4.  Zoom onChange — useCallback-wrapped handler.
- *      `(e) => setZoom(Number(e.target.value))` was a new arrow on every render.
- *      Wrapped in useCallback([setZoom]) — setZoom is stable so the result is
- *      a single allocation for the component lifetime.
- *
- *  5.  onClose / onApply / setCrop / setZoom are props or stable state
- *      setters — no additional memoisation needed, but documented to confirm.
- *
- *  6.  Two separate useEffect hooks for aspect/rotation reset on new image
- *      combined into one effect.
- *      Both fired on [image] change; combining them halves the number of
- *      effect subscriptions and avoids two sequential synchronous state
- *      updates (which would have caused two re-renders in React 17 and below,
- *      and are batched in React 18 — but a single effect is cleaner).
- *
- *  7.  Focus-trap effect: raf handle typed as a number ref (useRef(0)) rather
- *      than an untyped ref, and cancelAnimationFrame called in cleanup.
- *      Previously the raf handle from requestAnimationFrame was never cancelled
- *      on cleanup, so if the image prop changed rapidly (user switches image
- *      while modal is open) the stale raf could fire and attempt to focus a
- *      now-replaced firstFocRef target.
- *
- *  8.  rotateLeft / rotateRight already use useCallback([]) — no change.
- *      handleReset already uses useCallback — verified deps are correct.
- */
+**/
 
 import React, {
   useEffect, useState, useCallback, useRef, useId,
@@ -67,10 +23,11 @@ function unlockScroll() {
 const ASPECT_OPTIONS = [
   { label: '1 : 1',    value: 1,       ariaLabel: 'Square'              },
   { label: '4 : 3',    value: 4 / 3,   ariaLabel: 'Four by three'       },
+  { label: '3 : 4',    value: 3 / 4,   ariaLabel: 'Three by four'       },
   { label: '3 : 2',    value: 3 / 2,   ariaLabel: 'Three by two'        },
   { label: '16 : 9',   value: 16 / 9,  ariaLabel: 'Sixteen by nine'     },
+  { label: '18 : 9',   value: 18 / 9,  ariaLabel: 'Eighteen by nine'    },
   { label: '21 : 9',   value: 21 / 9,  ariaLabel: 'Ultra wide'          },
-  { label: '3 : 4',    value: 3 / 4,   ariaLabel: 'Three by four'       },
   { label: '2 : 3',    value: 2 / 3,   ariaLabel: 'Two by three'        },
   { label: '9 : 16',   value: 9 / 16,  ariaLabel: 'Vertical video'      },
   { label: '4 : 5',    value: 4 / 5,   ariaLabel: 'Instagram portrait'  },
@@ -105,8 +62,30 @@ const MODAL_CSS = `
     flex-direction: column;
     font-family: 'Sora', system-ui, sans-serif;
     color: #e2eaf5;
-    overflow: hidden;
+    // overflow: hidden;
     box-shadow: 0 24px 64px rgba(0, 0, 0, 0.7);
+  }
+
+  /* ── Scrollable controls wrapper ── */
+  .cm-scrollable {
+    flex: 1;
+    overflow-y: auto;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior: contain;
+    /* Subtle scrollbar styling */
+    scrollbar-width: thin;
+    scrollbar-color: #1e3050 transparent;
+  }
+  .cm-scrollable::-webkit-scrollbar {
+    width: 4px;
+  }
+  .cm-scrollable::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  .cm-scrollable::-webkit-scrollbar-thumb {
+    background: #1e3050;
+    border-radius: 99px;
   }
 
   /* ── Header ── */
@@ -149,10 +128,10 @@ const MODAL_CSS = `
   /* ── Cropper area ── */
   .cm-cropper-wrap {
     position: relative;
-    height: clamp(220px, 50vh, 400px);
+    height: clamp(180px, 40vh, 400px);
     background: #050c1c;
     flex-shrink: 0;
-    overflow: hidden;
+    // overflow: hidden;
   }
 
   /* ── Controls ── */
@@ -162,7 +141,6 @@ const MODAL_CSS = `
     flex-direction: column;
     gap: 12px;
     border-bottom: 1px solid #1a2a40;
-    flex-shrink: 0;
   }
   .cm-control-row {
     display: flex;
@@ -383,6 +361,18 @@ const MODAL_CSS = `
     }
     .cm-aspect-group { flex-wrap: wrap; }
   }
+
+  /* Very short screens: shrink the cropper further so controls stay visible */
+  @media (max-height: 600px) {
+    .cm-cropper-wrap {
+      height: clamp(140px, 28vh, 220px);
+    }
+  }
+  @media (max-height: 480px) {
+    .cm-cropper-wrap {
+      height: 130px;
+    }
+  }
 `;
 /* ── Optimisation #1 — module-scope style element ──────────────────────────
    Created once; React reconciler sees the same reference every render
@@ -562,6 +552,9 @@ const CropModal = ({
           />
         </div>
 
+        {/* Controls + Footer wrapped in a scrollable area */}
+        <div className="cm-scrollable">
+
         {/* Controls */}
         <div className="cm-controls">
 
@@ -675,7 +668,9 @@ const CropModal = ({
               )}
             </button>
           </div>
-        </div>
+        </div>{/* /.cm-footer */}
+
+        </div>{/* /.cm-scrollable */}
       </div>
     </>
   );
@@ -696,4 +691,3 @@ CropModal.propTypes = {
 };
 
 export default CropModal;
-

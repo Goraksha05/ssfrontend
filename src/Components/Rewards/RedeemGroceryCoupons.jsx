@@ -504,7 +504,7 @@ export default function RedeemGroceryCoupons({
 
   useEffect(() => {
     if (!userId) return;
-    apiRequest.get('/api/activity/redemption-status', { _silent: true })
+    apiRequest.get('/api/redeem/redemption-status', { _silent: true })
       .then(r => setRedemptionStatus(r.data))
       .catch(() => {});
   }, [userId]);
@@ -564,7 +564,7 @@ export default function RedeemGroceryCoupons({
     setPhase('submitting');
     try {
       const res = await apiRequest.post(
-        `${BACKEND_URL}/api/activity/redeem-grocery-coupons`,
+        `${BACKEND_URL}/api/redeem/redeem-grocery-coupons`,
         { notes: notes || undefined },
       );
 
