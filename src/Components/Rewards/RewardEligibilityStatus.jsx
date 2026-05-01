@@ -9,7 +9,7 @@
 //   className    — additional CSS class (optional)
 //   onDismiss    — called when the user dismisses the banner (optional, adds X button)
 
-import React, { useState, useEffect } from 'react';
+import React from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useRewardEligibility } from '../../hooks/useRewardEligibility';
 import { KYC_STATUSES }          from '../../Context/KYC/KycContext';

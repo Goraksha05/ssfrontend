@@ -1,4 +1,14 @@
-// src/Context/ReferralContext.js
+// src/Context/ReferralContext.js  — v2
+//
+// CHANGES from v1:
+//  • inviteLink is now built inside the context via buildInviteLink() from
+//    utils/inviteLink.js so every consumer gets the same canonical URL.
+//  • inviteLink is exposed in the context value — consumers no longer need to
+//    construct it themselves (removes ad-hoc URL building from ReferralTab,
+//    ShareModal wrappers, InviteCard, etc.).
+//  • parseRefParam() re-exported from utils/inviteLink.js for convenience.
+//  • No other logic changes; fetching, caching, abort and behavior signal
+//    handling are identical to v1.
 
 import React, {
   createContext, useState, useEffect,
@@ -7,6 +17,7 @@ import React, {
 import { jwtDecode } from 'jwt-decode';
 import apiRequest from '../../utils/apiRequest';
 import { emitSignal } from '../../utils/behaviorSDK';
+import { buildInviteLink } from '../../utils/inviteLink';
 
 const ReferralContext = createContext(null);
 
@@ -42,15 +53,15 @@ export const ReferralProvider = ({ children }) => {
   const [referralActivities,    setReferralActivities]    = useState([]);
   const [referredUsers,         setReferredUsers]         = useState([]);
   const [referralCount,         setReferralCount]         = useState(0);
-  const [activeReferralCount,   setActiveReferralCount]   = useState(0); // with active subscription
+  const [activeReferralCount,   setActiveReferralCount]   = useState(0);
   const [referralId,            setReferralId]            = useState('');
   const [loading,               setLoading]               = useState(false);
   const [error,                 setError]                 = useState(null);
 
-  const lastFetchRef  = useRef(0);          // timestamp of last successful fetch
-  const abortRef      = useRef(null);       // AbortController for the active fetch
-  const fetchingRef   = useRef(false);      // guard against concurrent calls
-  const signalSentRef = useRef(false);      // emit behavior signal only once per mount
+  const lastFetchRef  = useRef(0);
+  const abortRef      = useRef(null);
+  const fetchingRef   = useRef(false);
+  const signalSentRef = useRef(false);
 
   // ── Behavior signal (once per provider lifetime) ──────────────────────────
   useEffect(() => {
@@ -69,20 +80,15 @@ export const ReferralProvider = ({ children }) => {
   }, []);
 
   // ── fetchReferralData ─────────────────────────────────────────────────────
-  /**
-   * @param {boolean} [force=false]  Skip the TTL cache and always refetch.
-   */
   const fetchReferralData = useCallback(async (force = false) => {
     const token  = getToken();
     const userId = getUserId();
     if (!token || !userId) return;
     if (fetchingRef.current) return;
 
-    // TTL cache guard
     const age = Date.now() - lastFetchRef.current;
     if (!force && age < CACHE_TTL_MS) return;
 
-    // Cancel any in-flight request
     abortRef.current?.abort();
     const controller = new AbortController();
     abortRef.current = controller;
@@ -107,7 +113,6 @@ export const ReferralProvider = ({ children }) => {
         ? activityRes.data.activities
         : [];
 
-      // Filter to referral-type activities that this user triggered
       const referrals = activities.filter((act) => {
         if (act.type !== 'referral') return false;
         const refId =
@@ -137,9 +142,9 @@ export const ReferralProvider = ({ children }) => {
       setLoading(false);
       fetchingRef.current = false;
     }
-  }, []); // stable — all deps are module-level
+  }, []);
 
-  // ── Fetch on mount ────────────────────────────────────────────────────────
+  // ── Fetch on mount ─────────────────────────────────────────────────────────
   useEffect(() => {
     fetchReferralData();
     return () => {
@@ -147,26 +152,32 @@ export const ReferralProvider = ({ children }) => {
     };
   }, [fetchReferralData]);
 
-  // ── Cache invalidation (call from sibling context on relevant mutations) ──
+  // ── Cache invalidation ─────────────────────────────────────────────────────
   const invalidate = useCallback(() => {
     lastFetchRef.current = 0;
     fetchReferralData(true);
   }, [fetchReferralData]);
 
-  // ── Stable context value ──────────────────────────────────────────────────
+  // ── Derived: invite link (single source of truth via utility) ─────────────
+  // Consumers should read context.inviteLink instead of constructing the URL.
+  const inviteLink = useMemo(() => buildInviteLink(referralId), [referralId]);
+
+  // ── Stable context value ───────────────────────────────────────────────────
   const value = useMemo(() => ({
     referralActivities,
     referralCount,
     activeReferralCount,
     referredUsers,
     referralId,
+    inviteLink,       // ← new: pre-built canonical URL
     loading,
     error,
     fetchReferralData,
     invalidate,
   }), [
     referralActivities, referralCount, activeReferralCount,
-    referredUsers, referralId, loading, error,
+    referredUsers, referralId, inviteLink,
+    loading, error,
     fetchReferralData, invalidate,
   ]);
 

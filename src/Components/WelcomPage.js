@@ -9,8 +9,9 @@ import LogBtnIcon from '../Assets/LoginCreateAccount.png';
 import { useModal } from '../Context/ModalContext';
 import TodayOfferModal from './TodayOffer/TodayOfferModal';
 import ModalContent from './TodayOffer/ModalContent';
-// import ThemePalettePicker from './Theme/ThemePalettePicker';
+import ThemePalettePicker from './Theme/ThemePalettePicker';
 import { useTheme } from '../Context/ThemeUI/ThemeContext';
+import { useUI } from '../Context/ThemeUI/UIContext';
 import OpportunityModal from './IncomePossibility'; // ← new
 
 const FEATURES = [
@@ -55,6 +56,7 @@ const WelcomePage = () => {
   const [visible, setVisible] = useState(false);
   const { isDark } = useTheme();
   const { openModal } = useModal();
+  const { openThemePicker, isThemePickerOpen, closeThemePicker } = useUI();
 
   useEffect(() => {
     const timer = setTimeout(() => setVisible(true), 100);
@@ -66,47 +68,62 @@ const WelcomePage = () => {
       {/* Hero */}
       <div className="welcome-hero">
 
-        {/* <div className="d-flex justify-content-between align-items-end">
-          <ThemePalettePicker />
-        </div> */}
+        {/* 🔥 TOP ACTION BAR */}
+        <div className="flex justify-between items-center absolute top-0 left-0 w-full p-3 gap-2 flex-wrap z-sticky">
 
-        {/* ── Top action bar: Today's Offer  +  Theme Picker ── */}
-        <div
-          className="d-flex justify-content-between align-items-center position-relative"
-          style={{ zIndex: 2, gap: '10px', flexWrap: 'wrap' }}
-        >
+          {/* 🎨 Theme Button */}
           <button
-            className="offer-btn"
-            title="Only for you"
-            onClick={() =>
-              openModal(TodayOfferModal, {
-                title: "Today's Special Offer 🎁",
-                children: <ModalContent />,
-                onConfirm: () => {
-                  alert("Offer claimed! 🎉");
-                },
-              })
-            }
-          >
-            🎁 Today's Offer
-          </button>
-
-          {/* ── Opportunity Button ── */}
-          <button
-            className="offer-btn opportunity-btn"
-            title="Income Opportunity"
-            onClick={() => setShowOpportunity(true)}
+            onClick={openThemePicker}
+            className="glow-btn px-4 py-2 rounded-full text-sm font-bold hover-lift active-press"
             style={{
-              background: 'linear-gradient(90deg, #ff6d00, #ffd600)',
+              background: 'linear-gradient(90deg, #7b1fa2, #c51162)',
               color: '#fff',
-              border: 'none',
-              fontWeight: 700,
-              boxShadow: '0 2px 12px rgba(255,109,0,0.35)',
+              boxShadow: 'var(--shadow-glow)',
             }}
           >
-            💼 Opportunity
+            🎨 Theme
           </button>
 
+          {/* RIGHT SIDE BUTTONS */}
+          <div className="flex gap-2 flex-wrap">
+
+            {/* 🎁 Offer */}
+            <button
+              className="glow-btn px-4 py-2 rounded-full text-sm font-bold hover-lift active-press"
+              style={{
+                background: 'linear-gradient(90deg, #ff4081, #f50057)',
+                color: '#fff',
+              }}
+              onClick={() =>
+                openModal(TodayOfferModal, {
+                  title: "Today's Special Offer 🎁",
+                  children: <ModalContent />,
+                  onConfirm: () => alert("Offer claimed! 🎉"),
+                })
+              }
+            >
+              🎁 Today Offers
+            </button>
+
+            {/* 💼 Opportunity */}
+            <button
+              className="glow-btn px-4 py-2 rounded-full text-sm font-bold hover-lift active-press"
+              style={{
+                background: 'linear-gradient(90deg, #ff6d00, #ffd600)',
+                color: '#fff',
+              }}
+              onClick={() => setShowOpportunity(true)}
+            >
+              💼 Opportunity
+            </button>
+
+          </div>
+
+          {/* 🎨 Theme Modal */}
+          <ThemePalettePicker
+            open={isThemePickerOpen}
+            onClose={closeThemePicker}
+          />
         </div>
 
         <img src={groceryCart} alt="" className="grocery-img" />

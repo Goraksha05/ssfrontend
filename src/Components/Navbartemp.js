@@ -29,12 +29,7 @@ import { ThemePickerTrigger } from '../Components/Theme/ThemePalettePicker';
 import { useUI } from '../Context/ThemeUI/UIContext';
 // import KycVerification from './KYC/KycVerification';
 import { useRegisterModal } from '../Context/ModalContext';
-// ─── NOTE on i18n.js ──────────────────────────────────────────────────────────
-// The old `i18n.js` (i18next/react-i18next) is no longer imported here.
-// All language state is managed by <I18nProvider> via the useI18n() hook.
-// You can safely DELETE src/i18n/i18n.js unless another part of the app
-// still imports it.
-// ─────────────────────────────────────────────────────────────────────────────
+import NavbarAdsDropdown from "./Ads/NavbarAdsDropdown";
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 
@@ -57,10 +52,10 @@ function NavLinkItem({ to, icon: Icon, children, onClick }) {
 }
 
 /* ─── Main Component ─────────────────────────────────────────────────── */
-export default function Navbartemp({ title, myHome }) {
+export default function Navbartemp({ title, myHome, mode, setMode }) {
   const { openThemePicker } = useUI();
   const searchDebounceRef = useRef(null);
-  
+
   const { isAuthenticated, logout, notificationCount, setNotificationCount, authtoken } = useAuth();
   const { openSubscription } = useSubscription();
   const navigate = useNavigate();
@@ -100,18 +95,18 @@ export default function Navbartemp({ title, myHome }) {
   const handleSearchChange = useCallback((e) => {
     const query = e.target.value;
     setSearchQuery(query); // update the input immediately (controlled input)
-  
+
     // Cancel the previous pending search
     if (searchDebounceRef.current) {
       clearTimeout(searchDebounceRef.current);
     }
-  
+
     if (query.trim().length <= 1) {
       setSearchResults([]);
       setShowSearchResults(false);
       return;
     }
-  
+
     // Debounce: only fire the API call 300ms after the user stops typing
     searchDebounceRef.current = setTimeout(async () => {
       try {
@@ -189,10 +184,10 @@ export default function Navbartemp({ title, myHome }) {
 
   useEffect(() => {
     return () => {
-        if (searchDebounceRef.current) {
-          clearTimeout(searchDebounceRef.current);
-        }
-      };
+      if (searchDebounceRef.current) {
+        clearTimeout(searchDebounceRef.current);
+      }
+    };
   }, []);
 
   /* ── Outside click / Escape ── */
@@ -395,7 +390,7 @@ export default function Navbartemp({ title, myHome }) {
                     i18nContext.js. Calling setLang(code) switches the language
                     everywhere in the app instantly.
                 ─────────────────────────────────────────────────────────── */}
-                <div ref={langRef} className="navbar-lang-dropdown">
+                {/* <div ref={langRef} className="navbar-lang-dropdown">
                   <button
                     className="navbar-icon-btn navbar-icon-btn--lang"
                     onClick={() => setShowLangMenu(p => !p)}
@@ -421,7 +416,13 @@ export default function Navbartemp({ title, myHome }) {
                       ))}
                     </div>
                   )}
-                </div>
+                </div> */}
+
+                {/* Palette picker trigger — opens the App-level modal */}
+                {/* <ThemePickerTrigger onClick={openThemePicker} /> */}
+
+                {/* Mode toggle (personal vs ads) */}
+                <NavbarAdsDropdown mode={mode} setMode={setMode} />
 
                 {/* Logout */}
                 <button
@@ -437,12 +438,6 @@ export default function Navbartemp({ title, myHome }) {
                 </button>
               </>
             )}
-
-            {/* Dark / light toggle */}
-            {/* <ThemeToggle /> */}
-
-            {/* Palette picker trigger — opens the App-level modal */}
-            <ThemePickerTrigger onClick={openThemePicker} />
 
             {/* Mobile hamburger */}
             <button
@@ -499,27 +494,47 @@ export default function Navbartemp({ title, myHome }) {
               ))}
             </div>
 
-            {/* Mobile language picker */}
-            <div className="navbar-mobile-section">
-              <div className="navbar-mobile-section-label">
-                {t["nav.language"] || "Language"}
-              </div>
-              <div className="navbar-mobile-lang-grid">
-                {LANGUAGES.map(l => (
-                  <button
-                    key={l.code}
-                    onClick={() => { handleLangChange(l.code); handleNavItemClick(); }}
-                    className={`navbar-mobile-lang-btn${lang === l.code ? " active" : ""}`}
-                  >
-                    {l.flag} {l.label}
-                  </button>
-                ))}
-              </div>
-            </div>
-
             {/* Mobile auth actions */}
             {isAuthenticated && (
               <div className="navbar-mobile-auth-actions">
+
+                <button
+                  onClick={openSubscription}
+                  title={t["nav.become_prime"] || "Become a Prime Member"}
+                  className="navbar-mobile-subscribe-btn"
+                >
+                  <img src={SubscribeIcon} alt={t["nav.become_prime"] || "Subscribe"} className="navbar-mobile-subscribe-img" />
+                </button>
+
+                {/* Mobile language picker */}
+                <div ref={langRef} className="navbar-lang-dropdown">
+                  <button
+                    className="navbar-icon-btn navbar-icon-btn--lang"
+                    onClick={() => setShowLangMenu(p => !p)}
+                    title={t["nav.language"] || "Language"}
+                  >
+                    <Globe size={14} />
+                    <span className="d-none d-md-inline">{lang.toUpperCase()}</span>
+                  </button>
+
+                  {showLangMenu && (
+                    <div className="navbar-lang-menu">
+                      {LANGUAGES.map(l => (
+                        <button
+                          key={l.code}
+                          className={`navbar-lang-item${lang === l.code ? " active" : ""}`}
+                          onClick={() => handleLangChange(l.code)}
+                        >
+                          {l.flag}&nbsp;&nbsp;{l.label}
+                          {lang === l.code && (
+                            <span className="navbar-lang-item-check">✓</span>
+                          )}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
                 {/* Bell — notifications */}
                 <button
                   onClick={() => { setShowNotifications(true); handleNavItemClick(); }}
@@ -534,13 +549,9 @@ export default function Navbartemp({ title, myHome }) {
                   )}
                 </button>
 
-                <button
-                  onClick={openSubscription}
-                  title={t["nav.become_prime"] || "Become a Prime Member"}
-                  className="navbar-mobile-subscribe-btn"
-                >
-                  <img src={SubscribeIcon} alt={t["nav.become_prime"] || "Subscribe"} className="navbar-mobile-subscribe-img" />
-                </button>
+                {/* Palette picker trigger — opens the App-level modal */}
+                <ThemePickerTrigger onClick={openThemePicker} />
+
                 <button
                   onClick={() => handleLogout(false)}
                   title={t["logout"] || "Logout"}
@@ -550,8 +561,6 @@ export default function Navbartemp({ title, myHome }) {
                 </button>
               </div>
             )}
-            {/* Palette picker trigger — opens the App-level modal */}
-            {/* <ThemePickerTrigger onClick={openThemePicker} /> */}
           </div>
         )}
       </nav>

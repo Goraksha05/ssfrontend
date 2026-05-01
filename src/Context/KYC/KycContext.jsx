@@ -1,5 +1,36 @@
 /* Context/KYC/KycContext.jsx */
 
+/**
+ * UPGRADE NOTES (adminKycRoutes v2 alignment)
+ * ─────────────────────────────────────────────────────────────────────────────
+ * The adminKycRoutes now exposes two parallel approve/reject paths:
+ *
+ *   General admin path  (approveKYC / rejectKYC)
+ *     → broadcasts via the kyc:user_update socket event to the user's
+ *       personal room.  Already handled below.
+ *
+ *   Special-Offer-aware path  (verifyKyc / rejectSpOfferKyc)
+ *     → emits DIRECT, per-user socket events:
+ *         'kyc_verified'  { status: 'verified' }
+ *         'kyc_rejected'  { status: 'rejected', reason: string }
+ *       These are emitted to  io.to(userId.toString())  so they arrive only
+ *       in the affected user's own room.
+ *
+ * Both paths write to the same User.kyc sub-document, so the client response
+ * is identical: call fetchKyc(true) to pull the canonical server state.
+ *
+ * Changes in this version:
+ *   1. Added socket listeners for 'kyc_verified' and 'kyc_rejected' (SP-offer
+ *      path) alongside the existing 'kyc:user_update' listener.
+ *   2. On 'kyc_verified': optimistically set status → 'verified' in local
+ *      state for instant UI feedback, then force-refetch for canonical data.
+ *   3. On 'kyc_rejected': optimistically set status → 'rejected' and store
+ *      the rejection reason, then force-refetch.
+ *   4. Exposed `rejectionReason` in the context value — sourced from either
+ *      the socket event payload or the full kycData fetched from the server.
+ *   5. Exposed `lastSocketEvent` for debugging / telemetry.
+ */
+
 import React, {
   createContext,
   useContext,
@@ -38,18 +69,22 @@ const TERMINAL_STATUSES = new Set([
   KYC_STATUSES.NOT_STARTED,
 ]);
 
-const STALE_MS       = 30_000;  // don't refetch within 30 s (unless forced)
-const POLL_INTERVAL  = 60_000;  // poll every 60 s while submitted
+const STALE_MS      = 30_000;  // don't re-fetch within 30 s (unless forced)
+const POLL_INTERVAL = 60_000;  // poll every 60 s while submitted
 
 // ── Provider ──────────────────────────────────────────────────────────────────
 export const KycProvider = ({ children }) => {
   const { token } = useAuth();
 
-  const [kycData,    setKycData]    = useState(null);
-  const [loading,    setLoading]    = useState(false);
-  const [submitting, setSubmitting] = useState(false);
-  const [error,      setError]      = useState(null);
+  const [kycData,      setKycData]      = useState(null);
+  const [loading,      setLoading]      = useState(false);
+  const [submitting,   setSubmitting]   = useState(false);
+  const [error,        setError]        = useState(null);
   const [submitResult, setSubmitResult] = useState(null); // last submit response
+
+  // ── NEW: last socket event received (type + timestamp) ────────────────────
+  // Surfaced in context for debugging panels and analytics.
+  const [lastSocketEvent, setLastSocketEvent] = useState(null);
 
   const lastFetchRef  = useRef(0);
   const fetchingRef   = useRef(false);
@@ -74,7 +109,7 @@ export const KycProvider = ({ children }) => {
       const res = await apiRequest.get('/api/kyc/me', {
         headers:        { Authorization: `Bearer ${token}` },
         signal:         controller.signal,
-        _silenceToast:  true,  // handled below
+        _silenceToast:  true,
       });
       setKycData(res.data);
       lastFetchRef.current = Date.now();
@@ -94,7 +129,7 @@ export const KycProvider = ({ children }) => {
 
   // ── Polling (only when status is 'submitted') ─────────────────────────────
   const startPolling = useCallback(() => {
-    if (pollTimerRef.current) return; // already polling
+    if (pollTimerRef.current) return;
     pollTimerRef.current = setInterval(() => {
       fetchKyc(true);
     }, POLL_INTERVAL);
@@ -108,7 +143,6 @@ export const KycProvider = ({ children }) => {
   }, []);
 
   // Start / stop polling based on current status.
-  // Poll only while submitted; stop immediately once a terminal status is reached.
   useEffect(() => {
     const status = kycData?.status;
     if (status === KYC_STATUSES.SUBMITTED) {
@@ -119,16 +153,82 @@ export const KycProvider = ({ children }) => {
     return stopPolling;
   }, [kycData?.status, startPolling, stopPolling]);
 
-  // ── Socket: live admin review updates ────────────────────────────────────
+  // ── Socket: General admin path ────────────────────────────────────────────
+  // Listens for 'kyc:user_update' broadcast from approveKYC / rejectKYC
+  // (the original admin route handlers).  The event carries a `type` field
+  // ('approved' | 'rejected' | 'reset') and triggers a force-refetch.
   useEffect(() => {
     const off = onSocketEvent('kyc:user_update', ({ type }) => {
-      // Re-fetch fresh data when admin acts on our KYC
       if (type === 'approved' || type === 'rejected' || type === 'reset') {
+        setLastSocketEvent({ event: 'kyc:user_update', type, at: Date.now() });
         fetchKyc(true);
       }
     });
     return off;
   }, [fetchKyc]);
+
+  // ── Socket: Special-Offer-aware path — kyc_verified ──────────────────────
+  // Emitted by verifyKyc() in adminKycController directly to the user's
+  // personal socket room: io.to(userId.toString()).emit('kyc_verified', ...)
+  //
+  // On receipt:
+  //   1. Optimistically flip local status → 'verified' for instant UI update.
+  //      This stops polling immediately (TERMINAL_STATUSES check in the
+  //      useEffect above) and shows the "Verified ✓" badge without waiting
+  //      for the refetch round-trip.
+  //   2. Force-refetch to pull the full canonical record (verifiedAt,
+  //      verifiedBy, score, etc.) so the KYC detail page is complete.
+  useEffect(() => {
+    const off = onSocketEvent('kyc_verified', (payload) => {
+      setLastSocketEvent({ event: 'kyc_verified', payload, at: Date.now() });
+
+      // Optimistic update — status flips to verified immediately
+      setKycData((prev) => ({
+        ...prev,
+        status:          KYC_STATUSES.VERIFIED,
+        verifiedAt:      payload?.verifiedAt ?? new Date().toISOString(),
+        rejectionReason: null,
+      }));
+
+      // Stop polling immediately — VERIFIED is terminal.
+      stopPolling();
+
+      // Fetch canonical data (verifiedBy, score, thumbnails, etc.)
+      fetchKyc(true);
+    });
+    return off;
+  }, [fetchKyc, stopPolling]);
+
+  // ── Socket: Special-Offer-aware path — kyc_rejected ──────────────────────
+  // Emitted by rejectSpOfferKyc() in adminKycController directly to the
+  // user's personal socket room:
+  //   io.to(userId.toString()).emit('kyc_rejected', { status: 'rejected', reason })
+  //
+  // On receipt:
+  //   1. Optimistically flip local status → 'rejected' and store the reason
+  //      so the UI can show the specific rejection message without a refetch.
+  //   2. Force-refetch to get the full server record.
+  useEffect(() => {
+    const off = onSocketEvent('kyc_rejected', (payload) => {
+      setLastSocketEvent({ event: 'kyc_rejected', payload, at: Date.now() });
+
+      // Optimistic update — show rejection reason immediately
+      setKycData((prev) => ({
+        ...prev,
+        status:          KYC_STATUSES.REJECTED,
+        rejectionReason: payload?.reason ?? 'Documents could not be verified.',
+        verifiedAt:      null,
+      }));
+
+      // Rejection is not terminal for polling (user can resubmit), but there
+      // is nothing to poll for — stop polling until the user resubmits.
+      stopPolling();
+
+      // Fetch canonical data
+      fetchKyc(true);
+    });
+    return off;
+  }, [fetchKyc, stopPolling]);
 
   // ── Token change: fetch fresh or clear ───────────────────────────────────
   useEffect(() => {
@@ -170,7 +270,7 @@ export const KycProvider = ({ children }) => {
           Authorization: `Bearer ${token}`,
           // Let axios set Content-Type with the correct boundary for FormData
         },
-        timeout: 120_000, // KYC upload may take a while
+        timeout:       120_000,
         _silenceToast: true,
       });
 
@@ -186,16 +286,18 @@ export const KycProvider = ({ children }) => {
       // Immediately update local state so the UI reflects the new status
       setKycData((prev) => ({
         ...prev,
-        status:          res.data?.status    ?? prev?.status,
-        score:           res.data?.score     ?? prev?.score,
+        status:          res.data?.status ?? prev?.status,
+        score:           res.data?.score  ?? prev?.score,
         submittedAt:     new Date().toISOString(),
         rejectionReason: null,
       }));
       lastFetchRef.current = Date.now();
 
-      // Stop polling when the server returns a terminal status (VERIFIED, NOT_STARTED)
-      // or REJECTED — which is non-terminal but makes further polling pointless.
-      if (TERMINAL_STATUSES.has(res.data?.status) || res.data?.status === KYC_STATUSES.REJECTED) {
+      // Stop polling for terminal / rejection statuses
+      if (
+        TERMINAL_STATUSES.has(res.data?.status) ||
+        res.data?.status === KYC_STATUSES.REJECTED
+      ) {
         stopPolling();
       }
 
@@ -210,22 +312,24 @@ export const KycProvider = ({ children }) => {
   }, [token, stopPolling]);
 
   // ── Derived values ────────────────────────────────────────────────────────
-  const status      = kycData?.status || KYC_STATUSES.NOT_STARTED;
-  const isVerified  = status === KYC_STATUSES.VERIFIED;
-  const isSubmitted = status === KYC_STATUSES.SUBMITTED;
-  const isRejected  = status === KYC_STATUSES.REJECTED;
-  const isRequired  = status === KYC_STATUSES.REQUIRED;
-  const needsAction = isRequired || isRejected;
-  const showBadge   = needsAction;
-  const statusLabel = KYC_STATUS_LABELS[status] ?? status;
+  const status          = kycData?.status || KYC_STATUSES.NOT_STARTED;
+  const rejectionReason = kycData?.rejectionReason ?? null;
+  const isVerified      = status === KYC_STATUSES.VERIFIED;
+  const isSubmitted     = status === KYC_STATUSES.SUBMITTED;
+  const isRejected      = status === KYC_STATUSES.REJECTED;
+  const isRequired      = status === KYC_STATUSES.REQUIRED;
+  const needsAction     = isRequired || isRejected;
+  const showBadge       = needsAction;
+  const statusLabel     = KYC_STATUS_LABELS[status] ?? status;
 
-  const resetError  = useCallback(() => setError(null), []);
+  const resetError = useCallback(() => setError(null), []);
 
   // ── Stable context value ──────────────────────────────────────────────────
   const value = useMemo(() => ({
     kycData,
     status,
     statusLabel,
+    rejectionReason,      // ← NEW: sourced from kycData or optimistic socket update
     loading,
     submitting,
     error,
@@ -236,14 +340,15 @@ export const KycProvider = ({ children }) => {
     isRequired,
     needsAction,
     showBadge,
+    lastSocketEvent,      // ← NEW: { event, type|payload, at } for debugging
     refetch:   () => fetchKyc(true),
     submitKyc,
     resetError,
   }), [
-    kycData, status, statusLabel,
+    kycData, status, statusLabel, rejectionReason,
     loading, submitting, error, submitResult,
     isVerified, isSubmitted, isRejected, isRequired,
-    needsAction, showBadge,
+    needsAction, showBadge, lastSocketEvent,
     fetchKyc, submitKyc, resetError,
   ]);
 

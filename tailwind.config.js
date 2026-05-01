@@ -14,6 +14,9 @@ module.exports = {
         mono:    ['"JetBrains Mono"', 'monospace'],
       },
       colors: {
+          card: "#ffffff",
+          border: "#e5e7eb",
+          muted: "#6b7280",
         // Brand palette — maps to your CSS vars
         brand: {
           50:  '#eff6ff',

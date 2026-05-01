@@ -1,71 +1,168 @@
-// src/hooks/usePresence.js
-//
-// Combines online-users data (from OnlineUsersContext) with typing indicators
-// (from local socket events) into a single convenient hook.
-//
-// Typing is kept local to this hook because it is ephemeral and chat-scoped —
-// no need to hoist it to a global context.
+import { useEffect, useState, useCallback, useRef, useMemo } from "react";
+import { useSocket } from "../Context/SocketContext";
+import { useOnlineUsers } from "../Context/OnlineUsersContext";
+import { onSocketEvent } from "../WebSocket/WebSocketClient";
 
-import { useEffect, useState, useCallback } from 'react';
-import { useSocket }       from '../Context/SocketContext';
-import { useOnlineUsers }  from '../Context/OnlineUsersContext';
-import { onSocketEvent }   from '../WebSocket/WebSocketClient';
+// ─────────────────────────────────────────────────────────────
+// CONFIG
+// ─────────────────────────────────────────────────────────────
+const TYPING_AUTO_EXPIRE_MS = 5000;
+const TYPING_DEBOUNCE_MS = 150;
 
-/**
- * @param {string} [chatId]  Optional — if provided, typing state is scoped
- *                           to this specific chat room.
- */
+// ─────────────────────────────────────────────────────────────
+// HOOK
+// ─────────────────────────────────────────────────────────────
 export const usePresence = (chatId) => {
-  const { connected }          = useSocket();
+  const { connected } = useSocket();
   const { isOnline, onlineUserIds } = useOnlineUsers();
+
+  // Map<userId, timeoutId>
+  const typingTimers = useRef(new Map());
+
+  // Map<userId, lastTypingTimestamp>
+  const lastTypingEvent = useRef(new Map());
 
   const [typingUsers, setTypingUsers] = useState(new Set());
 
-  // ── Typing indicators ─────────────────────────────────────────────────────
+  // ───────────────────────────────────────────────────────────
+  // INTERNAL HELPERS
+  // ───────────────────────────────────────────────────────────
+
+  const safeSetTyping = useCallback((updater) => {
+    setTypingUsers((prev) => {
+      const next = updater(prev);
+      return next === prev ? prev : new Set(next);
+    });
+  }, []);
+
+  const clearUserTimer = useCallback((userId) => {
+    const timers = typingTimers.current;
+    if (timers.has(userId)) {
+      clearTimeout(timers.get(userId));
+      timers.delete(userId);
+    }
+  }, []);
+
+  // ───────────────────────────────────────────────────────────
+  // REMOVE TYPING (debounced)
+  // ───────────────────────────────────────────────────────────
+  const removeTyping = useCallback((userId) => {
+    const lastTime = lastTypingEvent.current.get(userId);
+    if (!lastTime) return;
+
+    const now = Date.now();
+
+    // 🔥 Debounce protection (prevents flicker)
+    if (now - lastTime < TYPING_DEBOUNCE_MS) return;
+
+    safeSetTyping((prev) => {
+      if (!prev.has(userId)) return prev;
+      const next = new Set(prev);
+      next.delete(userId);
+      return next;
+    });
+
+    clearUserTimer(userId);
+    lastTypingEvent.current.delete(userId);
+  }, [clearUserTimer, safeSetTyping]);
+
+  // ───────────────────────────────────────────────────────────
+  // ADD TYPING
+  // ───────────────────────────────────────────────────────────
+  const addTyping = useCallback((userId) => {
+    const now = Date.now();
+    lastTypingEvent.current.set(userId, now);
+
+    safeSetTyping((prev) => {
+      if (prev.has(userId)) return prev;
+      const next = new Set(prev);
+      next.add(userId);
+      return next;
+    });
+
+    clearUserTimer(userId);
+
+    const timeoutId = setTimeout(() => {
+      const lastTime = lastTypingEvent.current.get(userId);
+
+      // Prevent stale timer removal
+      if (!lastTime || Date.now() - lastTime < TYPING_AUTO_EXPIRE_MS) return;
+
+      removeTyping(userId);
+    }, TYPING_AUTO_EXPIRE_MS);
+
+    typingTimers.current.set(userId, timeoutId);
+  }, [clearUserTimer, safeSetTyping, removeTyping]);
+
+
+  // ───────────────────────────────────────────────────────────
+  // SOCKET EVENTS
+  // ───────────────────────────────────────────────────────────
   useEffect(() => {
-    const onTyping = ({ fromUserId, chatId: tChatId }) => {
-      if (chatId && tChatId && tChatId !== chatId) return; // scope to chat
-      setTypingUsers((prev) => {
-        const next = new Set(prev);
-        next.add(fromUserId);
-        return next;
-      });
+    const handleTyping = ({ fromUserId, chatId: incomingChatId }) => {
+      if (chatId && incomingChatId && incomingChatId !== chatId) return;
+      addTyping(String(fromUserId));
     };
 
-    const onStopTyping = ({ fromUserId, chatId: tChatId }) => {
-      if (chatId && tChatId && tChatId !== chatId) return;
-      setTypingUsers((prev) => {
-        const next = new Set(prev);
-        next.delete(fromUserId);
-        return next;
-      });
+    const handleStopTyping = ({ fromUserId, chatId: incomingChatId }) => {
+      if (chatId && incomingChatId && incomingChatId !== chatId) return;
+      removeTyping(String(fromUserId));
     };
 
-    const offTyping     = onSocketEvent('user-typing',      onTyping);
-    const offStopTyping = onSocketEvent('user-stop-typing', onStopTyping);
+    const offTyping = onSocketEvent("user-typing", handleTyping);
+    const offStopTyping = onSocketEvent("user-stop-typing", handleStopTyping);
 
     return () => {
       offTyping();
       offStopTyping();
     };
-  }, [chatId]);
+  }, [chatId, addTyping, removeTyping]);
 
-  // ── Clear typing state when socket disconnects ────────────────────────────
+  // ───────────────────────────────────────────────────────────
+  // HANDLE DISCONNECT
+  // ───────────────────────────────────────────────────────────
   useEffect(() => {
-    if (!connected) setTypingUsers(new Set());
+    if (!connected) {
+      const timers = typingTimers.current;
+
+      timers.forEach(clearTimeout);
+      timers.clear();
+      lastTypingEvent.current.clear();
+      setTypingUsers(new Set());
+    }
   }, [connected]);
 
-  // ── Convenience helpers ───────────────────────────────────────────────────
+  // ───────────────────────────────────────────────────────────
+  // CLEANUP (FIXED WARNING)
+  // ───────────────────────────────────────────────────────────
+  useEffect(() => {
+    const timers = typingTimers.current;
+
+    return () => {
+      timers.forEach(clearTimeout);
+      timers.clear();
+    };
+  }, []);
+
+  // ───────────────────────────────────────────────────────────
+  // STABLE HELPERS
+  // ───────────────────────────────────────────────────────────
   const isTyping = useCallback(
     (userId) => typingUsers.has(String(userId)),
     [typingUsers]
   );
 
+  const typingUserIds = useMemo(() => [...typingUsers], [typingUsers]);
+
+  // ───────────────────────────────────────────────────────────
+  // RETURN
+  // ───────────────────────────────────────────────────────────
   return {
-    onlineUserIds,
-    typingUsers,        // Set<userId>
-    isOnline,           // (userId: string) => boolean
-    isTyping,           // (userId: string) => boolean
     connected,
+    onlineUserIds,
+    typingUsers,
+    typingUserIds,
+    isOnline,
+    isTyping,
   };
 };

@@ -1,26 +1,22 @@
 /**
- * hooks/useActivityDashboard.js
+ * hooks/useActivityDashboard.js — v2
  *
- * Single React Query hook that replaces:
- *   - StreakContext  (manual TTL, lastFetchRef, fetchingRef)
- *   - ReferralContext (same manual caching pattern)
- *
- * One fetch.  One cache.  Zero manual TTL bugs.
- *
- * Usage:
- *   const { streakCount, referralCount, ... } = useActivityDashboard();
- *
- * Cache invalidation after a reward claim:
- *   import { useQueryClient } from '@tanstack/react-query';
- *   const qc = useQueryClient();
- *   qc.invalidateQueries({ queryKey: ['activityDashboard'] });
+ * CHANGES from v1:
+ *  • Replaced raw `fetch()` with `apiRequest.get()` so the token-refresh
+ *    queue, 401 handling, retry logic, and auth interceptors apply uniformly.
+ *    The Authorization header is injected by the apiRequest interceptor —
+ *    no manual header construction needed here.
+ *  • `fetchDashboard` no longer reads from localStorage; it receives the
+ *    token as a parameter only to gate early-return (no token = no fetch),
+ *    while the actual header is handled by the interceptor.
  */
 
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useCallback } from 'react';
+import { useAuth } from '../Context/Authorisation/AuthContext';
+import apiRequest from '../utils/apiRequest';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
-
 const BACKEND_URL =
   process.env.REACT_APP_BACKEND_URL ||
   process.env.REACT_APP_SERVER_URL  ||
@@ -29,9 +25,10 @@ const BACKEND_URL =
 export const DASHBOARD_QUERY_KEY = ['activityDashboard'];
 
 // ─── Fetch function (module-level — stable reference, no re-creation) ─────────
+// token is passed in only to gate the request; the interceptor attaches the
+// actual Authorization header from localStorage via apiRequest.
 
-async function fetchDashboard() {
-  const token = localStorage.getItem('token');
+async function fetchDashboard(token) {
   if (!token || token === 'null' || token === 'undefined') {
     // Return safe empty shape so consumers never need null-checks.
     return {
@@ -43,21 +40,12 @@ async function fetchDashboard() {
     };
   }
 
-  const res = await fetch(`${BACKEND_URL}/api/activity/dashboard`, {
-    headers: { Authorization: `Bearer ${token}` },
-  });
-
-  if (!res.ok) {
-    // Let React Query's retry logic handle transient failures.
-    throw new Error(`Dashboard fetch failed: ${res.status}`);
-  }
-
-  return res.json();
+  // apiRequest interceptor injects Authorization header automatically
+  const res = await apiRequest.get(`${BACKEND_URL}/api/activity/dashboard`);
+  return res.data;
 }
 
 // ─── Empty / placeholder shape used while data is loading ─────────────────────
-// Using the same shape prevents destructuring crashes in consumers.
-
 const EMPTY_DATA = {
   streakCount:         null,  // null = "loading", 0 = "loaded but zero"
   streakDates:         [],
@@ -82,30 +70,25 @@ const EMPTY_DATA = {
  * }}
  */
 export function useActivityDashboard() {
+  const { token } = useAuth();
   const queryClient = useQueryClient();
 
   const { data, isLoading, isError, error } = useQuery({
-    queryKey:   DASHBOARD_QUERY_KEY,
-    queryFn:    fetchDashboard,
-    // staleTime / retry / refetchOnWindowFocus come from the global
-    // QueryClient defaultOptions in App.js — no duplication needed here.
-    // Override only if this specific query needs different settings:
-    // staleTime: 60_000,   // already set globally
-    // retry:     1,        // already set globally
-    placeholderData: EMPTY_DATA, // prevents flicker — shows zeros, not undefined
+    queryKey:        DASHBOARD_QUERY_KEY,
+    queryFn:         () => fetchDashboard(token),
+    placeholderData: EMPTY_DATA,
+    staleTime:       30_000, // 30 seconds
+    cacheTime:       5 * 60_000, // 5 minutes
+    retry:           false, // no retries; errors are surfaced to the UI
   });
 
   /**
    * Force-refetch the dashboard after a reward claim, log, or referral.
-   * This is the ONLY place cache invalidation needs to happen —
-   * all three count displays update automatically.
    */
   const invalidate = useCallback(() => {
     queryClient.invalidateQueries({ queryKey: DASHBOARD_QUERY_KEY });
   }, [queryClient]);
 
-  // Merge live data with the empty placeholder so consumers always get
-  // fully-shaped objects even during the very first load.
   const resolved = data ?? EMPTY_DATA;
 
   return {
@@ -127,8 +110,6 @@ export function useActivityDashboard() {
 }
 
 // ─── Convenience aliases ───────────────────────────────────────────────────────
-// These let components import only what they need without
-// pulling in the full hook return value.
 
 /**
  * Lightweight hook for components that only need streak data.

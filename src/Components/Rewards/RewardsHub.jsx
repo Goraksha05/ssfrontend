@@ -1,27 +1,14 @@
 /**
- * components/Rewards/RewardsHub.jsx  (React Query migration)
+ * components/Rewards/RewardsHub.jsx — v2
  *
- * WHAT CHANGED:
- *   - Removed:  useStreak()  from StreakContext (manual TTL)
- *   - Removed:  useReferral() from ReferralContext (manual TTL)
- *   - Added:    useActivityDashboard() — single React Query hook
- *
- *   - StreakTab:   streakCount / streakDates come from useActivityDashboard()
- *   - ReferralTab: referralCount / activeReferralCount come from useActivityDashboard()
- *   - After every reward claim: queryClient.invalidateQueries(['activityDashboard'])
- *     refreshes both streak and referral counts automatically.
- *
- *   - Wallet + earned-rewards (redeemed slabs): still use useEarnedRewards()
- *     which is a light local fetch hook — no Context involved.
- *
- *   - All other business logic (eligibility, bank modal, plan slabs) is
- *     unchanged so the reward claiming flow is not affected.
- *
- * UI BEHAVIOUR:
- *   - While loading: counts show "—" (not 0) to avoid the 0→actual flicker.
- *   - After cache hit (60 s stale window): data appears instantly on re-mount.
- *   - After invalidation: background refetch runs; UI keeps showing old value
- *     until new data arrives (no flicker / no spinner for background refetches).
+ * CHANGES from v1:
+ *  • Removed all `getToken()` / `localStorage.getItem('token')` helpers.
+ *    The token is now sourced exclusively from `useAuth()` (AuthContext).
+ *  • `usePlanSlabs`, `useEarnedRewards`, and `useMyPostCount` all accept
+ *    `token` as a param and call `apiRequest.get()` instead of raw `fetch()`.
+ *    The apiRequest interceptor attaches the Authorization header automatically.
+ *  • `handleStreakClaim`, `PostTab.handleBankSubmit` no longer pass manual
+ *    Authorization headers to `apiRequest.post()`.
  */
 
 import React, {
@@ -33,19 +20,19 @@ import { useQueryClient }           from '@tanstack/react-query';
 
 import { useAuth }                  from '../../Context/Authorisation/AuthContext';
 import { useRewardEligibility }     from '../../hooks/useRewardEligibility';
-import { useActivityDashboard, DASHBOARD_QUERY_KEY }
-                                    from '../../hooks/useActivityDashboard';
+import { useActivityDashboard, 
+        DASHBOARD_QUERY_KEY }       from '../../hooks/useActivityDashboard';
 import apiRequest                   from '../../utils/apiRequest';
-import BankDetailsModal from '../Common/BankDetailsModal';
-// import RedeemGroceryCoupons from './RedeemGroceryCoupons';
+import BankDetailsModal             from '../Common/BankDetailsModal';
+import ReferralTab                  from './ReferralTab';
+import { SpecialOfferProvider }     from '../../Context/SpecialOffer/SpecialOfferContext';
+import SpecialOfferTab              from './SpecialOfferTab';
+import { getSocket }                from '../../WebSocket/WebSocketClient';
 
-import ReferralTab from './ReferralTab';
-
-const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || '';
-const getToken    = () => localStorage.getItem('token');
+const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || process.env.REACT_APP_SERVER_URL || '';
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Design tokens — unchanged from original
+// Design tokens
 // ─────────────────────────────────────────────────────────────────────────────
 
 const styles = {
@@ -79,6 +66,8 @@ const styles = {
   tabBar: {
     display: 'flex', gap: 0,
     borderBottom: '1px solid var(--color-border-tertiary)', marginBottom: 28,
+    overflowX: 'auto',
+    WebkitOverflowScrolling: 'touch',
   },
   tab: (active) => ({
     padding: '10px 18px', fontSize: 13, fontFamily: 'var(--font-sans)',
@@ -87,6 +76,7 @@ const styles = {
     background: 'none', border: 'none',
     borderBottom: active ? '2px solid var(--color-text-primary)' : '2px solid transparent',
     cursor: 'pointer', marginBottom: -1, transition: 'color 0.12s', letterSpacing: '-0.1px',
+    whiteSpace: 'nowrap',
   }),
   banner: (code) => ({
     display: 'flex', gap: 12, padding: '12px 14px', marginBottom: 24,
@@ -179,43 +169,6 @@ const styles = {
       : { background: 'var(--color-background-secondary)', color: 'var(--color-text-tertiary)', borderColor: 'var(--color-border-tertiary)' }
     ),
   }),
-  modalBackdrop: {
-    position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)',
-    display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000,
-  },
-  modalCard: {
-    background: 'var(--color-background-primary)',
-    border: '0.5px solid var(--color-border-secondary)',
-    borderRadius: 12, padding: '28px 28px 22px',
-    width: '100%', maxWidth: 400, fontFamily: 'var(--font-sans)',
-  },
-  modalTitle: {
-    fontSize: 15, fontWeight: 500, margin: '0 0 20px',
-    color: 'var(--color-text-primary)', fontFamily: 'var(--font-sans)',
-  },
-  fieldLabel: {
-    display: 'block', fontSize: 12,
-    color: 'var(--color-text-secondary)', marginBottom: 4,
-  },
-  fieldWrap: { marginBottom: 14 },
-  input: {
-    width: '100%', boxSizing: 'border-box', padding: '8px 10px', fontSize: 13,
-    border: '0.5px solid var(--color-border-secondary)', borderRadius: 6,
-    background: 'var(--color-background-primary)', color: 'var(--color-text-primary)',
-    fontFamily: 'var(--font-sans)', outline: 'none',
-  },
-  modalFooter: {
-    display: 'flex', justifyContent: 'flex-end', gap: 10,
-    marginTop: 22, paddingTop: 14,
-    borderTop: '0.5px solid var(--color-border-tertiary)',
-  },
-  cancelBtn: {
-    padding: '7px 16px', fontSize: 13, fontWeight: 400,
-    border: '0.5px solid var(--color-border-secondary)',
-    borderRadius: 6, background: 'none',
-    color: 'var(--color-text-secondary)', cursor: 'pointer',
-    fontFamily: 'var(--font-sans)',
-  },
   submitBtn: (disabled) => ({
     padding: '7px 18px', fontSize: 13, fontWeight: 500,
     border: '0.5px solid var(--color-text-primary)', borderRadius: 6,
@@ -226,7 +179,7 @@ const styles = {
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Placeholder component — shown while a count is loading
+// Placeholder component
 // ─────────────────────────────────────────────────────────────────────────────
 
 function CountDisplay({ value, suffix, isLoading }) {
@@ -235,7 +188,6 @@ function CountDisplay({ value, suffix, isLoading }) {
       <span style={{
         fontFamily: '"Courier New", monospace', fontSize: 40,
         fontWeight: 400, letterSpacing: -2, lineHeight: 1,
-        // Subtle pulse while loading — no layout shift
         opacity: isLoading && value === null ? 0.35 : 1,
         transition: 'opacity 0.2s',
       }}>
@@ -249,39 +201,38 @@ function CountDisplay({ value, suffix, isLoading }) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Local hooks (plan slabs + earned rewards) — unchanged from original
+// Local hooks — all use apiRequest; token injected by interceptor automatically
 // ─────────────────────────────────────────────────────────────────────────────
 
-function usePlanSlabs(type) {
+/**
+ * Fetch plan slabs. `token` gates the request so we don't fire
+ * before AuthContext has hydrated.
+ */
+function usePlanSlabs(type, token) {
   const [slabs, setSlabs] = useState([]);
   useEffect(() => {
-    const token = getToken();
     if (!token) return;
-    fetch(`${BACKEND_URL}/api/rewards/${type}`, {
-      headers: { Authorization: `Bearer ${token}` },
-    })
-      .then(r => r.ok ? r.json() : null)
-      .then(d => { if (d?.slabs) setSlabs(d.slabs); })
+    apiRequest
+      .get(`${BACKEND_URL}/api/rewards/${type}`)
+      .then(res => { if (res.data?.slabs) setSlabs(res.data.slabs); })
       .catch(() => {});
-  }, [type]);
+  }, [type, token]);
   return slabs;
 }
 
-function useEarnedRewards() {
+function useEarnedRewards(token) {
   const queryClient                    = useQueryClient();
   const [wallet, setWallet]            = useState({ totalGroceryCoupons: 0, totalShares: 0, totalReferralToken: 0 });
   const [redeemed, setRedeemed]        = useState({ posts: [], referral: [], streak: [] });
   const [loading, setLoading]          = useState(true);
 
   const fetch_ = useCallback(() => {
-    const token = getToken();
     if (!token) { setLoading(false); return; }
     setLoading(true);
-    fetch(`${BACKEND_URL}/api/auth/earned-rewards`, {
-      headers: { Authorization: `Bearer ${token}` },
-    })
-      .then(r => r.ok ? r.json() : null)
-      .then(d => {
+    apiRequest
+      .get(`${BACKEND_URL}/api/auth/earned-rewards`)
+      .then(res => {
+        const d = res.data;
         if (!d) return;
         if (d.wallet) setWallet(d.wallet);
         if (d.redeemed) {
@@ -294,11 +245,10 @@ function useEarnedRewards() {
       })
       .catch(() => {})
       .finally(() => setLoading(false));
-  }, []);
+  }, [token]);
 
   const refetch = useCallback(() => {
     fetch_();
-    // Also invalidate the activity dashboard so streak/referral counts refresh
     queryClient.invalidateQueries({ queryKey: DASHBOARD_QUERY_KEY });
   }, [fetch_, queryClient]);
 
@@ -307,28 +257,22 @@ function useEarnedRewards() {
   return { wallet, redeemed, loading, refetch };
 }
 
-function useMyPostCount() {
-  // userId is no longer needed as a parameter — the backend reads it from
-  // the JWT token in the Authorization header.
+function useMyPostCount(token) {
   const [postCount, setPostCount] = useState(0);
   const [loading, setLoading]     = useState(true);
- 
+
   useEffect(() => {
-    const token = getToken();
     if (!token) { setLoading(false); return; }
- 
     setLoading(true);
-    fetch(`${BACKEND_URL}/api/posts/my-count`, {
-      headers: { Authorization: `Bearer ${token}` },
-    })
-      .then(r => r.ok ? r.json() : null)
-      .then(d => {
-        if (d?.count !== undefined) setPostCount(Number(d.count));
+    apiRequest
+      .get(`${BACKEND_URL}/api/posts/my-count`)
+      .then(res => {
+        if (res.data?.count !== undefined) setPostCount(Number(res.data.count));
       })
       .catch(() => {})
       .finally(() => setLoading(false));
-  }, []); // no deps — token is read imperatively, userId comes from the token
- 
+  }, [token]);
+
   return { postCount, loading };
 }
 
@@ -410,13 +354,12 @@ function EligibilityBanner({ kycGate, subscriptionGate, blockerCode, blockerMess
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// StreakTab — NOW reads from useActivityDashboard (React Query)
+// StreakTab
 // ─────────────────────────────────────────────────────────────────────────────
 
-function StreakTab({ eligible, parseClaimError, openModal, redeemedStreak }) {
-  // ★ CHANGED: useActivityDashboard() instead of useStreak()
+function StreakTab({ eligible, token, parseClaimError, openModal, redeemedStreak }) {
   const { streakCount, isLoading: dashLoading } = useActivityDashboard();
-  const slabs = usePlanSlabs('streak');
+  const slabs = usePlanSlabs('streak', token);
 
   const claimedDays   = redeemedStreak ?? [];
   const accurateCount = streakCount ?? 0;
@@ -443,7 +386,6 @@ function StreakTab({ eligible, parseClaimError, openModal, redeemedStreak }) {
 
   return (
     <div>
-      {/* ★ CountDisplay shows "—" while loading, not "0" */}
       <CountDisplay value={streakCount} suffix="days" isLoading={dashLoading} />
 
       <ProgressBar
@@ -504,13 +446,13 @@ function StreakTab({ eligible, parseClaimError, openModal, redeemedStreak }) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// PostTab — unchanged (already had no Context dep)
+// PostTab
 // ─────────────────────────────────────────────────────────────────────────────
 
-function PostTab({ eligible, user, redeemedPosts, onRewardClaimed }) {
-  const slabs                         = usePlanSlabs('posts');
-  const { postCount, loading: countLoading } = useMyPostCount();
-  const { parseClaimError }           = useRewardEligibility();
+function PostTab({ eligible, token, user, redeemedPosts, onRewardClaimed }) {
+  const slabs                                    = usePlanSlabs('posts', token);
+  const { postCount, loading: countLoading }     = useMyPostCount(token);
+  const { parseClaimError }                      = useRewardEligibility();
 
   const claimed = (redeemedPosts ?? []).map(String);
 
@@ -536,13 +478,13 @@ function PostTab({ eligible, user, redeemedPosts, onRewardClaimed }) {
     : !hasEnough               ? 'locked'
     : 'ready';
 
+  // Token injected by apiRequest interceptor — no manual header
   const handleBankSubmit = async (bankDetails, successCallback) => {
     setLoading(true);
     try {
       const res = await apiRequest.post(
         `${BACKEND_URL}/api/activity/post-reward`,
         { postreward: selectedNum, bankDetails },
-        { headers: { Authorization: `Bearer ${getToken()}` } }
       );
       toast.success(res.data?.message || `Post reward for ${selectedNum} posts claimed!`);
       setSelected('');
@@ -623,26 +565,16 @@ function PostTab({ eligible, user, redeemedPosts, onRewardClaimed }) {
   );
 }
 
-// // ─────────────────────────────────────────────────────────────────────────────
-// // ReferralTab — NOW reads from useActivityDashboard (React Query)
-// // ─────────────────────────────────────────────────────────────────────────────
-
-<ReferralTab />
-
 // ─────────────────────────────────────────────────────────────────────────────
 // Main: RewardsHub
 // ─────────────────────────────────────────────────────────────────────────────
 
-const TABS = [
-  { id: 'streak',   label: 'Streak rewards'  },
-  { id: 'posts',    label: 'Post rewards'     },
-  { id: 'referral', label: 'Referral rewards' },
-];
-
 export default function RewardsHub({ initialTab = 'streak' }) {
-  const { user } = useAuth();
+  // ── Single centralized token source ───────────────────────────────────────
+  const { user, token } = useAuth();
+  const socket = getSocket();
 
-  const { wallet, redeemed, refetch: refetchEarned } = useEarnedRewards();
+  const { wallet, redeemed, refetch: refetchEarned } = useEarnedRewards(token);
 
   const {
     eligible, checking,
@@ -651,35 +583,30 @@ export default function RewardsHub({ initialTab = 'streak' }) {
     parseClaimError,
   } = useRewardEligibility();
 
-  // ★ useActivityDashboard: single source of truth for streak + referral counts.
-  // invalidate() triggers an immediate background refetch after reward claims.
   const { invalidate: invalidateDashboard } = useActivityDashboard();
 
-  const [activeTab, setActiveTab]   = useState(initialTab);
+  const [activeTab, setActiveTab]     = useState(initialTab);
   const [streakModal, setStreakModal] = useState({ open: false, days: null, label: '' });
   const [streakLoading, setStreakLoading] = useState(false);
 
-  // After ANY reward claim: refetch earned-rewards AND dashboard counts
   const onRewardClaimed = useCallback(() => {
     refetchEarned();
     invalidateDashboard();
   }, [refetchEarned, invalidateDashboard]);
 
-  // Streak modal handler — lives at shell level so it's outside the tab tree
   const openModal = useCallback((type, value, label) => {
     if (type === 'streak') setStreakModal({ open: true, days: value, label });
   }, []);
 
+  // Token injected by apiRequest interceptor — no manual Authorization header
   const handleStreakClaim = async (bankDetails, successCallback) => {
     setStreakLoading(true);
     try {
       const res = await apiRequest.post(
         `${BACKEND_URL}/api/activity/streak-reward`,
         { streakslab: `${streakModal.days}days`, bankDetails },
-        { headers: { Authorization: `Bearer ${getToken()}` } }
       );
       toast.success(res.data?.message || `Streak reward for ${streakModal.days} days claimed!`);
-      // ★ CHANGED: onRewardClaimed() invalidates BOTH earned-rewards and dashboard
       onRewardClaimed();
       setStreakModal({ open: false, days: null, label: '' });
       successCallback?.();
@@ -689,87 +616,102 @@ export default function RewardsHub({ initialTab = 'streak' }) {
       setStreakLoading(false);
     }
   };
-  
+
   const displayGrocery = wallet.availableBalance ?? wallet.totalGroceryCoupons ?? 0;
-  
+
+  const TABS = useMemo(() => [
+    { id: 'streak',   label: 'Streak'   },
+    { id: 'referral', label: 'Referral' },
+    { id: 'posts',    label: 'Posts'    },
+    { id: 'special-offer', label: '🔥 Special Offer' },
+  ], []);
+
+  useEffect(() => {
+    if (!TABS.find(t => t.id === activeTab)) {
+      setActiveTab('streak');
+    }
+  }, [activeTab, TABS]);
+
   return (
-    <div style={styles.shell}>
-      {/* Eligibility banner — once, not per-tab */}
-      {!checking && !eligible && (
-        <EligibilityBanner
-          kycGate={kycGate}
-          subscriptionGate={subscriptionGate}
-          blockerCode={blockerCode}
-          blockerMessage={blockerMessage}
-        />
-      )}
+    <SpecialOfferProvider token={token} socket={socket}>
+      <div style={styles.shell}>
+        {/* Eligibility banner */}
+        {!checking && !eligible && (
+          <EligibilityBanner
+            kycGate={kycGate}
+            subscriptionGate={subscriptionGate}
+            blockerCode={blockerCode}
+            blockerMessage={blockerMessage}
+          />
+        )}
 
-      {/* Wallet */}
-      <div style={styles.walletBar}>
-        <div style={styles.walletCell}>
-          <span style={styles.walletNum}>₹{displayGrocery.toLocaleString('en-IN')}</span>
-          <span style={styles.walletLabel}>Grocery coupons</span>
+        {/* Wallet */}
+        <div style={styles.walletBar}>
+          <div style={styles.walletCell}>
+            <span style={styles.walletNum}>₹{displayGrocery.toLocaleString('en-IN')}</span>
+            <span style={styles.walletLabel}>Grocery coupons</span>
+          </div>
+          <div style={styles.walletCell}>
+            <span style={styles.walletNum}>{(wallet.totalShares || 0).toLocaleString('en-IN')}</span>
+            <span style={styles.walletLabel}>Shares</span>
+          </div>
+          <div style={styles.walletCell}>
+            <span style={styles.walletNum}>{(wallet.totalReferralToken || 0).toLocaleString('en-IN')}</span>
+            <span style={styles.walletLabel}>Tokens</span>
+          </div>
         </div>
-        <div style={styles.walletCell}>
-          <span style={styles.walletNum}>{(wallet.totalShares || 0).toLocaleString('en-IN')}</span>
-          <span style={styles.walletLabel}>Shares</span>
-        </div>
-        <div style={styles.walletCell}>
-          <span style={styles.walletNum}>{(wallet.totalReferralToken || 0).toLocaleString('en-IN')}</span>
-          <span style={styles.walletLabel}>Tokens</span>
-        </div>
+
+        {/* Tabs */}
+        <nav style={styles.tabBar}>
+          {TABS.map(t => (
+            <button key={t.id} style={styles.tab(activeTab === t.id)} onClick={() => setActiveTab(t.id)}>
+              {t.label}
+            </button>
+          ))}
+        </nav>
+
+        {/* Tab content */}
+        {activeTab === 'streak' && (
+          <StreakTab
+            eligible={eligible}
+            token={token}
+            parseClaimError={parseClaimError}
+            openModal={openModal}
+            redeemedStreak={redeemed.streak}
+          />
+        )}
+        {activeTab === 'referral' && (
+          <ReferralTab
+            eligible={eligible}
+            user={user}
+            redeemedReferral={redeemed.referral}
+            onRewardClaimed={onRewardClaimed}
+          />
+        )}
+        {activeTab === 'posts' && (
+          <PostTab
+            eligible={eligible}
+            token={token}
+            user={user}
+            redeemedPosts={redeemed.posts}
+            onRewardClaimed={onRewardClaimed}
+          />
+        )}
+        {activeTab === 'special-offer' && (
+          <SpecialOfferTab
+            user={user}
+            eligible={eligible}
+          />
+        )}
+        {/* Streak bank modal */}
+        <BankDetailsModal
+          isOpen={streakModal.open}
+          loading={streakLoading}
+          onClose={() => setStreakModal({ open: false, days: null, label: '' })}
+          onSubmit={handleStreakClaim}
+          rewardLabel={streakModal.label ?? 'Streak'}
+        />
       </div>
-
-      {/* <RedeemGroceryCoupons
-        totalGroceryCoupons={wallet.totalGroceryCoupons}
-        eligible={eligible}
-        user={user}
-        onRedeemed={onRewardClaimed}   // optional: same callback the tabs use
-      /> */}
-
-      {/* Tabs */}
-      <nav style={styles.tabBar}>
-        {TABS.map(t => (
-          <button key={t.id} style={styles.tab(activeTab === t.id)} onClick={() => setActiveTab(t.id)}>
-            {t.label}
-          </button>
-        ))}
-      </nav>
-
-      {/* Tab content */}
-      {activeTab === 'streak' && (
-        <StreakTab
-          eligible={eligible}
-          parseClaimError={parseClaimError}
-          openModal={openModal}
-          redeemedStreak={redeemed.streak}
-        />
-      )}
-      {activeTab === 'posts' && (
-        <PostTab
-          eligible={eligible}
-          user={user}
-          redeemedPosts={redeemed.posts}
-          onRewardClaimed={onRewardClaimed}
-        />
-      )}
-      {activeTab === 'referral' && (
-        <ReferralTab
-          eligible={eligible}
-          user={user}
-          redeemedReferral={redeemed.referral}
-          onRewardClaimed={onRewardClaimed}
-        />
-      )}
-
-      {/* Streak bank modal — outside tab tree so it survives tab switches */}
-      <BankDetailsModal
-        isOpen={streakModal.open}
-        loading={streakLoading}
-        onClose={() => setStreakModal({ open: false, days: null, label: '' })}
-        onSubmit={handleStreakClaim}
-        rewardLabel={streakModal.label ?? 'Streak'}
-      />
-    </div>
+    </SpecialOfferProvider>
   );
 }

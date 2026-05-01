@@ -1,14 +1,14 @@
 // RegiLogModel_OnlyCaptchaWidget.js — Hybrid reCAPTCHA v3 (primary) + v2 (fallback)
 // Styles are in App.css (rl-root, rl-card, rl-tab-bar, rl-glossy-btn, etc.)
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../../Context/Authorisation/AuthContext';
 import AuthService from '../../Services/AuthService';
 import ForgotPasswordModal from './Hooks/useForgotPassword';
 import Logo from '../XLogo/Logo';
 import { toast } from 'react-toastify';
 import 'react-toastify/dist/ReactToastify.css';
-import { BadgeCheck, Eye, EyeOff, LogIn, UserPlus, ShieldCheck, ChevronDown } from 'lucide-react';
+import { BadgeCheck, Eye, EyeOff, LogIn, UserPlus, ShieldCheck, ChevronDown, Lock } from 'lucide-react';
 import { initializeSocket } from '../../WebSocket/WebSocketClient';
 import TermsModal from '../TermsAndConditions/TermsModal';
 import apiRequest from '../../utils/apiRequest';
@@ -24,11 +24,6 @@ const getFlagEmoji = (countryCode) => {
         );
 };
 // ─── Country codes list ───────────────────────────────────────────────────────
-// Each entry: { code, dialCode, flag }
-// "code" is the ISO 3166-1 alpha-2 country code used to render the emoji flag.
-// "dialCode" is the numeric prefix (without +) sent to the selector label.
-// The phone value submitted to the backend is ALWAYS the raw local number only
-// (digits typed by the user), because the backend validates /^\d{10}$/.
 const COUNTRY_CODES = [
     { code: 'IN', dialCode: '+91',  name: 'India'              },
     { code: 'US', dialCode: '+1',   name: 'USA'                },
@@ -103,8 +98,7 @@ const fetchUserCountry = async () => {
     try {
         const res = await fetch('https://ipapi.co/json/');
         const data = await res.json();
-
-        return data?.country_code || 'IN'; // fallback
+        return data?.country_code || 'IN';
     } catch (err) {
         console.error('Geo detection failed:', err);
         return 'IN';
@@ -120,7 +114,6 @@ const PhoneInput = ({ value, onChange }) => {
     const dropdownRef = useRef(null);
     const searchRef   = useRef(null);
 
-    // Close dropdown when clicking outside
     useEffect(() => {
         const handleOutsideClick = (e) => {
             if (dropdownRef.current && !dropdownRef.current.contains(e.target)) {
@@ -130,7 +123,6 @@ const PhoneInput = ({ value, onChange }) => {
         };
         if (dropdownOpen) {
             document.addEventListener('mousedown', handleOutsideClick);
-            // Auto-focus the search box when dropdown opens
             setTimeout(() => searchRef.current?.focus(), 50);
         }
         return () => document.removeEventListener('mousedown', handleOutsideClick);
@@ -147,7 +139,6 @@ const PhoneInput = ({ value, onChange }) => {
         setSearch('');
     };
 
-    // Only allow digits in the local-number field; strip everything else
     const handlePhoneChange = (e) => {
         const digits = e.target.value.replace(/\D/g, '');
         onChange({ target: { name: 'phone', value: digits } });
@@ -156,20 +147,14 @@ const PhoneInput = ({ value, onChange }) => {
     useEffect(() => {
         const detectCountry = async () => {
             const code = await fetchUserCountry();
-
             const matched = COUNTRY_CODES.find(c => c.code === code);
-
-            if (matched) {
-                setSelectedCountry(matched);
-            }
+            if (matched) setSelectedCountry(matched);
         };
-
         detectCountry();
     }, []);
 
     return (
         <div className="rl-phone-wrap" ref={dropdownRef}>
-            {/* Country code trigger button */}
             <div className="rl-phone-input-row">
                 <button
                     type="button"
@@ -191,7 +176,6 @@ const PhoneInput = ({ value, onChange }) => {
                     <ChevronDown size={14} className={`rl-phone-chevron ${dropdownOpen ? 'open' : ''}`} />
                 </button>
 
-                {/* Dropdown */}
                 {dropdownOpen && (
                     <div className="rl-phone-dropdown">
                         <div className="rl-phone-search-wrap">
@@ -225,7 +209,6 @@ const PhoneInput = ({ value, onChange }) => {
                     </div>
                 )}
 
-                {/* Local number input — stores only digits */}
                 <input
                     type="tel"
                     name="phone"
@@ -243,14 +226,6 @@ const PhoneInput = ({ value, onChange }) => {
 };
 
 // ─── CaptchaWidget (v2 fallback checkbox) ────────────────────────────────────
-//
-// Rendered ONLY when the backend signals { fallback: "v2_required" }.
-// Normal users never see this — they are silently verified by v3.
-//
-// Props:
-//   widgetId  — unique HTML id for the container div
-//   onVerify  — called with token string when user checks the box
-//   onExpire  — called with no args when token expires (2 min)
 const CaptchaWidget = ({ widgetId, onVerify, onExpire }) => {
     const containerRef = useRef(null);
     const renderedRef = useRef(false);
@@ -297,10 +272,7 @@ const CaptchaWidget = ({ widgetId, onVerify, onExpire }) => {
 };
 
 // ─── executeV3 helper ─────────────────────────────────────────────────────────
-// Wraps grecaptcha.execute() in a Promise with a timeout guard.
-// Returns the token string or null on failure.
 const executeV3 = (action) => {
-    // if (!localStorage.getItem('token')) return;
     return new Promise((resolve) => {
         const siteKey = process.env.REACT_APP_RECAPTCHA_V3_SITE_KEY;
         if (!siteKey) {
@@ -318,7 +290,6 @@ const executeV3 = (action) => {
                         resolve(null);
                     });
             } else {
-                // Script not yet loaded — retry
                 setTimeout(attempt, 150);
             }
         };
@@ -328,12 +299,28 @@ const executeV3 = (action) => {
 };
 
 // ─── Component ────────────────────────────────────────────────────────────────
-const LogSignNewModel = () => {
+// Props:
+//   initialTab  — "login" | "signup"  (default "login")
+//                 App.js passes "signup" when the route is /signup
+const LogSignNewModel = ({ initialTab = 'login' }) => {
     const navigate = useNavigate();
     const { login } = useAuth();
+
+    // ── Read ?ref= from the URL ───────────────────────────────────────────────
+    // useSearchParams works for both /signup?ref=VK690587 and /login?ref=…
+    const [searchParams] = useSearchParams();
+    const refFromUrl = (searchParams.get('ref') || '').trim().toUpperCase();
+
     const [isAdminLogin, setIsAdminLogin] = useState(false);
     const [role] = useState('user');
-    const [isLogin, setIsLogin] = useState(true);
+
+    // Open signup tab immediately when:
+    //   • the parent passed initialTab="signup"  (route /signup)
+    //   • OR a ?ref= value is present in the URL
+    const [isLogin, setIsLogin] = useState(
+        initialTab === 'signup' || refFromUrl ? false : true
+    );
+
     const [showForgotModal, setShowForgotModal] = useState(false);
     const [showTermsModal, setShowTermsModal] = useState(false);
     const [postLoginRedirect, setPostLoginRedirect] = useState('');
@@ -341,12 +328,9 @@ const LogSignNewModel = () => {
     const [loading, setLoading] = useState(false);
 
     // ── Hybrid captcha state ──────────────────────────────────────────────────
-    // captchaMode: "v3" → invisible, attempt first
-    //              "v2" → checkbox, shown only after backend fallback signal
     const [loginCaptchaMode, setLoginCaptchaMode] = useState('v3');
     const [signupCaptchaMode, setSignupCaptchaMode] = useState('v3');
 
-    // v2 tokens — only populated when the v2 widget is shown and user checks box
     const [loginV2Token, setLoginV2Token] = useState('');
     const [signupV2Token, setSignupV2Token] = useState('');
 
@@ -356,10 +340,17 @@ const LogSignNewModel = () => {
     const onSignupV2Expire = useCallback(() => setSignupV2Token(''), []);
 
     const [loginData, setLoginData] = useState({ identifier: '', password: '' });
+
+    // Pre-fill referralno from URL param if present; otherwise start empty.
     const [signupData, setSignupData] = useState({
         name: '', username: '', email: '', phone: '',
-        password: '', cpassword: '', referralno: '',
+        password: '', cpassword: '',
+        referralno: refFromUrl,
     });
+
+    // Track whether the referral field came from the URL so we can lock it.
+    // A ref from the URL should not be editable — it belongs to the inviter.
+    const referralLockedByUrl = Boolean(refFromUrl);
 
     const [acceptedTerms, setAcceptedTerms] = useState(false);
     const [showLoginPassword, setShowLoginPassword] = useState(false);
@@ -371,18 +362,30 @@ const LogSignNewModel = () => {
         return () => clearTimeout(t);
     }, []);
 
+    // ── If ?ref= changes (edge case: user navigates to a different ref link) ──
+    // Keep signupData.referralno in sync, but only when the field is URL-locked.
+    useEffect(() => {
+        if (refFromUrl) {
+            setSignupData(prev => ({ ...prev, referralno: refFromUrl }));
+            setIsLogin(false);
+        }
+    }, [refFromUrl]);
+
     const resetSignup = () => {
-        setSignupData({ name: '', username: '', email: '', phone: '', password: '', cpassword: '', referralno: '' });
+        // When resetting, preserve URL-supplied referral so the user can still sign up.
+        setSignupData({
+            name: '', username: '', email: '', phone: '',
+            password: '', cpassword: '',
+            referralno: referralLockedByUrl ? refFromUrl : '',
+        });
         setSignupCaptchaMode('v3');
         setSignupV2Token('');
     };
 
-    // ── resetCaptchaWidget ────────────────────────────────────────────────────
-    // Safely resets the v2 widget if it's rendered.
     const resetCaptchaWidget = () => {
         try {
             if (window.grecaptcha?.reset) window.grecaptcha.reset();
-        } catch (_) { /* widget may not be rendered yet — ignore */ }
+        } catch (_) {}
     };
 
     // ── handleLoginSubmit ─────────────────────────────────────────────────────
@@ -395,7 +398,6 @@ const LogSignNewModel = () => {
             return;
         }
 
-        // v2 mode: require the checkbox token before submitting
         if (loginCaptchaMode === 'v2' && !loginV2Token) {
             toast.error('Please complete the "I am not a robot" check.');
             return;
@@ -410,7 +412,6 @@ const LogSignNewModel = () => {
                 captchaToken = await executeV3('login');
                 captchaType = 'v3';
                 if (!captchaToken) {
-                    // v3 script not loaded — degrade gracefully to v2
                     setLoginCaptchaMode('v2');
                     toast.info('Please complete the security check below.');
                     setLoading(false);
@@ -425,7 +426,6 @@ const LogSignNewModel = () => {
                 ? await AuthService.loginAdmin({ identifier, password, captchaToken, captchaType, captchaAction: 'login' })
                 : await AuthService.login({ identifier, password, captchaToken, captchaType, captchaAction: 'login' });
 
-            // Backend signals that v3 score was too low → show v2 checkbox
             if (response?.fallback === 'v2_required') {
                 setLoginCaptchaMode('v2');
                 toast.info('Additional verification required. Please complete the checkbox below.');
@@ -463,7 +463,6 @@ const LogSignNewModel = () => {
         e.preventDefault();
         const { name, username, email, phone, password, referralno } = signupData;
 
-        // v2 mode: require checkbox token
         if (signupCaptchaMode === 'v2' && !signupV2Token) {
             toast.error('Please complete the "I am not a robot" check.');
             return;
@@ -493,7 +492,6 @@ const LogSignNewModel = () => {
                 captchaToken, captchaType, captchaAction: 'signup',
             });
 
-            // Backend fallback signal
             if (result?.fallback === 'v2_required') {
                 setSignupCaptchaMode('v2');
                 toast.info('Additional verification required. Please complete the checkbox below.');
@@ -527,16 +525,19 @@ const LogSignNewModel = () => {
 
     const handleInputChange = (e) => {
         const { name, value } = e.target;
-        if (isLogin) setLoginData(prev => ({ ...prev, [name]: value }));
-        else setSignupData(prev => ({ ...prev, [name]: value }));
+        if (isLogin) {
+            setLoginData(prev => ({ ...prev, [name]: value }));
+        } else {
+            // Prevent overwriting a URL-locked referral ID via typing
+            if (name === 'referralno' && referralLockedByUrl) return;
+            setSignupData(prev => ({ ...prev, [name]: value }));
+        }
     };
 
     useEffect(() => {
         return () => {
             try {
-                if (window.grecaptcha?.reset) {
-                    window.grecaptcha.reset();
-                }
+                if (window.grecaptcha?.reset) window.grecaptcha.reset();
             } catch { }
         };
     }, []);
@@ -627,7 +628,6 @@ const LogSignNewModel = () => {
                             </a>
                         </div>
 
-                        {/* v2 fallback widget — only shown when backend signals low v3 score */}
                         {loginCaptchaMode === 'v2' && (
                             <div className="rl-captcha-row mb-2">
                                 <p className="rl-captcha-hint" style={{ fontSize: '0.8rem', color: '#888', marginBottom: 6 }}>
@@ -644,7 +644,6 @@ const LogSignNewModel = () => {
                             </div>
                         )}
 
-                        {/* Login button — disabled only while loading OR during v2 mode before checkbox */}
                         <button
                             type="submit"
                             className="rl-glossy-btn"
@@ -668,18 +667,70 @@ const LogSignNewModel = () => {
                     <form onSubmit={handleSignupSubmit} noValidate>
                         <div className="rl-card-title">✨ Create Account</div>
 
-                        {/* Referral */}
+                        {/* ── Referral ID ─────────────────────────────────────────
+                            When referralLockedByUrl is true the field is read-only and
+                            shows a lock icon + a friendly "invited by" hint so the user
+                            understands why it is pre-filled and cannot be changed.
+                        */}
                         <div className="rl-input-wrap">
-                            <BadgeCheck className="rl-input-icon" size={20} />
+                            {referralLockedByUrl
+                                ? <Lock className="rl-input-icon" size={18} style={{ color: '#7c3aed' }} />
+                                : <BadgeCheck className="rl-input-icon" size={20} />
+                            }
                             <input
                                 type="text"
                                 name="referralno"
-                                className="rl-input has-icon"
+                                className={`rl-input has-icon${referralLockedByUrl ? ' rl-input--locked' : ''}`}
                                 placeholder="Referral ID (e.g., DU688828)"
                                 value={signupData.referralno}
                                 onChange={handleInputChange}
+                                // readOnly prevents keyboard editing; the value is already
+                                // in state from the URL param.
+                                readOnly={referralLockedByUrl}
+                                style={referralLockedByUrl ? {
+                                    background: 'var(--color-background-secondary, #f5f0ff)',
+                                    color:      'var(--color-text-secondary, #7c3aed)',
+                                    cursor:     'default',
+                                    userSelect: 'none',
+                                } : undefined}
+                                aria-label={referralLockedByUrl
+                                    ? `Referral ID: ${signupData.referralno} (pre-filled from invite link)`
+                                    : 'Referral ID'}
                             />
+                            {/* Inline badge so the user sees clear confirmation */}
+                            {referralLockedByUrl && (
+                                <span
+                                    title="This referral ID was filled automatically from your invite link."
+                                    style={{
+                                        position:   'absolute',
+                                        right:      10,
+                                        top:        '50%',
+                                        transform:  'translateY(-50%)',
+                                        fontSize:   10,
+                                        fontWeight: 600,
+                                        padding:    '2px 7px',
+                                        borderRadius: 4,
+                                        background: '#ede9fe',
+                                        color:      '#7c3aed',
+                                        whiteSpace: 'nowrap',
+                                        pointerEvents: 'none',
+                                    }}
+                                >
+                                    ✓ Invite link
+                                </span>
+                            )}
                         </div>
+
+                        {/* Show a contextual hint below the field when pre-filled */}
+                        {referralLockedByUrl && (
+                            <p style={{
+                                fontSize: 12,
+                                color:    'var(--color-text-secondary, #7c3aed)',
+                                margin:   '-8px 0 12px 2px',
+                            }}>
+                                🎉 You were invited! Your referral ID has been filled in automatically.
+                            </p>
+                        )}
 
                         <div className="rl-divider">Personal Info</div>
 
@@ -722,23 +773,11 @@ const LogSignNewModel = () => {
                             />
                         </div>
 
-                        {/* <div className="rl-input-wrap">
-                            <input
-                                type="text"
-                                name="phone"
-                                className="rl-input"
-                                placeholder="10-digit Phone Number"
-                                autoComplete="tel"
-                                value={signupData.phone}
-                                onChange={handleInputChange}
-                                required
-                            />
-                        </div> */}
                         {/* ────────── Phone Input with Country Code ────────── */}
                         <PhoneInput
                             value={signupData.phone}
                             onChange={handleInputChange}
-                        />                        
+                        />
 
                         <div className="rl-divider">Security</div>
 
@@ -817,7 +856,7 @@ const LogSignNewModel = () => {
                             </span>
                         </label>
 
-                        {/* v2 fallback widget — only shown when backend signals low v3 score */}
+                        {/* v2 fallback widget */}
                         {signupCaptchaMode === 'v2' && (
                             <div className="rl-captcha-row mb-2">
                                 <p className="rl-captcha-hint" style={{ fontSize: '0.8rem', color: '#888', marginBottom: 6 }}>
@@ -846,7 +885,7 @@ const LogSignNewModel = () => {
                             </span>
                         </button>
 
-                        {/* Red glossy cancel button */}
+                        {/* Cancel / Reset button */}
                         <button
                             type="button"
                             className="rl-glossy-btn"

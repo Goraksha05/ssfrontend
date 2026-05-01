@@ -1,75 +1,37 @@
 /**
- * hooks/useRewardEligibility.js
- *
- * Fetches and caches eligibility from GET /api/activity/reward-eligibility.
- * Single source of truth consumed by:
- *   - RewardClaimButton
- *   - RewardEligibilityGate
- *   - RewardEligibilityStatus
- *   - DailyStreak, PostRewards, UserReferrals
- *
- * Gate shape returned:
- *   {
- *     eligible: bool,
- *     checking: bool,
- *     kycGate: { passed, status, message, ctaLabel, ctaPath, label },
- *     subscriptionGate: { passed, active, expired, plan, expiresAt, message, ctaLabel, ctaPath, label },
- *     blockerCode: string | null,
- *     blockerMessage: string | null,
- *     parseClaimError: (err) => string,
- *     refetch: () => void,
- *   }
- *
- * FIXES applied:
- *   1. Replaced useEffect-with-local-fetch with SWR-style cache (30 s stale).
- *      Previously every component that called useRewardEligibility() fired its
- *      own independent fetch on mount, so 3 reward panels = 3 simultaneous
- *      GET /api/activity/reward-eligibility calls. Now all instances share one
- *      in-flight request and one cached result.
- *
- *   2. Added parseClaimError() — interprets structured 403 responses from the
- *      requireRewardEligibility middleware so components show the right human
- *      message without duplicating the mapping logic in each file.
- *
- *   3. Gate objects now carry `label` (short, for compact banners) in addition
- *      to `message` (full, for cards and popovers).
- *
- *   4. ctaPath / ctaLabel are derived from the gate, not hardcoded per
- *      component — changing the route in one place propagates everywhere.
- */
+ * hooks/useRewardEligibility.js — v2
+**/
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { KYC_STATUSES } from '../Context/KYC/KycContext';
-import { useSubscription } from "../Context/Subscription/SubscriptionContext";
+import { useSubscription } from '../Context/Subscription/SubscriptionContext';
+import { useAuth } from '../Context/Authorisation/AuthContext';
+import apiRequest from '../utils/apiRequest';
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || '';
 const STALE_MS    = 30_000;
 
-// Shared cache
-const _cache = {
-  data: null,
-  fetchedAt: 0,
-  promise: null,
-};
+// Shared cache — keyed by token so different users never share entries
+const _cacheByToken = new Map();
 
-function getToken() {
-  return localStorage.getItem('token');
+function getCache(token) {
+  if (!token) return null;
+  if (!_cacheByToken.has(token)) {
+    _cacheByToken.set(token, { data: null, fetchedAt: 0, promise: null });
+  }
+  return _cacheByToken.get(token);
 }
 
-async function fetchEligibility() {
-  const token = getToken();
+// apiRequest interceptor attaches the Authorization header automatically
+async function fetchEligibility(token) {
   if (!token) return null;
 
-  const res = await fetch(`${BACKEND_URL}/api/activity/reward-eligibility`, {
-    headers: { Authorization: `Bearer ${token}` },
-  });
+  const res = await apiRequest.get(
+    `${BACKEND_URL}/api/activity/reward-eligibility`,
+    { _silent: true }, // suppress auto-toasts; caller handles errors
+  );
 
-  if (!res.ok) {
-    if (res.status === 401) return null;
-    throw new Error(`Eligibility check failed: ${res.status}`);
-  }
-
-  return res.json();
+  return res.data;
 }
 
 // ✅ FIXED: accepts openSubscription
@@ -81,7 +43,7 @@ function buildGates(data, openSubscription) {
   const sub = gates.subscription ?? {};
 
   // ── KYC ─────────────────────────
-  const kycStatus = kyc.status ?? KYC_STATUSES.NOT_STARTED;
+  const kycStatus   = kyc.status ?? KYC_STATUSES.NOT_STARTED;
   const isSubmitted = kycStatus === KYC_STATUSES.SUBMITTED;
   const isRejected  = kycStatus === KYC_STATUSES.REJECTED;
 
@@ -95,7 +57,7 @@ function buildGates(data, openSubscription) {
         : 'KYC verification required',
 
     message: isSubmitted
-      ? 'Your documents are under review. We\'ll notify you within 1–2 business days.'
+      ? "Your documents are under review. We'll notify you within 1–2 business days."
       : isRejected
         ? 'Your KYC was not approved. Please check the reason and resubmit your documents.'
         : 'Complete KYC verification to unlock all reward claiming.',
@@ -107,20 +69,18 @@ function buildGates(data, openSubscription) {
         : 'Start KYC',
 
     ctaPath: '/profile?tab=kyc',
-
-    // 🎯 attention trigger
     ctaAttention: !kyc.passed,
   };
 
   // ── Subscription ─────────────────────────
   const expired = sub?.expired ?? false;
-  const active  = sub?.active ?? false;
+  const active  = sub?.active  ?? false;
 
   const subscriptionGate = {
     passed: sub?.passed ?? false,
     active,
     expired,
-    plan: sub?.plan ?? null,
+    plan:      sub?.plan      ?? null,
     expiresAt: sub?.expiresAt ?? null,
 
     label: expired
@@ -134,29 +94,25 @@ function buildGates(data, openSubscription) {
       : 'An active subscription is required to claim rewards. Choose a plan to get started.',
 
     ctaLabel: expired ? 'Renew plan' : 'View plans',
-
-    // ✅ modal trigger
     ctaAction: () => openSubscription(),
-
-    // 🎯 ATTENTION FLAG (important)
     ctaAttention: !active || expired,
   };
 
   // ── Blockers ─────────────────────────
-  let blockerCode = null;
+  let blockerCode    = null;
   let blockerMessage = null;
 
   if (rewardsFrozen) {
-    blockerCode = 'REWARDS_FROZEN';
+    blockerCode    = 'REWARDS_FROZEN';
     blockerMessage = 'Your reward payouts are temporarily suspended. Please contact support.';
   } else if (!kycGate.passed && !subscriptionGate.passed) {
-    blockerCode = 'KYC_AND_SUBSCRIPTION';
+    blockerCode    = 'KYC_AND_SUBSCRIPTION';
     blockerMessage = 'Complete KYC verification and activate a subscription to claim rewards.';
   } else if (!kycGate.passed) {
-    blockerCode = 'KYC_NOT_VERIFIED';
+    blockerCode    = 'KYC_NOT_VERIFIED';
     blockerMessage = kycGate.message;
   } else if (!subscriptionGate.passed) {
-    blockerCode = 'SUBSCRIPTION_REQUIRED';
+    blockerCode    = 'SUBSCRIPTION_REQUIRED';
     blockerMessage = subscriptionGate.message;
   }
 
@@ -179,10 +135,10 @@ function parseClaimError(err) {
   if (message) return message;
 
   const codeMessages = {
-    KYC_NOT_VERIFIED: 'KYC verification is required.',
+    KYC_NOT_VERIFIED:    'KYC verification is required.',
     SUBSCRIPTION_REQUIRED: 'Subscription required.',
-    KYC_AND_SUBSCRIPTION: 'Complete KYC and subscribe.',
-    REWARDS_FROZEN: 'Rewards suspended.',
+    KYC_AND_SUBSCRIPTION:  'Complete KYC and subscribe.',
+    REWARDS_FROZEN:      'Rewards suspended.',
   };
 
   return codeMessages[code] ?? 'Failed to claim reward.';
@@ -190,48 +146,60 @@ function parseClaimError(err) {
 
 // ── MAIN HOOK ─────────────────────────
 export function useRewardEligibility() {
-  const { openSubscription } = useSubscription(); // ✅ correct usage
+  // ── Token from AuthContext — single source of truth ─────────────────────
+  const { token } = useAuth();
+  const { openSubscription } = useSubscription();
 
   const [state, setState] = useState({
-    checking: true,
-    eligible: false,
-    rewardsFrozen: false,
-    kycGate: {},
+    checking:         true,
+    eligible:         false,
+    rewardsFrozen:    false,
+    kycGate:          {},
     subscriptionGate: {},
-    blockerCode: null,
-    blockerMessage: null,
+    blockerCode:      null,
+    blockerMessage:   null,
   });
 
   const mountedRef = useRef(true);
   useEffect(() => () => { mountedRef.current = false; }, []);
 
   const loadEligibility = useCallback(async (force = false) => {
+    const cache = getCache(token);
+
+    // Not logged in — nothing to check
+    if (!cache) {
+      if (mountedRef.current) {
+        setState(prev => ({ ...prev, checking: false }));
+      }
+      return;
+    }
+
     const now = Date.now();
 
-    if (!force && _cache.data && (now - _cache.fetchedAt) < STALE_MS) {
-      const gates = buildGates(_cache.data, openSubscription);
+    if (!force && cache.data && (now - cache.fetchedAt) < STALE_MS) {
+      const gates = buildGates(cache.data, openSubscription);
       if (gates && mountedRef.current) {
         setState(prev => ({ ...prev, checking: false, ...gates }));
       }
       return;
     }
 
-    if (!_cache.promise) {
-      _cache.promise = fetchEligibility()
+    if (!cache.promise) {
+      cache.promise = fetchEligibility(token)
         .then(data => {
-          _cache.data = data;
-          _cache.fetchedAt = Date.now();
-          _cache.promise = null;
+          cache.data      = data;
+          cache.fetchedAt = Date.now();
+          cache.promise   = null;
           return data;
         })
         .catch(err => {
-          _cache.promise = null;
+          cache.promise = null;
           throw err;
         });
     }
 
     try {
-      const data = await _cache.promise;
+      const data  = await cache.promise;
       const gates = buildGates(data, openSubscription);
 
       if (mountedRef.current) {
@@ -242,7 +210,7 @@ export function useRewardEligibility() {
         setState(prev => ({ ...prev, checking: false }));
       }
     }
-  }, [openSubscription]);
+  }, [token, openSubscription]);
 
   useEffect(() => {
     loadEligibility();
@@ -252,16 +220,32 @@ export function useRewardEligibility() {
     ...state,
     parseClaimError,
     refetch: () => {
-      _cache.data = null;
-      _cache.fetchedAt = 0;
+      const cache = getCache(token);
+      if (cache) {
+        cache.data      = null;
+        cache.fetchedAt = 0;
+        cache.promise   = null;
+      }
       setState(prev => ({ ...prev, checking: true }));
       loadEligibility(true);
     },
   };
 }
 
-export function invalidateEligibilityCache() {
-  _cache.data = null;
-  _cache.fetchedAt = 0;
-  _cache.promise = null;
+/**
+ * Invalidate the eligibility cache.
+ * @param {string} [token] — if provided, invalidates only that token's entry.
+ *                           If omitted, clears all entries (e.g. on logout).
+ */
+export function invalidateEligibilityCache(token) {
+  if (token) {
+    const cache = _cacheByToken.get(token);
+    if (cache) {
+      cache.data      = null;
+      cache.fetchedAt = 0;
+      cache.promise   = null;
+    }
+  } else {
+    _cacheByToken.clear();
+  }
 }

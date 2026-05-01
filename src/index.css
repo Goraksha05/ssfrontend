@@ -1,30 +1,18 @@
-body {
-  margin: 0;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
-    'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
-    sans-serif;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-}
-
-code {
-  font-family: source-code-pro, Menlo, Monaco, Consolas, 'Courier New',
-    monospace;
-}
-
-.animated-spinner {
-  width: 1.2rem;
-  height: 1.2rem;
-  border: 3px solid rgba(255, 255, 255, 0.3);
-  border-top: 3px solid #fff;
-  border-radius: 50%;
-  animation: spin 0.8s linear infinite;
-  display: inline-block;
-}
-
-@keyframes spin {
-  0% { transform: rotate(0deg); }
-  100% { transform: rotate(360deg); }
-}
-
-
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+/*
+ * ============================================================
+ *  index.css — SoShoLife Unified Design System  (ENTRY POINT)
+ * ============================================================
+ *
+ *  This file serves as the entry point for the SoShoLife Unified Design System.
+ *  It imports the global styles defined in globals.css, which includes Tailwind CSS directives.
+ *
+ *  By importing globals.css, we ensure that all the base styles, components, and utilities
+ *  from Tailwind CSS are available throughout the application. This setup allows us to maintain
+ *  a consistent design language across all components and pages in the SoShoLife ecosystem.
+ *
+ *  Note: The actual styles are defined in globals.css, and this file simply serves as an entry point.
+ */
+@import './globals.css';

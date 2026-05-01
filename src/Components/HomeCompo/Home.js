@@ -2,7 +2,7 @@
 import React, {
   useContext, useEffect, useState, useRef, useCallback, useMemo, startTransition,
 } from 'react';
-import { Link }             from 'react-router-dom';
+import { Link, useNavigate }             from 'react-router-dom';
 import postContext          from '../../Context/Posts/PostContext';
 import HomePosts            from './HomePosts';
 import { jwtDecode }        from 'jwt-decode';
@@ -18,6 +18,12 @@ import ObtainedRewardsModal from '../UserActivities/ObtainedRewardsModal';
 import CropModal            from '../../utils/CropModal';
 import { useTheme }         from '../../Context/ThemeUI/ThemeContext';
 import { useScrollLock }    from '../../hooks/useScrollLock';
+import { useSpecialOffer, SpecialOfferProvider }  from '../../Context/SpecialOffer/SpecialOfferContext';  // ← NEW
+import { useAuth }          from '../../Context/Authorisation/AuthContext';
+import HomeModeBanner       from '../Ads/HomeModeBanner';
+
+import { buildInviteLink, copyToClipboard } from '../../utils/inviteLink';
+import ShareModal from '../UserActivities/ShareModal';
 
 const SERVER_URL = process.env.REACT_APP_SERVER_URL;
 
@@ -47,48 +53,154 @@ const StatCard = ({ icon, label, value, accent, loading: cardLoading }) => {
 };
 
 /* ═══════════════════════════════════════════════════════════════════════════ */
+/*  SpecialOfferBanner — countdown strip shown below MessageScroller          */
+/* ═══════════════════════════════════════════════════════════════════════════ */
+ 
+const OFFER_BANNER_CSS = `
+@keyframes sob-glow {
+  from { box-shadow: inset 0 0 0 0 rgba(255,210,0,0); }
+  to   { box-shadow: inset 0 0 24px 0 rgba(255,210,0,0.07); }
+}
+.sob-root {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 8px 16px;
+  background: rgba(255, 200, 0, 0.08);
+  border-bottom: 1px solid rgba(255, 200, 0, 0.22);
+  cursor: pointer;
+  animation: sob-glow 2.4s ease-in-out infinite alternate;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+.sob-root:hover { background: rgba(255, 200, 0, 0.14); }
+.sob-icon {
+  font-size: 1.1rem;
+  animation: sob-pulse 1.4s ease-in-out infinite;
+}
+@keyframes sob-pulse {
+  0%, 100% { transform: scale(1);    opacity: 1; }
+  50%       { transform: scale(1.18); opacity: 0.85; }
+}
+.sob-label {
+  font-size: 0.8rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #ffd700;
+  font-family: "Courier New", monospace;
+}
+.sob-sep {
+  color: rgba(255, 200, 0, 0.35);
+  font-size: 0.8rem;
+}
+.sob-timer {
+  font-family: "Courier New", monospace;
+  font-size: 1rem;
+  font-weight: 700;
+  color: #ffd700;
+  letter-spacing: 0.05em;
+}
+.sob-cta {
+  font-size: 0.72rem;
+  font-family: sans-serif;
+  color: rgba(255,215,0,0.7);
+  font-weight: 400;
+  white-space: nowrap;
+}
+@media (max-width: 480px) {
+  .sob-label { font-size: 0.68rem; }
+  .sob-timer { font-size: 0.9rem; }
+  .sob-cta   { display: none; }
+}
+`;
+ 
+// Inject CSS once at module scope
+let sobCssInjected = false;
+function injectSobCss() {
+  if (sobCssInjected) return;
+  sobCssInjected = true;
+  const tag = document.createElement('style');
+  tag.textContent = OFFER_BANNER_CSS;
+  document.head.appendChild(tag);
+}
+ 
+function SpecialOfferBanner() {
+  const navigate = useNavigate();
+  const { isActive, expiresIn } = useSpecialOffer();
+ 
+  useEffect(() => { injectSobCss(); }, []);
+ 
+  if (!isActive || expiresIn <= 0) return null;
+ 
+  const h   = Math.floor(expiresIn / 3600);
+  const m   = Math.floor((expiresIn % 3600) / 60);
+  const s   = expiresIn % 60;
+  const pad = (n) => String(n).padStart(2, '0');
+  const display = h > 0 ? `${pad(h)}:${pad(m)}` : `${pad(m)}:${pad(s)}`;
+ 
+  return (
+    <div
+      className="sob-root"
+      role="button"
+      tabIndex={0}
+      aria-label={`Special offer live — ${display} remaining. Click to view.`}
+      onClick={() => navigate('/rewards?tab=special')}
+      onKeyDown={e => e.key === 'Enter' && navigate('/rewards?tab=special')}
+    >
+      <span className="sob-icon">⚡</span>
+      <span className="sob-label">12-Hour Offer Live</span>
+      <span className="sob-sep">|</span>
+      <span className="sob-timer">Ends in: {display}</span>
+      <span className="sob-cta">— Tap to earn ₹100/referral →</span>
+    </div>
+  );
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════ */
 /*  Home                                                                       */
 /* ═══════════════════════════════════════════════════════════════════════════ */
 function Home() {
-  const { addPost, loading } = useContext(postContext);
-  const { tokens } = useTheme();
+  const { addPost, loading }                  = useContext(postContext);
+  const { tokens }                            = useTheme();
+
+  const [mode, setMode]                       = useState('home');
 
   const [postContent,     setPostContent]     = useState('');
   const [inputValue,      setInputValue]      = useState('');
   const [visibility,      setVisibility]      = useState('public');
-  const mediaUploadRef = useRef();
   const [communityCount,  setCommunityCount]  = useState(0);
   const [postSuccess,     setPostSuccess]     = useState(false);
   const [showRewardsModal, setShowRewardsModal] = useState(false);
   const [hasPostedOnce,   setHasPostedOnce]   = useState(false);
-  const [cropPayload, setCropPayload] = useState(null);
+  const [cropPayload, setCropPayload]         = useState(null);
+  const mediaUploadRef                        = useRef();
+
+  const [showShareModal, setShowShareModal] = useState(false);
 
   const token  = localStorage.getItem('token');
   const userId = token ? jwtDecode(token)?.user?.id : '';
+  const { token: authToken } = useAuth();
 
   const { t } = useI18n();
 
   const [wallet,         setWallet]         = useState(null);
   const [rewardsLoading, setRewardsLoading] = useState(false);
-  const [userData,   setUserData]   = useState(null);
-  const [inviteLink, setInviteLink] = useState(''); // eslint-disable-line no-unused-vars
+  const [userData,       setUserData]       = useState(null);
 
-  // ── FIX: Two independent scroll lock calls instead of one combined boolean.
-  //
-  // OLD (broken):
-  //   const isHomeModalOpen = Boolean(showRewardsModal) || Boolean(cropPayload);
-  //   useScrollLock(isHomeModalOpen);
-  //
-  // WHY IT WAS BROKEN:
-  //   If showRewardsModal closed first, isHomeModalOpen went false and
-  //   unlockScroll() fired — even though cropPayload was still open.
-  //   The hook's lockCount dropped to 0 prematurely, unlocking the page.
-  //
-  // FIX: Each modal registers its own slot in the reference counter.
-  //   lockCount increments to 2 when both are open.
-  //   It only reaches 0 (and unlocks) when both have closed independently.
+  const inviteLink = useMemo(
+    () => buildInviteLink(userData?.referralId ?? ''),
+    [userData?.referralId]
+  );
+
+  // ── CHANGE 4: Remove setInviteLink from the getuser effect ────────────────
+  // The effect now only sets userData. inviteLink is derived above via useMemo,
+  // so there is no more manual URL construction in this component.
   useScrollLock(Boolean(showRewardsModal));
   useScrollLock(Boolean(cropPayload));
+  // ── CHANGE 5: Also lock scroll when the share modal is open ───────────────
+  useScrollLock(Boolean(showShareModal));
 
   /* ── Debounce textarea → postContent ─────────────────────────────────────── */
   useEffect(() => {
@@ -109,11 +221,7 @@ function Home() {
       .then(res => {
         if (cancelled) return;
         setUserData(res.data);
-        setInviteLink(
-          res.data?.referralId
-            ? `${window.location.origin}/invite/${res.data.referralId}`
-            : ''
-        );
+        // CHANGE 4 (continued): setInviteLink() call removed — no longer needed.
       })
       .catch(err => console.error('[Home] getuser failed:', err));
 
@@ -227,12 +335,25 @@ function Home() {
     setCropPayload(payload);
   }, []);
 
+  const handleInviteClick = useCallback(async (e) => {
+    e.preventDefault(); // prevent the <Link> navigation
+    if (!inviteLink) {
+      toast.info('Your invite link is loading, please try again in a moment.');
+      return;
+    }
+    await copyToClipboard(inviteLink);
+    setShowShareModal(true);
+  }, [inviteLink]);
+
   /* ════════════════════════════════════════════════════════════════════════ */
   return (
     <div className="home-root header">
+      <HomeModeBanner mode={mode} setMode={setMode} />
       <main className="home-main container-fluid px-0">
-        <MessageScroller />
-
+        <SpecialOfferProvider token={authToken}>
+          <MessageScroller />
+          <SpecialOfferBanner />
+        </SpecialOfferProvider>
         <div className="row gx-2 gy-4">
 
           {/* ── Main content column ── */}
@@ -243,7 +364,7 @@ function Home() {
               {/* ── Earned Rewards strip ── */}
               <div className="col-12 col-md-6">
                 <h5 className="home-section-heading">
-                  {t['home.earned_rewards'] || 'Earned Rewards'}
+                  {t['home.earned_rewards'] ?? '🏆🏆🏆🏆🏆Earned Rewards🏆🏆🏆🏆🏆'}
                 </h5>
 
                 <div style={{ display: 'flex', justifyContent: 'center', flexWrap: 'wrap' }}>
@@ -338,10 +459,13 @@ function Home() {
               </div>
             </div>
 
-            {/* ── Invite + Obtained Rewards ── */}
             <div className="home-invite-row mt-2 mb-2">
-              <Link to="/invitaion" className="home-invite-btn">
-                {t['home.invite_link'] || 'Invite Link'}
+              <Link
+                to="/invitation"
+                className="home-invite-btn"
+                onClick={handleInviteClick}
+              >
+                {t['home.invite_link'] || '📤 Invite Link'}
               </Link>
               <button
                 className="home-rewards-btn"
@@ -461,6 +585,14 @@ function Home() {
         <ObtainedRewardsModal
           show={showRewardsModal}
           onClose={handleRewardsModalClose}
+        />
+
+        <ShareModal
+          show={showShareModal}
+          inviteLink={inviteLink}
+          senderName={userData?.name ?? ''}
+          onClose={() => setShowShareModal(false)}
+          title="Share Your Invite Link"
         />
 
         <ToastContainer position="top-right" autoClose={3000} />

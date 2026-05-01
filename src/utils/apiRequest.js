@@ -1,4 +1,4 @@
-/* src/utils/apiRequest.js — Axios Instance (Production-Ready) */
+/* src/utils/apiRequest.js — Fixed (single refresh queue, React Query safe) */
 
 import axios from 'axios';
 import { toast } from 'react-toastify';
@@ -6,7 +6,6 @@ import { toast } from 'react-toastify';
 const BASE_URL =
   process.env.REACT_APP_SERVER_URL  ||
   process.env.REACT_APP_BACKEND_URL;
-  /*// 'http://127.0.0.1:5000';*/
 
 // ── Auth endpoints that must NOT trigger the auto-logout event ─────────────────
 const AUTH_ENDPOINTS = [
@@ -15,6 +14,7 @@ const AUTH_ENDPOINTS = [
   '/api/admin/adminlogin',
   '/api/otp/',
   '/api/auth/reset-password',
+  '/api/auth/refresh',
 ];
 const isAuthEndpoint = (url = '') =>
   AUTH_ENDPOINTS.some((ep) => url.includes(ep));
@@ -23,19 +23,7 @@ const isAuthEndpoint = (url = '') =>
 const IDEMPOTENT_METHODS = new Set(['get', 'head', 'options']);
 
 // ── GET request deduplication cache ──────────────────────────────────────────
-// Maps cacheKey → Promise. Cleared when the promise settles.
 const inflightGets = new Map();
-
-// ── Token-refresh queue ───────────────────────────────────────────────────────
-let isRefreshing  = false;
-let refreshQueue  = [];          // [{ resolve, reject }]
-
-function processRefreshQueue(newToken, error) {
-  refreshQueue.forEach(({ resolve, reject }) =>
-    error ? reject(error) : resolve(newToken)
-  );
-  refreshQueue = [];
-}
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function readToken() {
@@ -66,7 +54,7 @@ const apiRequest = axios.create({
 // ── Request interceptor ───────────────────────────────────────────────────────
 apiRequest.interceptors.request.use(
   (config) => {
-    config.headers = config.headers ?? {};
+    config.headers    = config.headers ?? {};
     config._retryCount = config._retryCount ?? 0;
 
     // Attach token
@@ -86,22 +74,20 @@ apiRequest.interceptors.request.use(
       config.headers['Content-Type'] = 'application/json';
     }
 
-    // ── GET deduplication ─────────────────────────────────────────────────────
-    // Only deduplicate non-auth, non-silent GETs that haven't opted out.
+    // ── GET deduplication ──────────────────────────────────────────────────
     if (
       method === 'get' &&
       config._dedup !== false &&
       !isAuthEndpoint(config.url)
     ) {
-      const key = `${config.baseURL ?? ''}${config.url}${JSON.stringify(config.params ?? {})}`;
+      const key = `${config.baseURL ?? ''}${config.url}${JSON.stringify(
+        config.params ?? {}
+      )}`;
       if (inflightGets.has(key)) {
-        // Attach the key so the response interceptor knows to skip re-caching
         config._dedupKey    = key;
         config._dedupShared = true;
       } else {
-
         config._dedupKey = key;
-        
       }
     }
 
@@ -116,7 +102,6 @@ apiRequest.interceptors.request.use(
 // ── Response interceptor ──────────────────────────────────────────────────────
 apiRequest.interceptors.response.use(
   (response) => {
-    // Clean up GET dedup cache on success
     const key = response.config?._dedupKey;
     if (key) inflightGets.delete(key);
     return response;
@@ -130,10 +115,9 @@ apiRequest.interceptors.response.use(
     const method = (config.method ?? 'get').toLowerCase();
     const silent = isSilenced(config);
 
-    // Clean up GET dedup cache on error
     if (config._dedupKey) inflightGets.delete(config._dedupKey);
 
-    // ── Cancelled requests — never retry or toast ─────────────────────────────
+    // ── Cancelled requests ────────────────────────────────────────────────────
     if (
       error.code    === 'ERR_CANCELED'  ||
       error.name    === 'CanceledError' ||
@@ -142,43 +126,54 @@ apiRequest.interceptors.response.use(
       return Promise.reject(error);
     }
 
-    // ── Attach structured context for upstream catch handlers ─────────────────
     error.context = { url, method, status, data };
 
-    // ── 401 handling ──────────────────────────────────────────────────────────
-    if (status === 401) {
-      const refreshFn = typeof window !== 'undefined' && window.__refreshToken;
-      if (refreshFn && !isAuthEndpoint(url) && !config._isRetryAfterRefresh) {
-        if (isRefreshing) {
-          // Queue this request until the refresh resolves
+    // ── 401 handling — single source of truth: AuthContext's queue ────────────
+    if (status === 401 && !isAuthEndpoint(url) && !config._isRetryAfterRefresh) {
+      const queue = window.__tokenRefreshQueue;
+
+      if (queue) {
+        // If a refresh is already running, queue this request to replay later
+        if (queue.isRefreshing.current) {
           return new Promise((resolve, reject) => {
-            refreshQueue.push({ resolve, reject });
-          }).then((newToken) => {
-            config.headers.Authorization = `Bearer ${newToken}`;
-            config._isRetryAfterRefresh  = true;
-            return apiRequest(config);
+            queue.subscribeTokenRefresh((newToken) => {
+              if (!newToken) {
+                reject(error);
+                return;
+              }
+              config.headers.Authorization  = `Bearer ${newToken}`;
+              config._isRetryAfterRefresh   = true;
+              resolve(apiRequest(config));
+            });
           });
         }
 
-        isRefreshing = true;
+        // Start a refresh — mark in-flight BEFORE the async call
+        queue.isRefreshing.current = true;
+
         try {
-          const newToken = await refreshFn();
+          const refreshFn = window.__refreshToken;
+          const newToken  = refreshFn ? await refreshFn() : null;
+
           if (newToken) {
             localStorage.setItem('token', newToken);
-            processRefreshQueue(newToken, null);
+            // AuthContext's onTokenRefreshed drains the subscriber queue
+            // AND invalidates React Query (see AuthContext.js).
+            queue.onTokenRefreshed(newToken);
+
             config.headers.Authorization = `Bearer ${newToken}`;
             config._isRetryAfterRefresh  = true;
             return apiRequest(config);
+          } else {
+            queue.onRefreshFailed();
           }
-        } catch (refreshError) {
-          processRefreshQueue(null, refreshError);
-        } finally {
-          isRefreshing = false;
+        } catch (refreshErr) {
+          queue.onRefreshFailed();
         }
       }
 
-      // No refresh available — dispatch logout event (only for non-auth endpoints)
-      if (!isAuthEndpoint(url) && !silent) {
+      // No queue / refresh failed — trigger logout
+      if (!silent) {
         const existingToken = readToken();
         if (existingToken && typeof window !== 'undefined') {
           window.dispatchEvent(new CustomEvent('auth:unauthorized'));
@@ -187,17 +182,17 @@ apiRequest.interceptors.response.use(
       }
     }
 
-    // ── Retry logic (idempotent requests only) ────────────────────────────────
-    const retryCount = config._retryCount ?? 0;
+    // ── Retry logic ───────────────────────────────────────────────────────────
+    const retryCount  = config._retryCount ?? 0;
     const isRetryable =
       shouldRetry(config, retryCount) &&
-      (error.code === 'ECONNABORTED' ||   // timeout
-       !error.response ||                  // network failure
-       (status >= 500 && status < 600));   // server error
+      (error.code === 'ECONNABORTED' ||
+       !error.response ||
+       (status >= 500 && status < 600));
 
     if (isRetryable) {
       config._retryCount = retryCount + 1;
-      const delay = 300 * Math.pow(2, retryCount); // 300ms, 600ms
+      const delay = 300 * Math.pow(2, retryCount);
       await sleep(delay);
       console.warn(`[apiRequest] Retry ${config._retryCount} → ${url}`);
       return apiRequest(config);
@@ -208,7 +203,6 @@ apiRequest.interceptors.response.use(
       if (status === 403) {
         toast.error(data?.message || 'You do not have permission to do that.');
       } else if (status === 404) {
-        // 404s are usually handled by the caller — just log, don't toast
         console.warn('[apiRequest] 404:', url);
       } else if (status === 409) {
         toast.warn(data?.message || 'This action conflicts with existing data.');
@@ -225,7 +219,6 @@ apiRequest.interceptors.response.use(
       } else if (!error.response && error.request) {
         toast.error('Unable to reach server. Please check your network.');
       } else if (status && status !== 401) {
-        // Catch-all for other 4xx (except 401 already handled above)
         toast.error(data?.message || 'Request failed.');
       }
     }
@@ -238,7 +231,8 @@ apiRequest.interceptors.response.use(
   }
 );
 
-
+// ── Register AuthService refresh fn on window.__refreshToken ─────────────────
+// Called by AuthService so the interceptor above can invoke it.
 export function setRefreshTokenFn(fn) {
   if (typeof window !== 'undefined') window.__refreshToken = fn;
 }

@@ -1,3 +1,6 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
 /*
  * ============================================================
  *  globals.css — SoShoLife Unified Design System  (SINGLE FILE)
@@ -18120,3 +18123,108 @@ body.theme-light .tom-title { color: #0f172a; }
   .crm-canvas { height: 260px; }
   .crm-controls { padding: 14px 18px 12px; }
 }
+
+.navbar-mode-toggle {
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  padding: 6px 16px;
+  border-radius: 999px; /* fully rounded pill */
+  margin-left: 10px;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 500;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  transition: all 0.2s ease-in-out;
+}
+
+/* Hover effect */
+.navbar-mode-toggle:hover {
+  opacity: 0.9;
+  transform: translateY(-1px);
+}
+
+/* Active click feel */
+.navbar-mode-toggle:active {
+  transform: scale(0.96);
+}
+
+.navbar-mode-toggle-img {
+  position: relative;
+  border: none;
+  background: transparent;
+  padding: 0;
+  cursor: pointer;
+}
+
+/* Image styling */
+.navbar-mode-toggle-img img {
+  width: 42px;
+  height: 42px;
+  display: block;
+}
+
+/* Text overlay */
+.navbar-mode-toggle-img .btn-label {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 600;
+  pointer-events: none;
+}
+
+/* Hover + click effect */
+.navbar-mode-toggle-img:hover img {
+  transform: scale(1.05);
+  transition: 0.2s ease;
+}
+
+.navbar-mode-toggle-img:active img {
+  transform: scale(0.95);
+}
+
+.ads-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 20px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-card);
+  flex-shrink: 0;
+  gap: 12px;
+  min-height: 64px;
+  position: relative;
+}
+@media (max-width: 767px) {
+  .ads-header { padding: 10px 14px; min-height: 56px; gap: 8px; }
+  .ads-header-left { min-width: 0; flex: 1; }
+  .ads-header-tagline { display: none !important; }
+  .ads-header-switch { display: none !important; }
+  .ads-header-newpage { display: none !important; }
+  .ads-header-breadcrumb { display: none !important; }
+  .ads-header-ham { display: flex !important; }
+  .ads-header-cta { padding: 7px 14px !important; font-size: 12px !important; }
+}
+@media (min-width: 768px) {
+  .ads-header-ham { display: none !important; }
+}
+.ads-header-ham {
+  align-items: center; justify-content: center;
+  width: 38px; height: 38px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-primary);
+  cursor: pointer;
+  font-size: 17px;
+  flex-shrink: 0;
+  transition: background 0.14s ease;
+  -webkit-tap-highlight-color: transparent;
+  margin-right: 4px;
+}
+.ads-header-ham:hover { background: var(--bg-hover); }

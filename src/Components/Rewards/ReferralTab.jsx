@@ -1,20 +1,34 @@
 /**
- * ReferralTab.jsx — Drop-in replacement for the ReferralTab inside RewardsHub.jsx
-**/
+ * ReferralTab.jsx — v3
+ *
+ * CHANGES from v2:
+ *  • Removed all local `getToken()` / `localStorage.getItem('token')` calls.
+ *    Token is now sourced exclusively from `useAuth()` (AuthContext).
+ *  • All backend requests now go through `apiRequest` (axios instance with
+ *    interceptors) instead of raw `fetch()`.  This means the token-refresh
+ *    queue, retry logic, and toast handling are applied uniformly.
+ *  • `usePlanSlabs` and `useReferredUsers` accept `token` as a parameter and
+ *    use `apiRequest.get()` — no manual Authorization header needed because
+ *    the apiRequest interceptor attaches it automatically.
+ *  • `handleBankSubmit` no longer passes a manual Authorization header to
+ *    `apiRequest.post()`.
+ */
 
 import React, {
   useState, useEffect, useMemo, useCallback, useRef,
 } from 'react';
 import { toast } from 'react-toastify';
 import apiRequest from '../../utils/apiRequest';
+import { useAuth } from '../../Context/Authorisation/AuthContext';
 import { useActivityDashboard } from '../../hooks/useActivityDashboard';
 import { useRewardEligibility } from '../../hooks/useRewardEligibility';
 import BankDetailsModal from '../Common/BankDetailsModal';
+import ShareModal from '../UserActivities/ShareModal';
+import { buildInviteLink, copyToClipboard } from '../../utils/inviteLink';
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || '';
-const getToken    = () => localStorage.getItem('token');
 
-// ─── Local style tokens (match RewardsHub design language exactly) ─────────────
+// ─── Local style tokens ────────────────────────────────────────────────────────
 
 const S = {
   sectionHead: {
@@ -93,36 +107,6 @@ const S = {
       : { background: 'var(--color-background-secondary)', color: 'var(--color-text-tertiary)', borderColor: 'var(--color-border-tertiary)' }
     ),
   }),
-  modalBackdrop: {
-    position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)',
-    display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000,
-  },
-  modalCard: {
-    background: 'var(--color-background-primary)',
-    border: '0.5px solid var(--color-border-secondary)',
-    borderRadius: 12, padding: '28px 28px 22px',
-    width: '100%', maxWidth: 400, fontFamily: 'var(--font-sans)',
-  },
-  modalTitle: {
-    fontSize: 15, fontWeight: 500, margin: '0 0 20px',
-    color: 'var(--color-text-primary)', fontFamily: 'var(--font-sans)',
-  },
-  fieldLabel: {
-    display: 'block', fontSize: 12,
-    color: 'var(--color-text-secondary)', marginBottom: 4,
-  },
-  fieldWrap: { marginBottom: 14 },
-  input: {
-    width: '100%', boxSizing: 'border-box', padding: '8px 10px', fontSize: 13,
-    border: '0.5px solid var(--color-border-secondary)', borderRadius: 6,
-    background: 'var(--color-background-primary)', color: 'var(--color-text-primary)',
-    fontFamily: 'var(--font-sans)', outline: 'none',
-  },
-  modalFooter: {
-    display: 'flex', justifyContent: 'flex-end', gap: 10,
-    marginTop: 22, paddingTop: 14,
-    borderTop: '0.5px solid var(--color-border-tertiary)',
-  },
   cancelBtn: {
     padding: '7px 16px', fontSize: 13, fontWeight: 400,
     border: '0.5px solid var(--color-border-secondary)',
@@ -130,29 +114,25 @@ const S = {
     color: 'var(--color-text-secondary)', cursor: 'pointer',
     fontFamily: 'var(--font-sans)',
   },
-  submitBtn: (disabled) => ({
-    padding: '7px 18px', fontSize: 13, fontWeight: 500,
-    border: '0.5px solid var(--color-text-primary)', borderRadius: 6,
-    background: disabled ? 'var(--color-background-secondary)' : 'var(--color-text-primary)',
-    color: disabled ? 'var(--color-text-tertiary)' : 'var(--color-background-primary)',
-    cursor: disabled ? 'not-allowed' : 'pointer', fontFamily: 'var(--font-sans)',
-  }),
 };
 
-// ─── Inline helpers (avoid depending on RewardsHub internals) ─────────────────
+// ─── Inline helpers ────────────────────────────────────────────────────────────
 
-function usePlanSlabs(type) {
+/**
+ * Fetch reward plan slabs via apiRequest.
+ * Token is injected automatically by the apiRequest interceptor.
+ */
+function usePlanSlabs(type, token) {
   const [slabs, setSlabs] = useState([]);
   useEffect(() => {
-    const token = getToken();
     if (!token) return;
-    fetch(`${BACKEND_URL}/api/rewards/${type}`, {
-      headers: { Authorization: `Bearer ${token}` },
-    })
-      .then(r => r.ok ? r.json() : null)
-      .then(d => { if (d?.slabs) setSlabs(d.slabs); })
+    apiRequest
+      .get(`${BACKEND_URL}/api/rewards/${type}`)
+      .then(res => {
+        if (res.data?.slabs) setSlabs(res.data.slabs);
+      })
       .catch(() => {});
-  }, [type]);
+  }, [type, token]);
   return slabs;
 }
 
@@ -205,9 +185,6 @@ function MilestoneChip({ label, sublabel, state, badge }) {
   );
 }
 
-// ─── Phone masking helper ──────────────────────────────────────────────────────
-
-/** "9876543210" → "98765 ×××××" */
 function maskPhone(phone) {
   if (!phone) return '—';
   const p = String(phone).replace(/\D/g, '');
@@ -215,7 +192,6 @@ function maskPhone(phone) {
   return p.slice(0, 5) + ' ' + '×'.repeat(p.length - 5);
 }
 
-/** Format date as "12 Jan 2024" */
 function fmtDate(dateStr) {
   if (!dateStr) return '—';
   try {
@@ -227,30 +203,26 @@ function fmtDate(dateStr) {
   }
 }
 
-// ─── Nudge message the user can copy to share with inactive members ────────────
-
 const NUDGE_MSG =
   'Hi! Just a reminder — your SoShoLife membership is not yet active. ' +
   'Activate your subscription to unlock referral rewards for both of us. ' +
   'Need help? Just reply here!';
 
-// ─── Downline Tracker sub-component ──────────────────────────────────────────
+// ─── DownlineTracker ───────────────────────────────────────────────────────────
 
 function DownlineTracker({ referredUsers, loading }) {
-  const [filterTab, setFilterTab]     = useState('all');   // 'all' | 'active' | 'inactive'
+  const [filterTab, setFilterTab]     = useState('all');
   const [search, setSearch]           = useState('');
-  const [revealedPhones, setRevealed] = useState(new Set()); // Set of user _id whose phone is visible
+  const [revealedPhones, setRevealed] = useState(new Set());
 
   const totalCount    = referredUsers.length;
   const activeCount   = referredUsers.filter(u => u.subscription?.active).length;
   const inactiveCount = totalCount - activeCount;
 
-  // Filter + search
   const visible = useMemo(() => {
     let list = referredUsers;
     if (filterTab === 'active')   list = list.filter(u => u.subscription?.active);
     if (filterTab === 'inactive') list = list.filter(u => !u.subscription?.active);
-
     const q = search.trim().toLowerCase();
     if (q) {
       list = list.filter(u => {
@@ -272,20 +244,19 @@ function DownlineTracker({ referredUsers, loading }) {
     });
   }, []);
 
-  const copyPhone = useCallback((phone, name) => {
+  const copyPhone = useCallback(async (phone, name) => {
     if (!phone) return;
-    navigator.clipboard.writeText(phone)
-      .then(() => toast.success(`${name}'s number copied`))
-      .catch(() => toast.error('Could not copy'));
+    const ok = await copyToClipboard(phone);
+    if (ok) toast.success(`${name}'s number copied`);
+    else    toast.error('Could not copy');
   }, []);
 
-  const copyNudge = useCallback(() => {
-    navigator.clipboard.writeText(NUDGE_MSG)
-      .then(() => toast.success('Reminder message copied — paste it in your chat!'))
-      .catch(() => toast.error('Could not copy'));
+  const copyNudge = useCallback(async () => {
+    const ok = await copyToClipboard(NUDGE_MSG);
+    if (ok) toast.success('Reminder message copied — paste it in your chat!');
+    else    toast.error('Could not copy');
   }, []);
 
-  // ── filter tab style ─
   const tabStyle = (id) => ({
     padding: '5px 12px', fontSize: 12, fontFamily: 'var(--font-sans)',
     border: '0.5px solid', borderRadius: 20, cursor: 'pointer',
@@ -296,20 +267,16 @@ function DownlineTracker({ referredUsers, loading }) {
     ),
   });
 
-  // ── skeleton rows while loading ─
   if (loading) {
     return (
       <div>
-        <p style={S.sectionHead}>Your Group Member</p>
+        <p style={S.sectionHead}>Your Group Members</p>
         {[1, 2, 3].map(i => (
           <div key={i} style={{
             display: 'flex', gap: 12, padding: '12px 0',
             borderBottom: '0.5px solid var(--color-border-tertiary)', alignItems: 'center',
           }}>
-            <div style={{
-              width: 36, height: 36, borderRadius: '50%',
-              background: 'var(--color-border-tertiary)', flexShrink: 0,
-            }} />
+            <div style={{ width: 36, height: 36, borderRadius: '50%', background: 'var(--color-border-tertiary)', flexShrink: 0 }} />
             <div style={{ flex: 1 }}>
               <div style={{ width: '40%', height: 12, borderRadius: 4, background: 'var(--color-border-tertiary)', marginBottom: 6 }} />
               <div style={{ width: '60%', height: 10, borderRadius: 4, background: 'var(--color-border-tertiary)' }} />
@@ -324,9 +291,9 @@ function DownlineTracker({ referredUsers, loading }) {
   if (totalCount === 0) {
     return (
       <div>
-        <p style={S.sectionHead}>Your Group Member</p>
+        <p style={S.sectionHead}>Your Group Members</p>
         <p style={{ fontSize: 13, color: 'var(--color-text-tertiary)', fontFamily: 'var(--font-sans)', margin: '12px 0 20px' }}>
-          No referrals yet. Share your link to get started.
+          No referrals yet. Share your invite link to get started!
         </p>
       </div>
     );
@@ -334,9 +301,8 @@ function DownlineTracker({ referredUsers, loading }) {
 
   return (
     <div>
-      <p style={S.sectionHead}>Your Group Member</p>
+      <p style={S.sectionHead}>Your Group Members</p>
 
-      {/* ── Inactive warning + nudge copy ─────────────────────────────────── */}
       {inactiveCount > 0 && (
         <div style={{
           background: 'var(--color-background-warning)',
@@ -348,140 +314,104 @@ function DownlineTracker({ referredUsers, loading }) {
             {inactiveCount} member{inactiveCount !== 1 ? 's' : ''} not yet active
           </p>
           <p style={{ margin: '0 0 8px', fontSize: 12, color: 'var(--color-text-warning)', lineHeight: 1.5 }}>
-            Reward milestones count <strong>active subscriptions only</strong>.
-            Remind your contacts to activate their membership.
+            Encourage them to activate their subscription to unlock rewards for both of you.
           </p>
           <button
-            style={{
-              fontSize: 12, padding: '5px 12px', borderRadius: 6,
-              border: '0.5px solid var(--color-border-warning)',
-              background: 'none', color: 'var(--color-text-warning)',
-              cursor: 'pointer', fontFamily: 'var(--font-sans)', fontWeight: 500,
-            }}
+            style={{ ...S.cancelBtn, fontSize: 12, padding: '5px 12px' }}
             onClick={copyNudge}
           >
-            Copy reminder message →
+            Copy reminder message
           </button>
         </div>
       )}
 
-      {/* ── Controls: filter tabs + search ────────────────────────────────── */}
-      <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 12, flexWrap: 'wrap' }}>
-        <button style={tabStyle('all')} onClick={() => setFilterTab('all')}>
-          All ({totalCount})
-        </button>
-        <button style={tabStyle('active')} onClick={() => setFilterTab('active')}>
-          Active ({activeCount})
-        </button>
-        <button style={tabStyle('inactive')} onClick={() => setFilterTab('inactive')}>
-          Inactive ({inactiveCount})
-        </button>
-        <div style={{ flex: 1, minWidth: 140 }}>
-          <input
-            style={{
-              ...S.input, padding: '5px 10px', fontSize: 12, width: '100%', boxSizing: 'border-box',
-            }}
-            placeholder="Search name or phone…"
-            value={search}
-            onChange={e => setSearch(e.target.value)}
-          />
-        </div>
+      {/* Filter tabs + search */}
+      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 12 }}>
+        {['all', 'active', 'inactive'].map(tab => (
+          <button key={tab} style={tabStyle(tab)} onClick={() => setFilterTab(tab)}>
+            {tab === 'all' ? `All (${totalCount})` : tab === 'active' ? `Active (${activeCount})` : `Inactive (${inactiveCount})`}
+          </button>
+        ))}
+        <input
+          type="text"
+          placeholder="Search name / phone / email…"
+          value={search}
+          onChange={e => setSearch(e.target.value)}
+          style={{
+            marginLeft: 'auto', fontSize: 12, padding: '5px 10px',
+            border: '0.5px solid var(--color-border-secondary)', borderRadius: 20,
+            background: 'var(--color-background-primary)', color: 'var(--color-text-primary)',
+            fontFamily: 'var(--font-sans)', outline: 'none', minWidth: 140,
+          }}
+        />
       </div>
 
-      {/* ── Member rows ───────────────────────────────────────────────────── */}
       {visible.length === 0 ? (
-        <p style={{ fontSize: 13, color: 'var(--color-text-tertiary)', fontFamily: 'var(--font-sans)', margin: '8px 0 20px' }}>
+        <p style={{ fontSize: 13, color: 'var(--color-text-tertiary)', fontFamily: 'var(--font-sans)' }}>
           No members match your filter.
         </p>
       ) : (
-        <div style={{
-          border: '0.5px solid var(--color-border-tertiary)',
-          borderRadius: 8, overflow: 'hidden',
-        }}>
-          {visible.map((u, idx) => {
-            const isActive   = !!u.subscription?.active;
-            const phoneShown = revealedPhones.has(u._id);
-            const hasPhone   = !!u.phone;
-
+        <div>
+          {visible.map(u => {
+            const isActive = !!u.subscription?.active;
+            const hasPhone = !!u.phone;
+            const revealed = revealedPhones.has(u._id);
             return (
               <div
-                key={u._id || idx}
+                key={u._id}
                 style={{
-                  display: 'flex', gap: 12, padding: '12px 14px',
-                  alignItems: 'center', flexWrap: 'wrap',
-                  borderBottom: idx < visible.length - 1
-                    ? '0.5px solid var(--color-border-tertiary)'
-                    : 'none',
-                  background: idx % 2 === 0
-                    ? 'var(--color-background-primary)'
-                    : 'var(--color-background-secondary)',
+                  display: 'flex', gap: 12, padding: '12px 0',
+                  borderBottom: '0.5px solid var(--color-border-tertiary)',
+                  alignItems: 'center',
                 }}
               >
                 {/* Avatar */}
                 <div style={{
                   width: 36, height: 36, borderRadius: '50%', flexShrink: 0,
-                  display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  fontSize: 14, fontWeight: 500, fontFamily: 'var(--font-sans)',
                   background: isActive
                     ? 'var(--color-background-success)'
                     : 'var(--color-background-secondary)',
-                  color: isActive
-                    ? 'var(--color-text-success)'
-                    : 'var(--color-text-tertiary)',
                   border: '0.5px solid',
                   borderColor: isActive
                     ? 'var(--color-border-success)'
                     : 'var(--color-border-tertiary)',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  fontSize: 15, fontWeight: 600, color: isActive
+                    ? 'var(--color-text-success)'
+                    : 'var(--color-text-tertiary)',
+                  fontFamily: 'var(--font-sans)',
                 }}>
                   {(u.name || '?')[0].toUpperCase()}
                 </div>
 
-                {/* Name + phone + join date */}
-                <div style={{ flex: 1, minWidth: 0, fontFamily: 'var(--font-sans)' }}>
-                  <div style={{
-                    fontSize: 13, fontWeight: 500, color: 'var(--color-text-primary)',
-                    whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
-                  }}>
-                    {u.name || 'Unknown'}
-                  </div>
-
-                  {/* Phone row */}
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 2 }}>
-                    <span style={{
-                      fontSize: 12, color: 'var(--color-text-secondary)',
-                      fontFamily: '"Courier New", monospace', letterSpacing: 0.5,
-                    }}>
-                      {hasPhone
-                        ? (phoneShown ? u.phone : maskPhone(u.phone))
-                        : 'No phone on file'}
-                    </span>
-
-                    {/* Reveal / hide toggle */}
+                {/* Info */}
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <p style={{ margin: 0, fontSize: 13, fontWeight: 500, color: 'var(--color-text-primary)', fontFamily: 'var(--font-sans)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {u.name || '—'}
+                  </p>
+                  <p style={{ margin: '2px 0 0', fontSize: 11, color: 'var(--color-text-tertiary)', fontFamily: '"Courier New",monospace' }}>
+                    {hasPhone
+                      ? (revealed ? u.phone : maskPhone(u.phone))
+                      : '—'}
                     {hasPhone && (
                       <button
-                        title={phoneShown ? 'Hide' : 'Show full number'}
-                        style={{
-                          fontSize: 10, padding: '1px 6px', borderRadius: 3,
-                          border: '0.5px solid var(--color-border-secondary)',
-                          background: 'none', color: 'var(--color-text-secondary)',
-                          cursor: 'pointer', fontFamily: 'var(--font-sans)',
-                        }}
                         onClick={() => toggleReveal(u._id)}
+                        style={{ marginLeft: 6, fontSize: 10, background: 'none', border: 'none', cursor: 'pointer', color: 'var(--color-text-tertiary)', fontFamily: 'var(--font-sans)', padding: 0 }}
                       >
-                        {phoneShown ? 'Hide' : 'Show'}
+                        {revealed ? 'hide' : 'show'}
                       </button>
                     )}
-                  </div>
-
-                  {/* Join date */}
-                  <div style={{ fontSize: 11, color: 'var(--color-text-tertiary)', marginTop: 1 }}>
-                    Joined {fmtDate(u.date)}
-                  </div>
+                  </p>
+                  <p style={{ margin: '2px 0 0', fontSize: 11, color: 'var(--color-text-tertiary)', fontFamily: 'var(--font-sans)' }}>
+                    Joined {fmtDate(u.createdAt)}
+                    {u.subscription?.expiresAt && isActive && (
+                      <> · expires {fmtDate(u.subscription.expiresAt)}</>
+                    )}
+                  </p>
                 </div>
 
-                {/* Right side: status badge + action buttons */}
+                {/* Right side */}
                 <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 6, flexShrink: 0 }}>
-                  {/* Active / Inactive badge */}
                   <span style={{
                     fontSize: 11, fontWeight: 500, padding: '2px 8px', borderRadius: 20,
                     fontFamily: 'var(--font-sans)',
@@ -492,11 +422,8 @@ function DownlineTracker({ referredUsers, loading }) {
                   }}>
                     {isActive ? '✓ Active' : '○ Inactive'}
                   </span>
-
-                  {/* Action buttons */}
                   {hasPhone && (
                     <div style={{ display: 'flex', gap: 4 }}>
-                      {/* Copy phone */}
                       <button
                         title="Copy phone number"
                         style={{
@@ -509,8 +436,6 @@ function DownlineTracker({ referredUsers, loading }) {
                       >
                         Copy
                       </button>
-
-                      {/* Call shortcut (opens dialler on mobile) */}
                       <a
                         href={`tel:${u.phone}`}
                         title="Call"
@@ -536,27 +461,24 @@ function DownlineTracker({ referredUsers, loading }) {
   );
 }
 
-// ─── Hook: fetch referred users ───────────────────────────────────────────────
+// ─── Hook: fetch referred users via apiRequest ────────────────────────────────
 
-function useReferredUsers() {
+function useReferredUsers(token) {
   const [referredUsers, setReferredUsers] = useState([]);
   const [loading, setLoading]             = useState(true);
   const fetchedRef                        = useRef(false);
 
   const fetch_ = useCallback(() => {
-    const token = getToken();
     if (!token) { setLoading(false); return; }
     setLoading(true);
-    fetch(`${BACKEND_URL}/api/auth/users/referred`, {
-      headers: { Authorization: `Bearer ${token}` },
-    })
-      .then(r => r.ok ? r.json() : null)
-      .then(d => {
-        if (d?.referredUsers) setReferredUsers(d.referredUsers);
+    apiRequest
+      .get(`${BACKEND_URL}/api/auth/users/referred`)
+      .then(res => {
+        if (res.data?.referredUsers) setReferredUsers(res.data.referredUsers);
       })
       .catch(() => {})
       .finally(() => setLoading(false));
-  }, []);
+  }, [token]);
 
   useEffect(() => {
     if (!fetchedRef.current) {
@@ -568,30 +490,124 @@ function useReferredUsers() {
   return { referredUsers, loading, refetch: fetch_ };
 }
 
-// ─── Main export: ReferralTab ─────────────────────────────────────────────────
+// ─── InviteLinkPanel ──────────────────────────────────────────────────────────
+
+function InviteLinkPanel({ inviteLink, referralId, senderName }) {
+  const [copied, setCopied] = useState(false);
+  const [shareOpen, setShareOpen] = useState(false);
+
+  const handleCopy = useCallback(async () => {
+    if (!inviteLink) return;
+    const ok = await copyToClipboard(inviteLink);
+    if (ok) {
+      setCopied(true);
+      toast.success('Referral link copied!');
+      setTimeout(() => setCopied(false), 2500);
+    } else {
+      toast.error('Could not copy link.');
+    }
+  }, [inviteLink]);
+
+  return (
+    <>
+      {/* Referral ID badge */}
+      {referralId && (
+        <div style={{
+          display: 'inline-flex', alignItems: 'center', gap: 6,
+          padding: '4px 12px', borderRadius: 20, marginBottom: 12,
+          background: 'var(--color-background-secondary)',
+          border: '0.5px solid var(--color-border-secondary)',
+          fontFamily: '"Courier New",monospace', fontSize: 13,
+          fontWeight: 600, color: 'var(--color-text-primary)',
+          cursor: 'pointer', userSelect: 'none',
+          transition: 'opacity 0.15s',
+        }}
+          title="Click to copy your Referral ID"
+          onClick={async () => {
+            const ok = await copyToClipboard(referralId);
+            if (ok) toast.success('Referral ID copied!');
+          }}
+        >
+          🪪 {referralId}
+          <span style={{ fontSize: 10, color: 'var(--color-text-tertiary)', fontFamily: 'var(--font-sans)' }}>tap to copy</span>
+        </div>
+      )}
+
+      {/* Full link row */}
+      <div style={{
+        display: 'flex', gap: 8, alignItems: 'center', marginBottom: 12,
+      }}>
+        <code style={{
+          flex: 1, fontSize: 12, padding: '8px 10px',
+          background: 'var(--color-background-secondary)',
+          border: '0.5px solid var(--color-border-tertiary)', borderRadius: 6,
+          overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+          fontFamily: '"Courier New", monospace', color: 'var(--color-text-secondary)',
+        }}>
+          {inviteLink || '—'}
+        </code>
+        <button
+          style={{ ...S.cancelBtn, fontSize: 12, padding: '6px 12px', whiteSpace: 'nowrap' }}
+          onClick={handleCopy}
+          disabled={!inviteLink}
+        >
+          {copied ? '✓ Copied' : 'Copy'}
+        </button>
+      </div>
+
+      {/* Share button */}
+      <button
+        disabled={!inviteLink}
+        onClick={() => setShareOpen(true)}
+        style={{
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          gap: 8, width: '100%', padding: '11px 0', borderRadius: 8,
+          border: '0.5px solid var(--color-text-primary)',
+          background: 'var(--color-text-primary)',
+          color: 'var(--color-background-primary)',
+          fontSize: 14, fontWeight: 500, cursor: inviteLink ? 'pointer' : 'not-allowed',
+          fontFamily: 'var(--font-sans)', transition: 'opacity 0.15s',
+          opacity: inviteLink ? 1 : 0.45, marginBottom: 20,
+        }}
+      >
+        📤 Share Invite Link
+      </button>
+
+      <ShareModal
+        show={shareOpen}
+        inviteLink={inviteLink}
+        senderName={senderName}
+        onClose={() => setShareOpen(false)}
+        title="Share Your Invite Link"
+      />
+    </>
+  );
+}
+
+// ─── Main export: ReferralTab ──────────────────────────────────────────────────
 
 export default function ReferralTab({ eligible, user, redeemedReferral, onRewardClaimed }) {
-  // Dashboard counts (React Query — already cached by RewardsHub)
+  // ── Centralized token from AuthContext ─────────────────────────────────────
+  const { token } = useAuth();
+
   const {
     activeReferralCount,
     referralCount,
     isLoading: dashLoading,
   } = useActivityDashboard();
 
-  // Full referred-users list (fetched here, not in dashboard hook, because
-  // the dashboard endpoint doesn't return the full user objects with phone)
   const { referredUsers, loading: usersLoading, refetch: refetchUsers } =
-    useReferredUsers();
+    useReferredUsers(token);
 
   const { parseClaimError } = useRewardEligibility();
-  const slabs = usePlanSlabs('referral');
+  const slabs = usePlanSlabs('referral', token);
 
   const claimed    = (redeemedReferral ?? []).map(Number);
   const activeCount = activeReferralCount ?? 0;
 
-  const [selected, setSelected]   = useState('');
-  const [loading, setLoading]     = useState(false);
-  const [modalOpen, setModalOpen] = useState(false);
+  const [selected, setSelected]       = useState('');
+  const [loading, setLoading]         = useState(false);
+  const [modalOpen, setModalOpen]     = useState(false);
   const [trackerOpen, setTrackerOpen] = useState(false);
 
   const sortedSlabs = useMemo(() =>
@@ -607,8 +623,6 @@ export default function ReferralTab({ eligible, user, redeemedReferral, onReward
   const hasEnough   = selectedNum ? activeCount >= selectedNum : false;
 
   const next = sortedSlabs.find(s => activeCount < s.referralCount)?.referralCount ?? null;
-  // Use strictly-less-than so that when activeCount exactly equals a milestone,
-  // the bar shows 100% progress (reaching the goal) instead of resetting to 0%.
   const prev = [...sortedSlabs].reverse().find(s => activeCount > s.referralCount)?.referralCount ?? 0;
 
   const btnState = !eligible   ? 'locked'
@@ -617,20 +631,20 @@ export default function ReferralTab({ eligible, user, redeemedReferral, onReward
     : !hasEnough               ? 'locked'
     : 'ready';
 
+  // apiRequest interceptor attaches token automatically — no manual header needed
   const handleBankSubmit = async (bankDetails, successCallback) => {
     setLoading(true);
     try {
       const res = await apiRequest.post(
         `${BACKEND_URL}/api/activity/referral`,
         { referralCount: selectedNum, bankDetails },
-        { headers: { Authorization: `Bearer ${getToken()}` } }
       );
       toast.success(res.data?.message || `Referral reward for ${selectedNum} referrals claimed!`);
       setSelected('');
       setModalOpen(false);
       successCallback?.();
       onRewardClaimed?.();
-      refetchUsers(); // refresh phone list after claim (subscription status may change)
+      refetchUsers();
     } catch (err) {
       toast.error(parseClaimError(err));
     } finally {
@@ -638,24 +652,16 @@ export default function ReferralTab({ eligible, user, redeemedReferral, onReward
     }
   };
 
-  // Referral link
+  // ── Invite link ────────────────────────────────────────────────────────────
   const referralId  = user?.referralId ?? '';
-  const frontendUrl = process.env.REACT_APP_FRONTEND_URL || window.location.origin;
-  const inviteLink  = referralId ? `${frontendUrl}?ref=${referralId}` : '—';
+  const inviteLink  = buildInviteLink(referralId);
+  const senderName  = user?.name ?? '';
 
-  const copyLink = () => {
-    if (!referralId) return;
-    navigator.clipboard.writeText(inviteLink)
-      .then(() => toast.success('Referral link copied!'))
-      .catch(() => toast.error('Could not copy link.'));
-  };
-
-  // Inactive count for the tracker toggle badge
   const inactiveCount = referredUsers.filter(u => !u.subscription?.active).length;
 
   return (
     <div>
-      {/* ── Count display ──────────────────────────────────────────────────── */}
+      {/* ── Count display ── */}
       <div style={{ display: 'flex', gap: 24, marginBottom: 20, flexWrap: 'wrap' }}>
         <div>
           <CountDisplay value={referralCount} suffix="total" isLoading={dashLoading} />
@@ -670,7 +676,7 @@ export default function ReferralTab({ eligible, user, redeemedReferral, onReward
         )}
       </div>
 
-      {/* ── Progress bar ───────────────────────────────────────────────────── */}
+      {/* ── Progress bar ── */}
       <ProgressBar
         current={activeCount}
         next={next}
@@ -679,7 +685,7 @@ export default function ReferralTab({ eligible, user, redeemedReferral, onReward
         color="#7c3aed"
       />
 
-      {/* ── Big milestone chips ─────────────────────────────────────────────── */}
+      {/* ── Milestone chips ── */}
       {bigSlabs.length > 0 && (
         <>
           <p style={S.sectionHead}>Grocery + Shares milestones</p>
@@ -701,7 +707,6 @@ export default function ReferralTab({ eligible, user, redeemedReferral, onReward
         </>
       )}
 
-      {/* ── Token milestone chips ───────────────────────────────────────────── */}
       {tokenSlabs.length > 0 && (
         <>
           <p style={S.sectionHead}>Token milestones</p>
@@ -722,34 +727,23 @@ export default function ReferralTab({ eligible, user, redeemedReferral, onReward
         </>
       )}
 
-      {/* ── Referral link ───────────────────────────────────────────────────── */}
+      {/* ── Invite link panel ── */}
       <p style={S.sectionHead}>Your referral link</p>
-      <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 20 }}>
-        <code style={{
-          flex: 1, fontSize: 12, padding: '8px 10px',
-          background: 'var(--color-background-secondary)',
-          border: '0.5px solid var(--color-border-tertiary)', borderRadius: 6,
-          overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-          fontFamily: '"Courier New", monospace', color: 'var(--color-text-secondary)',
-        }}>
-          {inviteLink}
-        </code>
-        <button style={{ ...S.cancelBtn, fontSize: 12, padding: '6px 12px' }} onClick={copyLink}>
-          Copy
-        </button>
-      </div>
+      <InviteLinkPanel
+        inviteLink={inviteLink}
+        referralId={referralId}
+        senderName={senderName}
+      />
 
-      {/* ── Downline Tracker toggle ─────────────────────────────────────────── */}
-      {(referralCount ?? 0) > 0 || referredUsers.length > 0 ? (
+      {/* ── Downline Tracker toggle ── */}
+      {((referralCount ?? 0) > 0 || referredUsers.length > 0) && (
         <div style={{ marginBottom: 20 }}>
           <button
             style={{
               display: 'flex', alignItems: 'center', gap: 8,
               width: '100%', padding: '10px 14px', borderRadius: 8,
               border: '0.5px solid var(--color-border-secondary)',
-              background: trackerOpen
-                ? 'var(--color-background-secondary)'
-                : 'var(--color-background-primary)',
+              background: trackerOpen ? 'var(--color-background-secondary)' : 'var(--color-background-primary)',
               color: 'var(--color-text-primary)', cursor: 'pointer',
               fontFamily: 'var(--font-sans)', fontSize: 13, fontWeight: 500,
               justifyContent: 'space-between',
@@ -784,16 +778,15 @@ export default function ReferralTab({ eligible, user, redeemedReferral, onReward
           {trackerOpen && (
             <div style={{
               border: '0.5px solid var(--color-border-secondary)',
-              borderTop: 'none', borderRadius: '0 0 8px 8px',
-              padding: '0 0 4px',
+              borderTop: 'none', borderRadius: '0 0 8px 8px', padding: '0 0 4px',
             }}>
               <DownlineTracker referredUsers={referredUsers} loading={usersLoading} />
             </div>
           )}
         </div>
-      ) : null}
+      )}
 
-      {/* ── Claim row ───────────────────────────────────────────────────────── */}
+      {/* ── Claim row ── */}
       <div style={S.claimRow}>
         <select
           style={S.select}
