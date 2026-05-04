@@ -1,43 +1,34 @@
 /**
- * context/SpecialOfferContext.jsx
+ * Context/SpecialOffer/SpecialOfferContext.js  — REFACTORED
  *
- * ── UPGRADE (adminKycRoutes v2 alignment) ─────────────────────────────────────
+ * SINGLE SOURCE OF TRUTH for the entire Special Offer system.
  *
- * The Special-Offer-aware KYC routes (verifyKyc / rejectSpOfferKyc) emit two
- * NEW socket events directly to the affected user's personal room:
+ * Responsibilities:
+ *   • All API calls   (/status, /locked-rewards, /withdraw)
+ *   • All state       (offer data, rewards, countdown, withdraw)
+ *   • All sockets     (special_offer_reward, kyc_verified, kyc_rejected)
+ *   • All derived UI values (countdown, urgency, progress, canWithdraw)
  *
- *   'kyc_verified'  { status: 'verified', verifiedAt }
- *     Fired by verifyKyc() after setting kyc.status → 'verified' AND (if the
- *     user was referred) triggering creditReferralReward() via setImmediate.
+ * What it does NOT do:
+ *   • Does NOT manage KYC state (owned by KycContext)
+ *   • Does NOT duplicate business logic (backend owns it)
+ *   • Does NOT duplicate fetch calls (every component reads context)
  *
- *   'kyc_rejected'  { status: 'rejected', reason }
- *     Fired by rejectSpOfferKyc() after setting kyc.status → 'rejected'.
+ * Data flow:
+ *   Backend API ──► fetchStatus / fetchRewards ──► state
+ *   Socket events ──► optimistic update ──► refresh() ──► state
+ *   KycContext ──► kycStatus / kycVerified / canWithdraw (read-only)
+ *   Components ──► useSpecialOffer() ──► derived values
  *
- * This context cares about these events for two reasons:
+ * Usage:
+ *   // Mount once, high in the tree (e.g. inside RewardsHub or a route wrapper):
+ *   <SpecialOfferProvider>
+ *     <SpecialOfferTab />
+ *     <SomeOtherRewardComponent />
+ *   </SpecialOfferProvider>
  *
- *   a) canWithdraw gate — the withdraw() action is blocked server-side when
- *      kyc.status !== 'verified'.  If the user's KYC is approved while they
- *      have the withdrawal UI open, we want the "Withdraw" button to unlock
- *      immediately without a manual page refresh.
- *
- *   b) creditReferralReward fires inside verifyKyc → special_offer_reward is
- *      emitted to the REFERRER's socket room.  The context already handles
- *      'special_offer_reward' (calls refresh()).  But we also need the REFERRED
- *      user's context to refresh its status when their own KYC is verified —
- *      because the server recalculates canEarnMore and totalEarned after every
- *      verification.
- *
- * Changes in this version:
- *   1. Added socket listeners for 'kyc_verified' and 'kyc_rejected'.
- *   2. On 'kyc_verified': set kycVerified flag → true, re-fetch offer status
- *      (server may recalculate canEarnMore, totalEarned).
- *   3. On 'kyc_rejected': set kycVerified flag → false so withdraw UI can
- *      show a "KYC rejected — resubmit" message without waiting for refetch.
- *   4. Exposed kycVerified and kycStatus in context value so consuming
- *      components (withdraw modal, offer dashboard) can gate UI without
- *      importing useSpecialOfferEligibility separately.
- *   5. The socket prop remains optional — SSR / non-socket environments
- *      degrade gracefully.
+ *   // Consume anywhere below the provider:
+ *   const { countdown, urgency, withdraw, canWithdraw } = useSpecialOffer();
  */
 
 import React, {
@@ -45,24 +36,66 @@ import React, {
   useCallback,
   useContext,
   useEffect,
+  useMemo,
   useRef,
   useState,
 } from 'react';
+import { useContext as useReactContext } from 'react';
+import apiRequest from '../../utils/apiRequest';
+import { useAuth } from '../Authorisation/AuthContext';
+import { onSocketEvent } from '../../WebSocket/WebSocketClient';
+import KycContext from '../KYC/KycContext';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
-/** How often (ms) to re-fetch status from the server in background. */
-const POLL_INTERVAL_MS = 60_000; // 1 minute
+export const REWARD_PER_REFERRAL = 100;  // ₹ — mirrors backend constant
+export const DAILY_CAP_INR       = 1800; // ₹ — mirrors backend constant
+export const POLL_INTERVAL_MS    = 60_000;
 
-/** Matches server constant: ₹100 per verified referral. */
-export const REWARD_PER_REFERRAL = 100;
+export const URGENCY = Object.freeze({
+  HIGH:    'high',    // < 1 hour
+  MEDIUM:  'medium',  // < 3 hours
+  LOW:     'low',     // > 3 hours
+  EXPIRED: 'expired',
+});
 
-/** Matches server constant: ₹1800/day cap. */
-export const DAILY_CAP_INR = 1800;
+// ── Pure helpers (exported for tests) ─────────────────────────────────────────
 
-// ── Default state shapes ──────────────────────────────────────────────────────
+/**
+ * @param {number} totalSeconds
+ * @returns {{ hours, minutes, seconds, formatted }}
+ */
+export function formatCountdown(totalSeconds) {
+  const s       = Math.max(0, Math.floor(totalSeconds));
+  const hours   = Math.floor(s / 3600);
+  const minutes = Math.floor((s % 3600) / 60);
+  const seconds = s % 60;
+  const pad     = (n) => String(n).padStart(2, '0');
+  return {
+    hours, minutes, seconds,
+    formatted: `${pad(hours)}:${pad(minutes)}:${pad(seconds)}`,
+  };
+}
 
-const DEFAULT_STATUS = {
+/** @param {boolean} isActive @param {number} secondsLeft @returns {string} */
+export function classifyUrgency(isActive, secondsLeft) {
+  if (!isActive || secondsLeft <= 0) return URGENCY.EXPIRED;
+  if (secondsLeft < 3_600)           return URGENCY.HIGH;
+  if (secondsLeft < 10_800)          return URGENCY.MEDIUM;
+  return URGENCY.LOW;
+}
+
+function isCancellation(err) {
+  return (
+    err?.name === 'CanceledError' ||
+    err?.name === 'AbortError'    ||
+    err?.code === 'ERR_CANCELED'
+  );
+}
+
+// ── Default shapes ─────────────────────────────────────────────────────────────
+
+const DEFAULT_STATUS = Object.freeze({
   isActive:          false,
   expiresIn:         0,
   expiresAt:         null,
@@ -74,192 +107,161 @@ const DEFAULT_STATUS = {
   dailyCap:          DAILY_CAP_INR,
   canEarnMore:       false,
   rewardPerReferral: REWARD_PER_REFERRAL,
-};
+});
 
-const DEFAULT_REWARDS_SUMMARY = {
-  total:    0,
-  pending:  0,
-  approved: 0,
-  rejected: 0,
-  totalINR: 0,
-};
+const DEFAULT_REWARDS_SUMMARY = Object.freeze({
+  total:              0,
+  pending:            0,
+  approved:           0,
+  rejected:           0,
+  totalINR:           0,
+  usedForSubscription:0,
+  totalUsedINR:       0,
+  totalEarned:        0,
+});
 
-// ── Context ───────────────────────────────────────────────────────────────────
-
-/**
- * @typedef {Object} SpecialOfferContextValue
- *
- * @property {typeof DEFAULT_STATUS}          status           - Live offer status from server
- * @property {object[]}                       lockedRewards    - Individual reward records
- * @property {typeof DEFAULT_REWARDS_SUMMARY} rewardsSummary   - Aggregate counts and totals
- * @property {boolean}                        loading          - True during initial fetch
- * @property {boolean}                        rewardsLoading   - True while fetching locked rewards
- * @property {string|null}                    error            - Last fetch error, or null
- * @property {number}                         countdown        - Seconds remaining (live)
- * @property {Function}                       refresh          - Re-fetch status + rewards
- * @property {Function}                       refreshRewards   - Re-fetch locked rewards only
- * @property {Function}                       withdraw         - Submit a withdrawal request
- * @property {boolean}                        withdrawing      - True while withdraw is in-flight
- * @property {string|null}                    withdrawError    - Withdraw error message, or null
- * @property {object|null}                    lastWithdrawal   - Last successful withdrawal response
- *
- * ── NEW (adminKycRoutes v2) ───────────────────────────────────────────────────
- * @property {boolean}                        kycVerified      - True once kyc_verified socket fires
- *                                                               or KYC was already verified on load
- * @property {string}                         kycStatus        - 'not_started'|'submitted'|
- *                                                               'verified'|'rejected'|null
- */
+// ── Context ────────────────────────────────────────────────────────────────────
 
 const SpecialOfferContext = createContext(null);
 
-// ── Auth token helper ─────────────────────────────────────────────────────────
-// Used only as a last-resort fallback inside apiFetch when no tokenProp was
-// passed (should not happen in production — always pass token from AuthContext).
-function getAuthToken() {
-  try {
-    const t = localStorage.getItem('authtoken') || localStorage.getItem('token') || '';
-    return (t && t !== 'null' && t !== 'undefined') ? t : '';
-  } catch {
-    return '';
-  }
-}
-
-// ── API fetch helper ──────────────────────────────────────────────────────────
-async function apiFetch(path, options = {}, tokenOverride) {
-  const token = tokenOverride || getAuthToken();
-  const res = await fetch(`/api${path}`, {
-    ...options,
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization:  `Bearer ${token}`,
-      ...(options.headers ?? {}),
-    },
-  });
-
-  const data = await res.json().catch(() => ({}));
-
-  if (!res.ok) {
-    const message = data?.message || `Request failed (${res.status})`;
-    throw new Error(message);
-  }
-
-  return data;
-}
-
 // ── Provider ──────────────────────────────────────────────────────────────────
 
-/**
- * SpecialOfferProvider
- *
- * @param {{
- *   children: React.ReactNode,
- *   socket?:  object,
- *   token?:   string | null,
- * }} props
- *
- * Always pass `token` from AuthContext:
- *   const { token } = useAuth();
- *   <SpecialOfferProvider token={token} socket={socket}>
- */
-export function SpecialOfferProvider({ children, socket, token: tokenProp }) {
+export function SpecialOfferProvider({ children }) {
+  const { token } = useAuth();
 
-  // ── Core offer state ───────────────────────────────────────────────────────
-  const [status,        setStatus]        = useState(DEFAULT_STATUS);
-  const [lockedRewards, setLockedRewards] = useState([]);
+  const kycCtx       = useReactContext(KycContext);
+  const kycCtxStatus = kycCtx?.status ?? null;
+
+  // Stable token ref so callbacks never go stale without re-creating.
+  const tokenRef = useRef(token);
+  useEffect(() => { tokenRef.current = token; }, [token]);
+
+  // ── Offer state ────────────────────────────────────────────────────────────
+  const [status,         setStatus]         = useState(DEFAULT_STATUS);
+  const [lockedRewards,  setLockedRewards]  = useState([]);
   const [rewardsSummary, setRewardsSummary] = useState(DEFAULT_REWARDS_SUMMARY);
 
-  const [loading,       setLoading]       = useState(true);
+  // ── Loading / error state ──────────────────────────────────────────────────
+  const [loading,        setLoading]        = useState(true);
   const [rewardsLoading, setRewardsLoading] = useState(false);
-  const [error,         setError]         = useState(null);
-  const [statusReady,   setStatusReady]   = useState(false);
-  const [countdown,     setCountdown]     = useState(0);
+  const [statusReady,    setStatusReady]    = useState(false);
+  const [error,          setError]          = useState(null);
 
-  const [withdrawing,   setWithdrawing]   = useState(false);
-  const [withdrawError, setWithdrawError] = useState(null);
+  // ── Live countdown (ticks every second via setInterval) ───────────────────
+  const [expiresAt,  setExpiresAt]  = useState(null);
+  const [countdown,  setCountdown]  = useState(0);
+
+  // ── Withdraw state ─────────────────────────────────────────────────────────
+  const [withdrawing,    setWithdrawing]    = useState(false);
+  const [withdrawError,  setWithdrawError]  = useState(null);
   const [lastWithdrawal, setLastWithdrawal] = useState(null);
 
-  // ── NEW: KYC state derived from socket events ──────────────────────────────
-  // Tracks whether this user's KYC has been verified (or rejected) as signalled
-  // by 'kyc_verified' / 'kyc_rejected' events from the SP-offer admin routes.
-  // Initialised to null (unknown) so components can distinguish "not yet loaded"
-  // from "explicitly not verified".
-  const [kycStatus,   setKycStatus]   = useState(null);   // null | 'submitted' | 'verified' | 'rejected' | ...
-  const [kycVerified, setKycVerified] = useState(false);
-
   // ── Refs ───────────────────────────────────────────────────────────────────
-  const countdownRef = useRef(null);
-  const pollRef      = useRef(null);
-  const mountedRef   = useRef(true);
+  const mountedRef      = useRef(true);
+  const countdownRef    = useRef(null);
+  const pollRef         = useRef(null);
+  const statusAbortRef  = useRef(null);
+  const rewardsAbortRef = useRef(null);
 
-  const tokenRef = useRef(tokenProp);
-  useEffect(() => { tokenRef.current = tokenProp; }, [tokenProp]);
-
-  // ── Fetch offer status ─────────────────────────────────────────────────────
+  // ── fetchStatus ────────────────────────────────────────────────────────────
   const fetchStatus = useCallback(async () => {
-    const token = tokenRef.current;
-    if (!token) return;
+    if (!tokenRef.current) return;
+
+    statusAbortRef.current?.abort();
+    statusAbortRef.current = new AbortController();
 
     try {
-      const data = await apiFetch('/special-offer/status', {}, token);
+      const res = await apiRequest.get('/api/special-offer/status', {
+        signal:        statusAbortRef.current.signal,
+        _silenceToast: true,
+      });
       if (!mountedRef.current) return;
 
+      const data = res.data;
       setStatus(data);
-      setCountdown(data.expiresIn ?? 0);
       setError(null);
       setStatusReady(true);
+
+      if (data.expiresAt) {
+        setExpiresAt(data.expiresAt);
+        const remaining = Math.max(
+          0,
+          Math.floor((new Date(data.expiresAt) - Date.now()) / 1000)
+        );
+        setCountdown(remaining);
+      } else {
+        setExpiresAt(null);
+        setCountdown(0);
+      }
     } catch (err) {
+      if (isCancellation(err)) return;
       if (!mountedRef.current) return;
-      setError(err.message);
+      setError(err?.response?.data?.message ?? err?.message ?? 'Failed to load offer status.');
       setStatusReady(true);
     }
-  }, []);
+  }, []); // intentionally empty — reads tokenRef (stable ref)
 
-  // ── Fetch locked rewards ───────────────────────────────────────────────────
-  const fetchLockedRewards = useCallback(async () => {
-    const token = tokenRef.current;
-    if (!token) return;
+  // ── fetchLockedRewards ─────────────────────────────────────────────────────
+  const fetchRewards = useCallback(async () => {
+    if (!tokenRef.current) return;
+
+    rewardsAbortRef.current?.abort();
+    rewardsAbortRef.current = new AbortController();
 
     setRewardsLoading(true);
     try {
-      const data = await apiFetch('/special-offer/locked-rewards', {}, token);
+      const res = await apiRequest.get('/api/special-offer/locked-rewards', {
+        signal:        rewardsAbortRef.current.signal,
+        _silenceToast: true,
+      });
       if (!mountedRef.current) return;
-
-      setLockedRewards(data.rewards ?? []);
-      setRewardsSummary(data.summary ?? DEFAULT_REWARDS_SUMMARY);
+      setLockedRewards(res.data.rewards  ?? []);
+      setRewardsSummary(res.data.summary ?? DEFAULT_REWARDS_SUMMARY);
     } catch (err) {
-      console.warn('[SpecialOfferContext] locked-rewards fetch failed:', err.message);
+      if (isCancellation(err)) return;
+      // Non-fatal — locked rewards are secondary data. Log, don't surface.
+      console.warn('[SpecialOfferContext] locked-rewards fetch failed:', err?.message);
     } finally {
       if (mountedRef.current) setRewardsLoading(false);
     }
   }, []);
 
-  // ── Combined refresh ───────────────────────────────────────────────────────
+  // ── Combined refresh (called by socket events and manual triggers) ─────────
   const refresh = useCallback(async () => {
-    await Promise.allSettled([fetchStatus(), fetchLockedRewards()]);
-  }, [fetchStatus, fetchLockedRewards]);
+    await Promise.allSettled([fetchStatus(), fetchRewards()]);
+  }, [fetchStatus, fetchRewards]);
 
-  // ── Initial load ───────────────────────────────────────────────────────────
+  // ── Initial load / auth change ─────────────────────────────────────────────
   useEffect(() => {
     mountedRef.current = true;
 
-    if (!tokenProp) {
+    if (!token) {
       setLoading(false);
+      setStatus(DEFAULT_STATUS);
+      setLockedRewards([]);
+      setRewardsSummary(DEFAULT_REWARDS_SUMMARY);
+      setStatusReady(false);
+      setError(null);
+      setCountdown(0);
+      setExpiresAt(null);
       return () => { mountedRef.current = false; };
     }
 
     let cancelled = false;
     (async () => {
       setLoading(true);
-      await Promise.allSettled([fetchStatus(), fetchLockedRewards()]);
+      await Promise.allSettled([fetchStatus(), fetchRewards()]);
       if (!cancelled && mountedRef.current) setLoading(false);
     })();
 
     return () => {
       cancelled = true;
       mountedRef.current = false;
+      statusAbortRef.current?.abort();
+      rewardsAbortRef.current?.abort();
     };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tokenProp]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [token]);
 
   // ── Countdown timer ────────────────────────────────────────────────────────
   useEffect(() => {
@@ -268,18 +270,21 @@ export function SpecialOfferProvider({ children, socket, token: tokenProp }) {
       countdownRef.current = null;
     }
 
-    if (!status.isActive || countdown <= 0) return;
+    if (!status.isActive || !expiresAt) return;
 
     countdownRef.current = setInterval(() => {
-      setCountdown(prev => {
-        if (prev <= 1) {
-          clearInterval(countdownRef.current);
-          countdownRef.current = null;
-          fetchStatus();
-          return 0;
-        }
-        return prev - 1;
-      });
+      const remaining = Math.max(
+        0,
+        Math.floor((new Date(expiresAt) - Date.now()) / 1000)
+      );
+      setCountdown(remaining);
+
+      if (remaining <= 0) {
+        clearInterval(countdownRef.current);
+        countdownRef.current = null;
+        // Offer just expired — re-fetch to update isActive + canEarnMore
+        if (mountedRef.current) fetchStatus();
+      }
     }, 1000);
 
     return () => {
@@ -288,9 +293,9 @@ export function SpecialOfferProvider({ children, socket, token: tokenProp }) {
         countdownRef.current = null;
       }
     };
-  }, [status.isActive, fetchStatus]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [status.isActive, expiresAt, fetchStatus]);
 
-  // ── Background poll ────────────────────────────────────────────────────────
+  // ── Background poll (fallback for missed socket events) ───────────────────
   useEffect(() => {
     if (pollRef.current) {
       clearInterval(pollRef.current);
@@ -312,121 +317,122 @@ export function SpecialOfferProvider({ children, socket, token: tokenProp }) {
   }, [status.isActive, fetchStatus]);
 
   // ── Socket: special_offer_reward ──────────────────────────────────────────
-  // Emitted by creditReferralReward() to the REFERRER's room when a referred
-  // user's KYC is verified via verifyKyc(). Triggers a full refresh so the
-  // referrer's earned / pendingCount / canEarnMore update immediately.
   useEffect(() => {
-    if (!socket) return;
-
-    const handler = () => {
+    const off = onSocketEvent('special_offer_reward', () => {
       if (mountedRef.current) refresh();
-    };
+    });
+    return off;
+  }, [refresh]);
 
-    socket.on('special_offer_reward', handler);
-    return () => { socket.off('special_offer_reward', handler); };
-  }, [socket, refresh]);
-
-  // ── Socket: kyc_verified (NEW) ────────────────────────────────────────────
-  // Emitted by verifyKyc() to io.to(userId.toString()).
-  // This fires on the REFERRED USER's socket (not the referrer's).
-  //
-  // Why this context cares:
-  //   The withdraw() action is gated on kyc.status === 'verified' server-side.
-  //   Without this listener, a user who has the withdrawal UI open while an
-  //   admin approves their KYC would see the "Complete KYC to withdraw" banner
-  //   until they manually refresh — poor UX for a time-sensitive 12-hour offer.
-  //
-  //   On receipt:
-  //     1. Mark kycVerified → true and kycStatus → 'verified' so any component
-  //        consuming this context can unlock the withdraw UI immediately.
-  //     2. Re-fetch offer status — the server may update canEarnMore or
-  //        totalEarned after KYC verification.
-  //     3. Re-fetch locked rewards — admin may have already approved some.
+  // ── Socket: kyc_verified ─────────────────────────────────────────────────
   useEffect(() => {
-    if (!socket) return;
+    const off = onSocketEvent('kyc_verified', () => {
+      if (mountedRef.current) refresh();
+    });
+    return off;
+  }, [refresh]);
 
-    const handler = (payload) => {
-      if (!mountedRef.current) return;
-
-      // Update KYC gate flags immediately (no refetch latency)
-      setKycVerified(true);
-      setKycStatus('verified');
-
-      // Re-fetch offer data — server state may have changed post-verification
-      refresh();
-
-      console.log('[SpecialOfferContext] kyc_verified received — offer state refreshed', payload);
-    };
-
-    socket.on('kyc_verified', handler);
-    return () => { socket.off('kyc_verified', handler); };
-  }, [socket, refresh]);
-
-  // ── Socket: kyc_rejected (NEW) ────────────────────────────────────────────
-  // Emitted by rejectSpOfferKyc() to io.to(userId.toString()).
-  //
-  // On receipt:
-  //   1. Mark kycVerified → false, kycStatus → 'rejected'.
-  //      The withdraw UI will show "KYC rejected — resubmit to unlock" without
-  //      a full page refresh.
-  //   2. No need to re-fetch offer status — rejection doesn't change earned /
-  //      canEarnMore (user can still earn, just can't withdraw yet).
+  // ── Socket: kyc_rejected ─────────────────────────────────────────────────
   useEffect(() => {
-    if (!socket) return;
+    const off = onSocketEvent('kyc_rejected', () => {
+      if (mountedRef.current) fetchStatus();
+    });
+    return off;
+  }, [fetchStatus]);
 
-    const handler = (payload) => {
-      if (!mountedRef.current) return;
-
-      setKycVerified(false);
-      setKycStatus('rejected');
-
-      console.log(
-        '[SpecialOfferContext] kyc_rejected received — withdraw gate updated:',
-        payload?.reason
-      );
+  // ── Cleanup on unmount ────────────────────────────────────────────────────
+  useEffect(() => {
+    return () => {
+      mountedRef.current = false;
+      if (countdownRef.current) clearInterval(countdownRef.current);
+      if (pollRef.current) clearInterval(pollRef.current);
+      statusAbortRef.current?.abort();
+      rewardsAbortRef.current?.abort();
     };
+  }, []);
 
-    socket.on('kyc_rejected', handler);
-    return () => { socket.off('kyc_rejected', handler); };
-  }, [socket]);
-
-  // ── Withdraw ───────────────────────────────────────────────────────────────
+  // ── withdraw ──────────────────────────────────────────────────────────────
   /**
-   * Submit a withdrawal request for all approved special-offer rewards.
-   *
+   * POST /api/special-offer/withdraw
    * @param {{ accountNumber?, ifscCode?, panNumber? }} [bankDetails]
    * @returns {Promise<{ success: boolean, message: string, amount?: number }>}
    */
   const withdraw = useCallback(async (bankDetails) => {
-    const token = tokenRef.current;
     setWithdrawing(true);
     setWithdrawError(null);
 
     try {
       const body = bankDetails ? { bankDetails } : {};
-      const data = await apiFetch('/special-offer/withdraw', {
-        method: 'POST',
-        body:   JSON.stringify(body),
-      }, token);
+      const res  = await apiRequest.post('/api/special-offer/withdraw', body);
 
       if (!mountedRef.current) return { success: true };
 
-      setLastWithdrawal(data);
+      setLastWithdrawal(res.data);
+      // Refresh both status and rewards after a successful withdrawal
       await refresh();
 
-      return { success: true, message: data.message, amount: data.amount };
+      return { success: true, message: res.data.message, amount: res.data.amount };
     } catch (err) {
-      if (!mountedRef.current) return { success: false, message: err.message };
-      setWithdrawError(err.message);
-      return { success: false, message: err.message };
+      if (!mountedRef.current) return { success: false, message: '' };
+      const msg = err?.response?.data?.message ?? err?.message ?? 'Withdrawal failed.';
+      setWithdrawError(msg);
+      return { success: false, message: msg };
     } finally {
       if (mountedRef.current) setWithdrawing(false);
     }
   }, [refresh]);
 
-  // ── Context value ──────────────────────────────────────────────────────────
-  const value = {
-    // Offer state
+  // ── Derived values (computed, not stored in state) ─────────────────────────
+  // KYC: KycContext is always freshest. Fall back to AuthContext via kycCtxStatus.
+  // canWithdraw is purely derived from KYC — backend enforces this too.
+  const kycStatus   = kycCtxStatus;
+  const kycVerified = kycCtxStatus === 'verified';
+  const canWithdraw = kycVerified && rewardsSummary.approved > 0;
+
+  // Urgency tier (HIGH / MEDIUM / LOW / EXPIRED) — pure function, no state.
+  const urgency = useMemo(
+    () => classifyUrgency(status.isActive, countdown),
+    [status.isActive, countdown]
+  );
+
+  // ======= Time parts (hours / minutes / seconds / formatted string). ========= //
+
+  // const countdownParts = useMemo(() => formatCountdown(countdown), [countdown]);
+
+  function formatCountdown(seconds) {
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  const s = seconds % 60;
+
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${pad(h)}:${pad(m)}:${pad(s)}`;
+}
+  const formattedTime = formatCountdown(countdown);
+
+  // Progress through the 12-hour offer window (0–100).
+  const timeProgressPct = useMemo(() => {
+    if (!status.isActive || !status.startAt || !expiresAt) return 0;
+    const total   = new Date(expiresAt) - new Date(status.startAt);
+    const elapsed = Date.now() - new Date(status.startAt);
+    return Math.min(100, Math.max(0, Math.round((elapsed / total) * 100)));
+  }, [status.isActive, status.startAt, expiresAt]);
+
+  // Progress towards daily earnings cap (0–100).
+  const dailyProgressPct = useMemo(() => {
+    const cap     = status.dailyCap || DAILY_CAP_INR;
+    const earned  = status.todayEarned || 0;
+    return Math.min(100, Math.round((earned / cap) * 100));
+  }, [status.todayEarned, status.dailyCap]);
+
+  // Remaining INR earnable today.
+  const remainingToday = useMemo(
+    () => Math.max(0, (status.dailyCap || DAILY_CAP_INR) - (status.todayEarned || 0)),
+    [status.todayEarned, status.dailyCap]
+  );
+
+  // ── Stable context value ───────────────────────────────────────────────────
+  const value = useMemo(() => ({
+    // Server state
     status,
     lockedRewards,
     rewardsSummary,
@@ -437,12 +443,21 @@ export function SpecialOfferProvider({ children, socket, token: tokenProp }) {
     statusReady,
     error,
 
-    // Live countdown
+    // Countdown
     countdown,
+    // countdownParts,
+    formattedTime,
+    expiresAt,
+
+    // Derived UI values — no extra state, computed from server data
+    urgency,
+    timeProgressPct,
+    dailyProgressPct,
+    remainingToday,
 
     // Actions
     refresh,
-    refreshRewards: fetchLockedRewards,
+    refreshRewards: fetchRewards,
     withdraw,
 
     // Withdraw state
@@ -450,12 +465,22 @@ export function SpecialOfferProvider({ children, socket, token: tokenProp }) {
     withdrawError,
     lastWithdrawal,
 
-    // ── NEW: KYC gate state (updated in real time via socket) ─────────────
-    // Components can use these directly instead of importing
-    // useSpecialOfferEligibility when they are already inside this provider.
-    kycVerified,   // boolean — true once 'kyc_verified' socket fires
-    kycStatus,     // string|null — 'verified'|'rejected'|'submitted'|null
-  };
+    // KYC gate — sourced from KycContext (always live), never duplicated
+    kycStatus,
+    kycVerified,
+    canWithdraw,
+  }), [
+    status, lockedRewards, rewardsSummary,
+    loading, rewardsLoading, statusReady, error,
+    countdown, 
+    // countdownParts, 
+    formattedTime,
+    expiresAt,
+    urgency, timeProgressPct, dailyProgressPct, remainingToday,
+    refresh, fetchRewards, withdraw,
+    withdrawing, withdrawError, lastWithdrawal,
+    kycStatus, kycVerified, canWithdraw,
+  ]);
 
   return (
     <SpecialOfferContext.Provider value={value}>
@@ -467,20 +492,14 @@ export function SpecialOfferProvider({ children, socket, token: tokenProp }) {
 // ── Consumer hook ─────────────────────────────────────────────────────────────
 
 /**
- * useSpecialOffer
- *
- * Returns the full SpecialOffer context value.
- * Must be called inside a <SpecialOfferProvider>.
- *
- * @throws {Error} if used outside a SpecialOfferProvider
- * @returns {SpecialOfferContextValue}
+ * @throws {Error} if called outside <SpecialOfferProvider>
  */
 export function useSpecialOffer() {
   const ctx = useContext(SpecialOfferContext);
   if (!ctx) {
     throw new Error(
-      'useSpecialOffer must be used inside a <SpecialOfferProvider>. ' +
-      'Wrap your component tree (or just the rewards section) with it.'
+      '[useSpecialOffer] must be called inside <SpecialOfferProvider>.\n' +
+      'Wrap your rewards section with <SpecialOfferProvider>.'
     );
   }
   return ctx;

@@ -1,92 +1,12 @@
-/**
- * components/Rewards/SpecialOfferTab.jsx
- *
- * ═══════════════════════════════════════════════════════════════════════════
- * WIRING FIXES (this revision)
- * ═══════════════════════════════════════════════════════════════════════════
- *
- * WIRE-1 · offerState prop was missing from RewardsHub entirely
- *   RewardsHub only passed `user`, `eligible`, `kycStatus` — `offerState`
- *   was `undefined`, causing an immediate crash on destructuring.
- *   FIX → Remove the `offerState` prop completely. The tab now calls
- *   `useSpecialOffer()` directly; the SpecialOfferProvider that wraps the
- *   whole hub already owns that data.
- *
- * WIRE-2 · offerState should never have been a prop
- *   Passing context data down as a prop defeats the provider pattern and
- *   creates a second place where data can go stale or be wired incorrectly.
- *   FIX → same as WIRE-1: read from context, not from props.
- *
- * WIRE-3 · rewardPer vs rewardPerReferral field name mismatch
- *   The context's `status` object uses `rewardPerReferral`.
- *   The tab destructured it as `rewardPer` → always undefined.
- *   FIX → alias at destructuring: `rewardPerReferral: rewardPer = 100`.
- *
- * WIRE-4 · expiresIn (snapshot) vs countdown (live-ticking)
- *   The context exposes a live `countdown` that is decremented every second
- *   by a setInterval inside the provider.  `status.expiresIn` is only the
- *   value captured at the last HTTP fetch — it never ticks.
- *   FIX → use `countdown` for the on-screen display.
- *
- * WIRE-5 · newRewardEarned / clearNewReward did not exist on the context
- *   The old offerState was expected to carry these fields, but the context
- *   has no flash-banner state.
- *   FIX → implement locally: track the previous `rewardsSummary.total` via
- *   a useRef.  When the total increases (i.e. a new reward arrived via the
- *   socket → context refresh cycle) set a local `newRewardFlash` boolean
- *   that the banner consumes.
- *
- * WIRE-6 · useLockedRewards local hook was redundant
- *   The context already fetches, caches, and refreshes `lockedRewards` and
- *   `rewardsSummary`.  The tab's own hook fired a second independent fetch
- *   for the same data, creating duplicate requests and a race condition.
- *   FIX → delete useLockedRewards; read `lockedRewards` / `rewardsSummary`
- *   / `rewardsLoading` directly from the context.
- *
- * WIRE-7 · handleWithdrawSubmit re-implemented the context's withdraw()
- *   The context already exposes `withdraw(bankDetails)` which POSTs to the
- *   API and calls `refresh()`.  The tab's local handler did the same, so
- *   submitting would fire two overlapping POSTs.
- *   FIX → delegate to `ctx.withdraw(bankDetails)`; handle success/error
- *   from its return value.
- *
- * WIRE-8 · withdrawing state was duplicated
- *   Both context and tab had their own `withdrawing` boolean — they could
- *   diverge, leaving the button stuck in a disabled state after success.
- *   FIX → remove local `withdrawing` state; read it from the context.
- *
- * WIRE-9 · kycStatus prop was redundant
- *   RewardsHub passed `kycStatus={user?.kyc?.status}`.  The dedicated
- *   `useSpecialOfferEligibility` hook already reads this from AuthContext
- *   with proper normalisation and gate metadata.
- *   FIX → drop `kycStatus` prop; use the hook.
- *
- * ═══════════════════════════════════════════════════════════════════════════
- * BUGS FIXED (carried over from previous revision)
- * ═══════════════════════════════════════════════════════════════════════════
- *
- * BUG-1/2/3 · axios/fetch mismatch + wrong call signature in withdraw
- *   Resolved by delegating to ctx.withdraw() (WIRE-7 above), which already
- *   uses the correct apiFetch helper in SpecialOfferContext.
- *
- * BUG-4 · Wrong modal component (BankDetailsModal → SpecialOfferWithdrawModal)
- *   Kept: import is SpecialOfferWithdrawModal.
- *
- * BUG-5 · Typo invitaionLink + duplicated URL construction
- *   Kept: uses buildInviteLink() from inviteLink.js.
- *
- * BUG-6/7 · approvedCount null-guard / first-render flash
- *   Superseded: approvedCount now comes from context's rewardsSummary which
- *   is always a number (defaults to 0 before the first fetch completes).
- */
+/* components/Rewards/SpecialOfferTab.jsx */
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { toast }                          from 'react-toastify';
-import SpecialOfferWithdrawModal          from './SpecialOfferWithdrawModal';
+import { useAuth }                        from '../../Context/Authorisation/AuthContext';
 import { useSpecialOffer }                from '../../Context/SpecialOffer/SpecialOfferContext';
 import { useSpecialOfferEligibility }     from '../../hooks/useSpecialOfferEligibility';
 import { buildInviteLink, nativeShare }   from '../../utils/inviteLink';
-import { useAuth }                        from '../../Context/Authorisation/AuthContext';
+import SpecialOfferWithdrawModal          from './SpecialOfferWithdrawModal';
 
 /* ── Design tokens — inherit from RewardsHub theme ──────────────────────── */
 const T = {

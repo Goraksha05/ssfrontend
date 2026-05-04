@@ -21,7 +21,7 @@ import { useScrollLock }    from '../../hooks/useScrollLock';
 import { useSpecialOffer, SpecialOfferProvider }  from '../../Context/SpecialOffer/SpecialOfferContext';  // ← NEW
 import { useAuth }          from '../../Context/Authorisation/AuthContext';
 import HomeModeBanner       from '../Ads/HomeModeBanner';
-
+import {getSocket}          from '../../WebSocket/WebSocketClient';
 import { buildInviteLink, copyToClipboard } from '../../utils/inviteLink';
 import ShareModal from '../UserActivities/ShareModal';
 
@@ -164,7 +164,7 @@ function SpecialOfferBanner() {
 function Home() {
   const { addPost, loading }                  = useContext(postContext);
   const { tokens }                            = useTheme();
-
+  const { socket }                            = getSocket();  // ← NEW: get socket from context
   const [mode, setMode]                       = useState('home');
 
   const [postContent,     setPostContent]     = useState('');
@@ -179,9 +179,8 @@ function Home() {
 
   const [showShareModal, setShowShareModal] = useState(false);
 
-  const token  = localStorage.getItem('token');
-  const userId = token ? jwtDecode(token)?.user?.id : '';
   const { token: authToken } = useAuth();
+  const userId = authToken ? jwtDecode(authToken)?.user?.id : '';
 
   const { t } = useI18n();
 
@@ -211,12 +210,12 @@ function Home() {
   }, [inputValue]);
 
   useEffect(() => {
-    if (!token || !userId) return;
+    if (!authToken || !userId) return;
     let cancelled = false;
 
     apiRequest
       .get(`${SERVER_URL}/api/auth/getuser/${userId}`, {
-        headers: { Authorization: `Bearer ${token}` },
+        headers: { Authorization: `Bearer ${authToken}` },
       })
       .then(res => {
         if (cancelled) return;
@@ -226,14 +225,14 @@ function Home() {
       .catch(err => console.error('[Home] getuser failed:', err));
 
     return () => { cancelled = true; };
-  }, [token, userId]);
+  }, [authToken, userId]);
 
   const fetchWallet = useCallback(async () => {
-    if (!token) return;
+    if (!authToken) return;
     setRewardsLoading(true);
     try {
       const res = await apiRequest.get(`${SERVER_URL}/api/auth/earned-rewards`, {
-        headers: { Authorization: `Bearer ${token}` },
+        headers: { Authorization: `Bearer ${authToken}` },
       });
       setWallet(res.data?.wallet || null);
     } catch (err) {
@@ -241,17 +240,17 @@ function Home() {
     } finally {
       setRewardsLoading(false);
     }
-  }, [token]);
+  }, [authToken]);
 
   useEffect(() => { fetchWallet(); }, [fetchWallet]);
 
   useEffect(() => {
-    if (!token || !userId) return;
+    if (!authToken || !userId) return;
     apiRequest
       .get(`${SERVER_URL}/api/activity/community/${userId}`)
       .then(res => setCommunityCount(res.data?.communityCount || 0))
       .catch(err => console.error('[Home] community count failed:', err));
-  }, [token, userId]);
+  }, [authToken, userId]);
 
   const displayGroceryCoupons = useMemo(
     () => wallet?.totalGroceryCoupons ?? userData?.totalGroceryCoupons ?? 0,
@@ -350,7 +349,7 @@ function Home() {
     <div className="home-root header">
       <HomeModeBanner mode={mode} setMode={setMode} />
       <main className="home-main container-fluid px-0">
-        <SpecialOfferProvider token={authToken}>
+        <SpecialOfferProvider socket={socket}>
           <MessageScroller />
           <SpecialOfferBanner />
         </SpecialOfferProvider>

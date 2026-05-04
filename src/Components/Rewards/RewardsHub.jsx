@@ -1,35 +1,29 @@
-/**
- * components/Rewards/RewardsHub.jsx — v2
- *
- * CHANGES from v1:
- *  • Removed all `getToken()` / `localStorage.getItem('token')` helpers.
- *    The token is now sourced exclusively from `useAuth()` (AuthContext).
- *  • `usePlanSlabs`, `useEarnedRewards`, and `useMyPostCount` all accept
- *    `token` as a param and call `apiRequest.get()` instead of raw `fetch()`.
- *    The apiRequest interceptor attaches the Authorization header automatically.
- *  • `handleStreakClaim`, `PostTab.handleBankSubmit` no longer pass manual
- *    Authorization headers to `apiRequest.post()`.
- */
+/* components/Rewards/RewardsHub.jsx */
 
 import React, {
   useState, useEffect, useCallback, useMemo,
 } from 'react';
-import { useNavigate }              from 'react-router-dom';
-import { toast }                    from 'react-toastify';
-import { useQueryClient }           from '@tanstack/react-query';
+import { useNavigate }            from 'react-router-dom';
+import { toast }                  from 'react-toastify';
+import { useQueryClient }         from '@tanstack/react-query';
 
-import { useAuth }                  from '../../Context/Authorisation/AuthContext';
-import { useRewardEligibility }     from '../../hooks/useRewardEligibility';
-import { useActivityDashboard, 
-        DASHBOARD_QUERY_KEY }       from '../../hooks/useActivityDashboard';
-import apiRequest                   from '../../utils/apiRequest';
-import BankDetailsModal             from '../Common/BankDetailsModal';
-import ReferralTab                  from './ReferralTab';
-import { SpecialOfferProvider }     from '../../Context/SpecialOffer/SpecialOfferContext';
-import SpecialOfferTab              from './SpecialOfferTab';
-import { getSocket }                from '../../WebSocket/WebSocketClient';
+import { useAuth }                from '../../Context/Authorisation/AuthContext';
+import { useRewardEligibility }   from '../../hooks/useRewardEligibility';
+import {
+  useActivityDashboard,
+  DASHBOARD_QUERY_KEY,
+}                                 from '../../hooks/useActivityDashboard';
+import apiRequest                 from '../../utils/apiRequest';
+import BankDetailsModal           from '../Common/BankDetailsModal';
+import ReferralTab                from './ReferralTab';
+import { SpecialOfferProvider }   from '../../Context/SpecialOffer/SpecialOfferContext';
+import SpecialOfferTab            from './SpecialOfferTab';
+import { getSocket }              from '../../WebSocket/WebSocketClient';
 
-const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || process.env.REACT_APP_SERVER_URL || '';
+const BACKEND_URL =
+  process.env.REACT_APP_BACKEND_URL ||
+  process.env.REACT_APP_SERVER_URL  ||
+  '';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Design tokens
@@ -179,62 +173,41 @@ const styles = {
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Placeholder component
+// Local hooks — token read from useAuth() internally; not passed as a prop
 // ─────────────────────────────────────────────────────────────────────────────
 
-function CountDisplay({ value, suffix, isLoading }) {
-  return (
-    <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, marginBottom: 20 }}>
-      <span style={{
-        fontFamily: '"Courier New", monospace', fontSize: 40,
-        fontWeight: 400, letterSpacing: -2, lineHeight: 1,
-        opacity: isLoading && value === null ? 0.35 : 1,
-        transition: 'opacity 0.2s',
-      }}>
-        {value === null ? '—' : value}
-      </span>
-      <span style={{ fontSize: 14, color: 'var(--color-text-secondary)', fontFamily: 'var(--font-sans)' }}>
-        {suffix}
-      </span>
-    </div>
-  );
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Local hooks — all use apiRequest; token injected by interceptor automatically
-// ─────────────────────────────────────────────────────────────────────────────
-
-/**
- * Fetch plan slabs. `token` gates the request so we don't fire
- * before AuthContext has hydrated.
- */
-function usePlanSlabs(type, token) {
+function usePlanSlabs(type) {
+  const { token } = useAuth();
   const [slabs, setSlabs] = useState([]);
+
   useEffect(() => {
     if (!token) return;
     apiRequest
-      .get(`${BACKEND_URL}/api/rewards/${type}`)
-      .then(res => { if (res.data?.slabs) setSlabs(res.data.slabs); })
+      .get(`${BACKEND_URL}/api/rewards/${type}`, { _silenceToast: true })
+      .then((res) => { if (res.data?.slabs) setSlabs(res.data.slabs); })
       .catch(() => {});
   }, [type, token]);
+
   return slabs;
 }
 
-function useEarnedRewards(token) {
-  const queryClient                    = useQueryClient();
-  const [wallet, setWallet]            = useState({ totalGroceryCoupons: 0, totalShares: 0, totalReferralToken: 0 });
-  const [redeemed, setRedeemed]        = useState({ posts: [], referral: [], streak: [] });
-  const [loading, setLoading]          = useState(true);
+function useEarnedRewards() {
+  const { token }      = useAuth();
+  const queryClient    = useQueryClient();
+
+  const [wallet,  setWallet]  = useState({ totalGroceryCoupons: 0, totalShares: 0, totalReferralToken: 0 });
+  const [redeemed, setRedeemed] = useState({ posts: [], referral: [], streak: [] });
+  const [loading, setLoading] = useState(true);
 
   const fetch_ = useCallback(() => {
     if (!token) { setLoading(false); return; }
     setLoading(true);
     apiRequest
-      .get(`${BACKEND_URL}/api/auth/earned-rewards`)
-      .then(res => {
+      .get(`${BACKEND_URL}/api/auth/earned-rewards`, { _silenceToast: true })
+      .then((res) => {
         const d = res.data;
         if (!d) return;
-        if (d.wallet) setWallet(d.wallet);
+        if (d.wallet)  setWallet(d.wallet);
         if (d.redeemed) {
           setRedeemed({
             posts:    (d.redeemed.posts    ?? []).map(Number),
@@ -257,16 +230,17 @@ function useEarnedRewards(token) {
   return { wallet, redeemed, loading, refetch };
 }
 
-function useMyPostCount(token) {
+function useMyPostCount() {
+  const { token } = useAuth();
   const [postCount, setPostCount] = useState(0);
-  const [loading, setLoading]     = useState(true);
+  const [loading,   setLoading]   = useState(true);
 
   useEffect(() => {
     if (!token) { setLoading(false); return; }
     setLoading(true);
     apiRequest
-      .get(`${BACKEND_URL}/api/posts/my-count`)
-      .then(res => {
+      .get(`${BACKEND_URL}/api/posts/my-count`, { _silenceToast: true })
+      .then((res) => {
         if (res.data?.count !== undefined) setPostCount(Number(res.data.count));
       })
       .catch(() => {})
@@ -280,10 +254,28 @@ function useMyPostCount(token) {
 // Shared UI sub-components
 // ─────────────────────────────────────────────────────────────────────────────
 
+function CountDisplay({ value, suffix, isLoading }) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, marginBottom: 20 }}>
+      <span style={{
+        fontFamily: '"Courier New", monospace', fontSize: 40,
+        fontWeight: 400, letterSpacing: -2, lineHeight: 1,
+        opacity: isLoading && value === null ? 0.35 : 1,
+        transition: 'opacity 0.2s',
+      }}>
+        {value === null ? '—' : value}
+      </span>
+      <span style={{ fontSize: 14, color: 'var(--color-text-secondary)', fontFamily: 'var(--font-sans)' }}>
+        {suffix}
+      </span>
+    </div>
+  );
+}
+
 function ProgressBar({ current, next, prev = 0, label, color }) {
   if (!next) return null;
-  const range = next - prev;
-  const pct   = range > 0 ? Math.min(100, Math.round(((current - prev) / range) * 100)) : 100;
+  const range     = next - prev;
+  const pct       = range > 0 ? Math.min(100, Math.round(((current - prev) / range) * 100)) : 100;
   const remaining = next - current;
   return (
     <div style={styles.progressWrap}>
@@ -342,7 +334,7 @@ function EligibilityBanner({ kycGate, subscriptionGate, blockerCode, blockerMess
           {blockerMessage}
         </p>
         <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-          {items.map(it => (
+          {items.map((it) => (
             <button key={it.label} style={styles.bannerCta} onClick={it.onCta}>
               {it.cta} →
             </button>
@@ -354,23 +346,23 @@ function EligibilityBanner({ kycGate, subscriptionGate, blockerCode, blockerMess
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// StreakTab
+// StreakTab — reads token from useAuth internally
 // ─────────────────────────────────────────────────────────────────────────────
 
-function StreakTab({ eligible, token, parseClaimError, openModal, redeemedStreak }) {
+function StreakTab({ eligible, parseClaimError, openModal, redeemedStreak }) {
   const { streakCount, isLoading: dashLoading } = useActivityDashboard();
-  const slabs = usePlanSlabs('streak', token);
+  const slabs = usePlanSlabs('streak');
 
   const claimedDays   = redeemedStreak ?? [];
   const accurateCount = streakCount ?? 0;
 
-  const milestones = useMemo(() =>
-    slabs.map(s => s.dailystreak).filter(d => typeof d === 'number').sort((a, b) => a - b),
+  const milestones = useMemo(
+    () => slabs.map((s) => s.dailystreak).filter((d) => typeof d === 'number').sort((a, b) => a - b),
     [slabs]
   );
 
-  const next = milestones.find(m => accurateCount < m) ?? null;
-  const prev = [...milestones].reverse().find(m => accurateCount >= m) ?? 0;
+  const next = milestones.find((m) => accurateCount < m)  ?? null;
+  const prev = [...milestones].reverse().find((m) => accurateCount >= m) ?? 0;
 
   const [selected, setSelected] = useState('');
   const selectedNum = selected ? Number(selected) : null;
@@ -378,11 +370,12 @@ function StreakTab({ eligible, token, parseClaimError, openModal, redeemedStreak
   const isClaimed   = slabKey ? claimedDays.includes(slabKey) : false;
   const hasEnough   = selectedNum ? accurateCount >= selectedNum : false;
 
-  const btnState = !eligible       ? 'locked'
-    : !selectedNum                 ? 'idle'
-    : isClaimed                    ? 'claimed'
-    : !hasEnough                   ? 'locked'
-    : 'ready';
+  const btnState =
+    !eligible    ? 'locked'
+    : !selectedNum ? 'idle'
+    : isClaimed    ? 'claimed'
+    : !hasEnough   ? 'locked'
+    :                'ready';
 
   return (
     <div>
@@ -398,8 +391,8 @@ function StreakTab({ eligible, token, parseClaimError, openModal, redeemedStreak
 
       <p style={styles.sectionHead}>Milestones</p>
       <div style={styles.milestoneGrid}>
-        {milestones.map(day => {
-          const key     = `${day}days`;
+        {milestones.map((day) => {
+          const key    = `${day}days`;
           const claimed = claimedDays.includes(key);
           const active  = accurateCount >= day;
           return (
@@ -417,11 +410,11 @@ function StreakTab({ eligible, token, parseClaimError, openModal, redeemedStreak
         <select
           style={styles.select}
           value={selected}
-          onChange={e => setSelected(e.target.value)}
+          onChange={(e) => setSelected(e.target.value)}
           disabled={!eligible}
         >
           <option value="">Select a milestone…</option>
-          {milestones.map(day => {
+          {milestones.map((day) => {
             const key  = `${day}days`;
             const isCl = claimedDays.includes(key);
             const ok   = accurateCount >= day;
@@ -446,22 +439,23 @@ function StreakTab({ eligible, token, parseClaimError, openModal, redeemedStreak
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// PostTab
+// PostTab — reads token and user from useAuth internally
 // ─────────────────────────────────────────────────────────────────────────────
 
-function PostTab({ eligible, token, user, redeemedPosts, onRewardClaimed }) {
-  const slabs                                    = usePlanSlabs('posts', token);
-  const { postCount, loading: countLoading }     = useMyPostCount(token);
-  const { parseClaimError }                      = useRewardEligibility();
+function PostTab({ eligible, redeemedPosts, onRewardClaimed }) {
+  const { user }                             = useAuth();
+  const slabs                                = usePlanSlabs('posts');
+  const { postCount, loading: countLoading } = useMyPostCount();
+  const { parseClaimError }                  = useRewardEligibility();
 
   const claimed = (redeemedPosts ?? []).map(String);
 
-  const [selected, setSelected]   = useState('');
-  const [loading, setLoading]     = useState(false);
+  const [selected,  setSelected]  = useState('');
+  const [loading,   setLoading]   = useState(false);
   const [modalOpen, setModalOpen] = useState(false);
 
-  const milestones = useMemo(() =>
-    slabs.map(s => s.postsCount).filter(p => typeof p === 'number').sort((a, b) => a - b),
+  const milestones = useMemo(
+    () => slabs.map((s) => s.postsCount).filter((p) => typeof p === 'number').sort((a, b) => a - b),
     [slabs]
   );
 
@@ -469,16 +463,16 @@ function PostTab({ eligible, token, user, redeemedPosts, onRewardClaimed }) {
   const isClaimed   = selectedNum ? claimed.includes(String(selectedNum)) : false;
   const hasEnough   = selectedNum ? postCount >= selectedNum : false;
 
-  const next = milestones.find(m => postCount < m) ?? null;
-  const prev = [...milestones].reverse().find(m => postCount >= m) ?? 0;
+  const next = milestones.find((m) => postCount < m)  ?? null;
+  const prev = [...milestones].reverse().find((m) => postCount >= m) ?? 0;
 
-  const btnState = !eligible   ? 'locked'
-    : !selectedNum             ? 'idle'
-    : isClaimed                ? 'claimed'
-    : !hasEnough               ? 'locked'
-    : 'ready';
+  const btnState =
+    !eligible    ? 'locked'
+    : !selectedNum ? 'idle'
+    : isClaimed    ? 'claimed'
+    : !hasEnough   ? 'locked'
+    :                'ready';
 
-  // Token injected by apiRequest interceptor — no manual header
   const handleBankSubmit = async (bankDetails, successCallback) => {
     setLoading(true);
     try {
@@ -512,7 +506,7 @@ function PostTab({ eligible, token, user, redeemedPosts, onRewardClaimed }) {
 
       <p style={styles.sectionHead}>Milestones</p>
       <div style={styles.milestoneGrid}>
-        {milestones.map(m => {
+        {milestones.map((m) => {
           const cl = claimed.includes(String(m));
           const ac = postCount >= m;
           return (
@@ -530,11 +524,11 @@ function PostTab({ eligible, token, user, redeemedPosts, onRewardClaimed }) {
         <select
           style={styles.select}
           value={selected}
-          onChange={e => setSelected(e.target.value)}
+          onChange={(e) => setSelected(e.target.value)}
           disabled={!eligible}
         >
           <option value="">Select a milestone…</option>
-          {milestones.map(m => {
+          {milestones.map((m) => {
             const isCl = claimed.includes(String(m));
             const ok   = postCount >= m;
             return (
@@ -560,6 +554,7 @@ function PostTab({ eligible, token, user, redeemedPosts, onRewardClaimed }) {
         onClose={() => setModalOpen(false)}
         onSubmit={handleBankSubmit}
         rewardLabel={`${selectedNum} posts`}
+        defaultValues={user?.bankDetails}
       />
     </div>
   );
@@ -570,11 +565,11 @@ function PostTab({ eligible, token, user, redeemedPosts, onRewardClaimed }) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 export default function RewardsHub({ initialTab = 'streak' }) {
-  // ── Single centralized token source ───────────────────────────────────────
-  const { user, token } = useAuth();
-  const socket = getSocket();
+  const { user } = useAuth();
+  const socket   = getSocket();
 
-  const { wallet, redeemed, refetch: refetchEarned } = useEarnedRewards(token);
+  // useEarnedRewards no longer needs a token parameter — reads useAuth() internally
+  const { wallet, redeemed, refetch: refetchEarned } = useEarnedRewards();
 
   const {
     eligible, checking,
@@ -585,8 +580,8 @@ export default function RewardsHub({ initialTab = 'streak' }) {
 
   const { invalidate: invalidateDashboard } = useActivityDashboard();
 
-  const [activeTab, setActiveTab]     = useState(initialTab);
-  const [streakModal, setStreakModal] = useState({ open: false, days: null, label: '' });
+  const [activeTab,    setActiveTab]    = useState(initialTab);
+  const [streakModal,  setStreakModal]  = useState({ open: false, days: null, label: '' });
   const [streakLoading, setStreakLoading] = useState(false);
 
   const onRewardClaimed = useCallback(() => {
@@ -598,7 +593,6 @@ export default function RewardsHub({ initialTab = 'streak' }) {
     if (type === 'streak') setStreakModal({ open: true, days: value, label });
   }, []);
 
-  // Token injected by apiRequest interceptor — no manual Authorization header
   const handleStreakClaim = async (bankDetails, successCallback) => {
     setStreakLoading(true);
     try {
@@ -620,21 +614,22 @@ export default function RewardsHub({ initialTab = 'streak' }) {
   const displayGrocery = wallet.availableBalance ?? wallet.totalGroceryCoupons ?? 0;
 
   const TABS = useMemo(() => [
-    { id: 'streak',   label: 'Streak'   },
-    { id: 'referral', label: 'Referral' },
-    { id: 'posts',    label: 'Posts'    },
-    { id: 'special-offer', label: '🔥 Special Offer' },
+    { id: 'streak',        label: 'Streak'            },
+    { id: 'referral',      label: 'Referral'          },
+    { id: 'posts',         label: 'Posts'             },
+    { id: 'special-offer', label: '🔥 Special Offer'  },
   ], []);
 
   useEffect(() => {
-    if (!TABS.find(t => t.id === activeTab)) {
+    if (!TABS.find((t) => t.id === activeTab)) {
       setActiveTab('streak');
     }
   }, [activeTab, TABS]);
 
   return (
-    <SpecialOfferProvider token={token} socket={socket}>
+    // SpecialOfferProvider reads token / user from AuthContext — no prop needed
       <div style={styles.shell}>
+
         {/* Eligibility banner */}
         {!checking && !eligible && (
           <EligibilityBanner
@@ -663,7 +658,7 @@ export default function RewardsHub({ initialTab = 'streak' }) {
 
         {/* Tabs */}
         <nav style={styles.tabBar}>
-          {TABS.map(t => (
+          {TABS.map((t) => (
             <button key={t.id} style={styles.tab(activeTab === t.id)} onClick={() => setActiveTab(t.id)}>
               {t.label}
             </button>
@@ -674,7 +669,6 @@ export default function RewardsHub({ initialTab = 'streak' }) {
         {activeTab === 'streak' && (
           <StreakTab
             eligible={eligible}
-            token={token}
             parseClaimError={parseClaimError}
             openModal={openModal}
             redeemedStreak={redeemed.streak}
@@ -691,27 +685,28 @@ export default function RewardsHub({ initialTab = 'streak' }) {
         {activeTab === 'posts' && (
           <PostTab
             eligible={eligible}
-            token={token}
-            user={user}
             redeemedPosts={redeemed.posts}
             onRewardClaimed={onRewardClaimed}
           />
         )}
+        <SpecialOfferProvider socket={socket}>
         {activeTab === 'special-offer' && (
           <SpecialOfferTab
             user={user}
             eligible={eligible}
           />
         )}
-        {/* Streak bank modal */}
+        </SpecialOfferProvider>
+
+        {/* Streak bank-details modal */}
         <BankDetailsModal
           isOpen={streakModal.open}
           loading={streakLoading}
           onClose={() => setStreakModal({ open: false, days: null, label: '' })}
           onSubmit={handleStreakClaim}
           rewardLabel={streakModal.label ?? 'Streak'}
+          defaultValues={user?.bankDetails}
         />
       </div>
-    </SpecialOfferProvider>
   );
 }
